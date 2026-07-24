@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>МОСТОВОЙ — iPhone: обмен и доступ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Header -->
+  <header class="header" id="top">
+    <div class="container header__inner">
+      <a href="#top" class="logo" aria-label="Мостовой">
+        <span class="logo__badge">М</span>
+        <span class="logo__text">МОСТОВОЙ</span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="#catalog">Каталог</a>
+        <a href="#trade">Обмен</a>
+        <a href="#credit">Доступ</a>
+        <a href="#why">О нас</a>
+        <a href="#footer">Контакты</a>
+      </nav>
+      <a href="#catalog" class="btn btn--sm header__cta">Купить</a>
+      <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container hero__inner">
+      <div class="hero__text">
+        <p class="eyebrow">Apple · официально</p>
+        <h1 class="hero__title">Новый iPhone.<br /><span class="accent">Уже твой.</span></h1>
+        <p class="hero__sub">Обмен старого на новый и рассрочка без переплат. Вся линейка iPhone в наличии.</p>
+        <div class="hero__actions">
+          <a href="#catalog" class="btn">Смотреть каталог</a>
+          <a href="#trade" class="btn btn--ghost">Обменять свой</a>
+        </div>
+        <div class="hero__stats">
+          <div><b>11</b><span>моделей</span></div>
+          <div><b>0%</b><span>рассрочка</span></div>
+          <div><b>2 мин</b><span>оценка обмена</span></div>
+        </div>
+      </div>
+      <div class="hero__visual" id="heroVisual"></div>
+    </div>
+    <div class="hero__glow"></div>
+  </section>
+
+  <!-- Stats strip -->
+  <section class="stats">
+    <div class="container stats__inner">
+      <div class="stat reveal"><b>12+</b><span>лет на рынке</span></div>
+      <div class="stat reveal"><b>50 000+</b><span>довольных клиентов</span></div>
+      <div class="stat reveal"><b>#1</b><span>в Кыргызстане</span></div>
+      <div class="stat reveal"><b>1 год</b><span>гарантии</span></div>
+    </div>
+  </section>
+
+  <!-- Catalog -->
+  <section class="section" id="catalog">
+    <div class="container">
+      <div class="section__head reveal">
+        <div>
+          <p class="eyebrow">Каталог</p>
+          <h2 class="section__title">Смартфоны</h2>
+        </div>
+      </div>
+      <div class="toolbar reveal">
+        <div class="brandtabs" id="brandTabs"></div>
+        <div class="toolbar__right">
+          <div class="search">
+            <span>🔍</span>
+            <input id="search" type="text" placeholder="Поиск модели..." />
+          </div>
+          <select id="sort" class="sortsel">
+            <option value="pop">По популярности</option>
+            <option value="asc">Сначала дешёвые</option>
+            <option value="desc">Сначала дорогие</option>
+          </select>
+        </div>
+      </div>
+      <div class="filters" id="filters"></div>
+      <div class="grid" id="grid"></div>
+      <p class="grid__empty" id="gridEmpty" hidden>Ничего не найдено 🙁</p>
+    </div>
+  </section>
+
+  <!-- Почему мы лучшие -->
+  <section class="section section--gray" id="why">
+    <div class="container">
+      <div class="section__head reveal">
+        <div>
+          <p class="eyebrow">Кыргызский Мостовой</p>
+          <h2 class="section__title">Почему мы лучшие</h2>
+        </div>
+      </div>
+      <div class="why" id="whyGrid"></div>
+    </div>
+  </section>
+
+  <!-- Trade-in -->
+  <section class="section section--gray" id="trade">
+    <div class="container split">
+      <div class="split__text reveal">
+        <p class="eyebrow">Trade-in</p>
+        <h2 class="section__title">Обмен старого на новый</h2>
+        <p class="lead">Принесите свой смартфон — оценим состояние и вычтем стоимость из цены нового iPhone. Быстро и честно.</p>
+        <ul class="checklist">
+          <li>Оценка за 2 минуты</li>
+          <li>Принимаем Android и iPhone</li>
+          <li>Скидка сразу при покупке</li>
+        </ul>
+      </div>
+      <div class="calc reveal" id="tradeCalc">
+        <h3>Оценить свой телефон</h3>
+        <label>Модель
+          <select id="tradeModel">
+            <option value="0">Выберите модель</option>
+            <option value="45000">iPhone 13</option>
+            <option value="60000">iPhone 14</option>
+            <option value="80000">iPhone 15</option>
+            <option value="20000">Android (флагман)</option>
+            <option value="8000">Android (бюджет)</option>
+          </select>
+        </label>
+        <label>Состояние
+          <select id="tradeState">
+            <option value="1">Отличное</option>
+            <option value="0.7">Хорошее</option>
+            <option value="0.45">С дефектами</option>
+          </select>
+        </label>
+        <div class="calc__result">Оценка: <b id="tradeResult">0 ₽</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Credit -->
+  <section class="section" id="credit">
+    <div class="container split">
+      <div class="calc reveal" id="creditCalc">
+        <h3>Калькулятор рассрочки</h3>
+        <div class="calc__row2">
+          <label>Модель
+            <select id="creditPrice"></select>
+          </label>
+          <label>Первый взнос
+            <select id="creditDown">
+              <option value="0">0 ₽</option>
+              <option value="0.1">10%</option>
+              <option value="0.2">20%</option>
+              <option value="0.3">30%</option>
+            </select>
+          </label>
+        </div>
+        <div class="calc__row2">
+          <label>Срок
+            <select id="creditTerm">
+              <option value="3">3 мес</option>
+              <option value="6">6 мес</option>
+              <option value="12" selected>12 мес</option>
+              <option value="18">18 мес</option>
+              <option value="24">24 мес</option>
+            </select>
+          </label>
+          <label>Ставка
+            <select id="creditRate">
+              <option value="0">0% — промо</option>
+              <option value="12">12% годовых</option>
+              <option value="18">18% годовых</option>
+            </select>
+          </label>
+        </div>
+        <div class="paybox">
+          <span>Платёж в месяц</span>
+          <b id="crMonthly">0 ₽</b>
+        </div>
+        <div class="calc__break" id="crBreak"></div>
+      </div>
+      <div class="split__text reveal">
+        <p class="eyebrow">Рассрочка</p>
+        <h2 class="section__title">Доступ в рассрочку</h2>
+        <p class="lead">Возьмите новый iPhone сегодня, а платите частями. Без переплаты и справок — оформление за 15 минут.</p>
+        <ul class="checklist">
+          <li>Первый взнос от 0 ₽</li>
+          <li>Досрочное погашение без штрафов</li>
+          <li>Одобрение онлайн</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer" id="footer">
+    <div class="container footer__inner">
+      <div>
+        <a href="#top" class="logo logo--footer">
+          <span class="logo__badge">М</span>
+          <span class="logo__text">МОСТОВОЙ</span>
+        </a>
+        <p class="footer__desc">Продажа техники Apple. Обмен и рассрочка.</p>
+      </div>
+      <div class="footer__col">
+        <h4>Навигация</h4>
+        <a href="#catalog">Каталог</a>
+        <a href="#trade">Обмен</a>
+        <a href="#credit">Доступ</a>
+      </div>
+      <div class="footer__col">
+        <h4>Контакты</h4>
+        <a href="tel:+70000000000">+7 (000) 000-00-00</a>
+        <a href="mailto:hello@mostovoy.ru">hello@mostovoy.ru</a>
+      </div>
+    </div>
+    <div class="footer__bottom container">
+      <span>© 2026 МОСТОВОЙ. Демо-каталог, цены примерные.</span>
+      <span>Apple, iPhone — товарные знаки Apple Inc.</span>
+    </div>
+  </footer>
+
+  <script src="data.js"></script>
+  <script src="photos.js"></script>
+  <script src="render.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>

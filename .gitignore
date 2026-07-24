@@ -1,0 +1,17 @@
+# secrets
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+
+# deps / build
+node_modules/
+dist/
+build/
+
+# os / editor
+.DS_Store
+*.log
+.vscode/
+.idea/

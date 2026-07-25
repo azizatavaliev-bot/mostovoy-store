@@ -1,0 +1,13 @@
+# На Vercel едет только статическая витрина.
+# Бэкенд (Express + SQLite) серверлес не поддерживает — он живёт отдельно
+# (Railway / VPS). Исключаем его, чтобы Vercel не пытался собрать Node-проект.
+server/
+test/
+data/
+node_modules/
+.env
+.env.*
+*.db
+*.db-wal
+*.db-shm
+fetch-photos.js

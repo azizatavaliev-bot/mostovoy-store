@@ -1,0 +1,22 @@
+{
+  "name": "mostovoy-store",
+  "version": "1.0.0",
+  "description": "МОСТОВОЙ — каталог техники с автосинхронизацией из Telegram-канала",
+  "private": true,
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "migrate": "node server/cli/migrate.js",
+    "resync": "node server/cli/resync.js",
+    "detect-chat": "node server/cli/detect-chat.js",
+    "set-webhook": "node server/cli/set-webhook.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>МОСТОВОЙ — iPhone: обмен и доступ</title>
+  <title>МОСТОВОЙ — техника в Бишкеке: обмен и рассрочка Zero</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
@@ -13,7 +13,7 @@
   <header class="header" id="top">
     <div class="container header__inner">
       <a href="#top" class="logo" aria-label="Мостовой">
-        <span class="logo__badge">М</span>
+        <span class="logo__badge" role="img" aria-label="Мостовой"></span>
         <span class="logo__text">МОСТОВОЙ</span>
       </a>
       <nav class="nav" id="nav">
@@ -32,16 +32,16 @@
   <section class="hero">
     <div class="container hero__inner">
       <div class="hero__text">
-        <p class="eyebrow">Apple · официально</p>
-        <h1 class="hero__title">Новый iPhone.<br /><span class="accent">Уже твой.</span></h1>
-        <p class="hero__sub">Обмен старого на новый и рассрочка без переплат. Вся линейка iPhone в наличии.</p>
+        <p class="eyebrow">Техника · Бишкек</p>
+        <h1 class="hero__title">Новая техника.<br /><span class="accent">Уже твоя.</span></h1>
+        <p class="hero__sub">Смартфоны, приставки, гаджеты. Обмен старого на новый и рассрочка Zero. Цены обновляются из нашего Telegram-канала.</p>
         <div class="hero__actions">
           <a href="#catalog" class="btn">Смотреть каталог</a>
           <a href="#trade" class="btn btn--ghost">Обменять свой</a>
         </div>
         <div class="hero__stats">
-          <div><b>11</b><span>моделей</span></div>
-          <div><b>0%</b><span>рассрочка</span></div>
+          <div><b id="heroCount">—</b><span>товаров</span></div>
+          <div><b>Zero</b><span>рассрочка</span></div>
           <div><b>2 мин</b><span>оценка обмена</span></div>
         </div>
       </div>
@@ -74,7 +74,12 @@
         <div class="toolbar__right">
           <div class="search">
             <span>🔍</span>
-            <input id="search" type="text" placeholder="Поиск модели..." />
+            <input id="search" type="text" placeholder="Поиск товара..." />
+          </div>
+          <div class="pricefilter">
+            <input id="priceMin" type="number" min="0" placeholder="от" aria-label="Цена от" />
+            <span>—</span>
+            <input id="priceMax" type="number" min="0" placeholder="до" aria-label="Цена до" />
           </div>
           <select id="sort" class="sortsel">
             <option value="pop">По популярности</option>
@@ -120,11 +125,11 @@
         <label>Модель
           <select id="tradeModel">
             <option value="0">Выберите модель</option>
-            <option value="45000">iPhone 13</option>
-            <option value="60000">iPhone 14</option>
-            <option value="80000">iPhone 15</option>
-            <option value="20000">Android (флагман)</option>
-            <option value="8000">Android (бюджет)</option>
+            <option value="380">iPhone 13</option>
+            <option value="520">iPhone 14</option>
+            <option value="700">iPhone 15</option>
+            <option value="180">Android (флагман)</option>
+            <option value="70">Android (бюджет)</option>
           </select>
         </label>
         <label>Состояние
@@ -143,53 +148,35 @@
   <section class="section" id="credit">
     <div class="container split">
       <div class="calc reveal" id="creditCalc">
-        <h3>Калькулятор рассрочки</h3>
+        <h3>Калькулятор рассрочки Zero</h3>
         <div class="calc__row2">
-          <label>Модель
+          <label>Товар
             <select id="creditPrice"></select>
           </label>
-          <label>Первый взнос
-            <select id="creditDown">
-              <option value="0">0 ₽</option>
-              <option value="0.1">10%</option>
-              <option value="0.2">20%</option>
-              <option value="0.3">30%</option>
-            </select>
-          </label>
-        </div>
-        <div class="calc__row2">
           <label>Срок
             <select id="creditTerm">
-              <option value="3">3 мес</option>
-              <option value="6">6 мес</option>
-              <option value="12" selected>12 мес</option>
-              <option value="18">18 мес</option>
-              <option value="24">24 мес</option>
-            </select>
-          </label>
-          <label>Ставка
-            <select id="creditRate">
-              <option value="0">0% — промо</option>
-              <option value="12">12% годовых</option>
-              <option value="18">18% годовых</option>
+              <option value="3">3 месяца</option>
+              <option value="6">6 месяцев</option>
+              <option value="12" selected>12 месяцев</option>
             </select>
           </label>
         </div>
         <div class="paybox">
           <span>Платёж в месяц</span>
-          <b id="crMonthly">0 ₽</b>
+          <b id="crMonthly">—</b>
         </div>
         <div class="calc__break" id="crBreak"></div>
       </div>
       <div class="split__text reveal">
-        <p class="eyebrow">Рассрочка</p>
-        <h2 class="section__title">Доступ в рассрочку</h2>
-        <p class="lead">Возьмите новый iPhone сегодня, а платите частями. Без переплаты и справок — оформление за 15 минут.</p>
+        <p class="eyebrow">Рассрочка Zero</p>
+        <h2 class="section__title">Рассрочка через приложение Zero</h2>
+        <p class="lead">Прошёл верификацию в приложении Zero — и сразу берёшь телефон или любую технику в рассрочку. Три срока, каждый со своим коэффициентом.</p>
         <ul class="checklist">
-          <li>Первый взнос от 0 ₽</li>
-          <li>Досрочное погашение без штрафов</li>
-          <li>Одобрение онлайн</li>
+          <li>3 месяца — стоимость делится на 0,94</li>
+          <li>6 месяцев — стоимость делится на 0,89</li>
+          <li>12 месяцев — стоимость делится на 0,84</li>
         </ul>
+        <p class="note">Пример: 40 000 ÷ 0,94 = 42 553 — это сумма к оплате за 3 месяца.</p>
       </div>
     </div>
   </section>
@@ -199,7 +186,7 @@
     <div class="container footer__inner">
       <div>
         <a href="#top" class="logo logo--footer">
-          <span class="logo__badge">М</span>
+          <span class="logo__badge" role="img" aria-label="Мостовой"></span>
           <span class="logo__text">МОСТОВОЙ</span>
         </a>
         <p class="footer__desc">Продажа техники Apple. Обмен и рассрочка.</p>
@@ -212,19 +199,23 @@
       </div>
       <div class="footer__col">
         <h4>Контакты</h4>
-        <a href="tel:+70000000000">+7 (000) 000-00-00</a>
-        <a href="mailto:hello@mostovoy.ru">hello@mostovoy.ru</a>
+        <a href="https://wa.me/996999110110" target="_blank" rel="noopener">Заказать в WhatsApp — 0999 110 110</a>
+        <a href="tel:+996700922622">0700 922 622 — Рахмон</a>
+        <a href="tel:+996999110110">0999 110 110 — рабочий номер</a>
+        <a href="https://t.me/mostovoyshop" target="_blank" rel="noopener">Связаться в Telegram — @mostovoyshop</a>
+        <a href="https://t.me/mostovoyshopp" target="_blank" rel="noopener">Следите за нами — @mostovoyshopp</a>
       </div>
     </div>
     <div class="footer__bottom container">
-      <span>© 2026 МОСТОВОЙ. Демо-каталог, цены примерные.</span>
-      <span>Apple, iPhone — товарные знаки Apple Inc.</span>
+      <span>© 2026 МОСТОВОЙ. Цены и наличие обновляются из Telegram-канала.</span>
+      <span>Apple, iPhone, Samsung — товарные знаки правообладателей.</span>
     </div>
   </footer>
 
   <script src="data.js"></script>
   <script src="photos.js"></script>
   <script src="render.js"></script>
+  <script src="catalog.js"></script>
   <script src="script.js"></script>
 </body>
 </html>

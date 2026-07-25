@@ -72,35 +72,53 @@ function phoneSVG(p) {
   </svg>`;
 }
 
-// Обёртка: SVG-рендер + фото поверх (если файл есть).
-function mediaHTML(p, cls) {
-  // p.img — прямой URL фото (напр. из Telegram/хостинга). Иначе локальный images/{id}.jpg.
-  // Если фото нет — остаётся векторный рендер.
-  const fromFeed = typeof window !== "undefined" && window.PHOTOS && window.PHOTOS[p.id];
-  const src = p.img || fromFeed || `images/${p.id}.jpg`;
-  return `<div class="${cls}">
-    ${phoneSVG(p)}
-    <img src="${src}" alt="${p.name}" loading="lazy"
-      onload="this.previousElementSibling.style.opacity='0'"
-      onerror="this.remove()">
-  </div>`;
+// Заглушка для товаров не-телефонов (приставки, микрофоны, книги…),
+// а также когда внешнее фото перестало открываться.
+function placeholderSVG(p) {
+  const letter = String(p.name || "?").trim().charAt(0).toUpperCase();
+  return `<svg viewBox="0 0 200 200" class="psvg psvg--ph" role="img" aria-label="${p.name || ""}">
+    <rect x="12" y="12" width="176" height="176" rx="28" fill="#f2f2f4" stroke="#e6e6ea"/>
+    <text x="100" y="100" text-anchor="middle" dominant-baseline="central"
+      font-family="Montserrat, sans-serif" font-size="64" font-weight="800" fill="#c9c9d0">${letter}</text>
+  </svg>`;
 }
 
-const fmt = (n) => Math.round(n).toLocaleString("ru-RU") + " ₽";
+// Обёртка: подложка (SVG-рендер телефона или заглушка) + фото поверх.
+// Фото берём из p.image (каталог из базы) или p.img/PHOTOS/images (легаси).
+// Если картинка не загрузилась — она удаляется и остаётся подложка.
+function mediaHTML(p, cls) {
+  const fromFeed = typeof window !== "undefined" && window.PHOTOS && window.PHOTOS[p.id];
+  const src = p.image || p.img || fromFeed || (p.id ? `images/${p.id}.jpg` : "");
+  // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
+  const base = p.tone ? phoneSVG(p) : placeholderSVG(p);
+  const img = src
+    ? `<img src="${src}" alt="${p.name}" loading="lazy"
+        onload="this.previousElementSibling.style.opacity='0'"
+        onerror="this.remove()">`
+    : "";
+  return `<div class="${cls}">${base}${img}</div>`;
+}
 
-// Аннуитетный расчёт рассрочки/кредита.
-// principal — сумма к рассрочке, months — срок, annualRate — годовая ставка (%).
-function installment(principal, months, annualRate) {
+// Рассрочка Zero (онлайн-приложение).
+// Прошёл верификацию — сразу берёшь технику в рассрочку.
+// Сумма к оплате = стоимость / коэффициент срока. Коэффициент задаёт переплату.
+//   3 мес  → / 0.94   (40000 / 0.94 = 42 553,19)
+//   6 мес  → / 0.89   (40000 / 0.89 = 44 943,82)
+//   12 мес → / 0.84   (40000 / 0.84 = 47 619,05)
+const ZERO_TERMS = { 3: 0.94, 6: 0.89, 12: 0.84 };
+const ZERO_TERM_LIST = [3, 6, 12];
+
+function installment(principal, months) {
   principal = Math.max(principal, 0);
-  let monthly;
-  if (annualRate <= 0) {
-    monthly = principal / months;
-  } else {
-    const r = annualRate / 100 / 12;
-    monthly = (principal * r) / (1 - Math.pow(1 + r, -months));
-  }
-  const total = monthly * months;
-  return { monthly, total, overpay: Math.max(total - principal, 0) };
+  const k = ZERO_TERMS[months];
+  if (!k) return { monthly: 0, total: 0, overpay: 0, rate: null };
+  const total = principal / k;
+  return {
+    monthly: total / months,
+    total,
+    overpay: Math.max(total - principal, 0),
+    rate: k,
+  };
 }
 
 // --- Кастомные дропдауны (замена системных <select>) ---

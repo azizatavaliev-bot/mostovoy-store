@@ -10,6 +10,12 @@ node_modules/
 dist/
 build/
 
+# локальная база
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # os / editor
 .DS_Store
 *.log

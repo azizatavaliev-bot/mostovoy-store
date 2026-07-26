@@ -3,7 +3,7 @@
 # (Railway / VPS). Исключаем его, чтобы Vercel не пытался собрать Node-проект.
 server/
 test/
-data/
+/data/
 node_modules/
 .env
 .env.*

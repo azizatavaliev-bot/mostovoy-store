@@ -1,4 +1,4 @@
-// Тянет настоящие фото товаров из Open Icecat и пишет photos.js
+// Тянет настоящие фото товаров из Open Icecat и пишет JSON для фронтенда.
 // Запуск: node fetch-photos.js
 // Логин Icecat берётся из переменной окружения ICECAT_USER (или подставь свой ниже).
 const https = require("https");
@@ -6,7 +6,7 @@ const fs = require("fs");
 
 const USER = process.env.ICECAT_USER || "AzizAtavaliev";
 
-// id товара (из data.js) -> Brand + ProductCode для Icecat.
+// id товара (из frontend/src/data/phones.json) -> Brand + ProductCode для Icecat.
 // Apple заблокирован Icecat (brand restrictions) — по iPhone остаются рендеры.
 const MODELS = {
   "s24-ultra": ["Samsung", "SM-S928BZKHEUB"],
@@ -41,9 +41,8 @@ const get = (url) =>
     }
   }
   fs.writeFileSync(
-    "frontend/src/photos.ts",
-    "// Автогенерация из Icecat (fetch-photos.js). Фото Samsung. Apple — рендеры.\nexport const PHOTOS: Record<string, string> = " +
-      JSON.stringify(out, null, 2) + ";\n"
+    "frontend/src/data/photos.json",
+    JSON.stringify(out, null, 2) + "\n"
   );
-  console.log(`\nГотово: ${Object.keys(out).length} фото → frontend/src/photos.ts`);
+  console.log(`\nГотово: ${Object.keys(out).length} фото → frontend/src/data/photos.json`);
 })();

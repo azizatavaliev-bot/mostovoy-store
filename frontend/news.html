@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>МОСТОВОЙ — товар</title>
+  <meta name="description" content="Новости, поступления и акции магазина техники МОСТОВОЙ в Бишкеке." />
+  <title>Новости — МОСТОВОЙ</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <!-- Header -->
   <header class="header" id="top">
     <div class="container header__inner">
       <a href="index.html" class="logo" aria-label="Мостовой">
@@ -19,20 +19,30 @@
         <a href="index.html#catalog">Каталог</a>
         <a href="index.html#trade">Обмен</a>
         <a href="index.html#credit">Доступ</a>
-        <a href="news.html">Новости</a>
-        <a href="index.html#why">О нас</a>
-        <a href="index.html#footer">Контакты</a>
+        <a href="news.html" aria-current="page">Новости</a>
+        <a href="index.html#location">Контакты</a>
       </nav>
-      <a href="index.html#catalog" class="btn btn--sm header__cta">Каталог</a>
+      <a href="index.html#catalog" class="btn btn--sm header__cta">Купить</a>
       <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
     </div>
   </header>
 
-  <main id="product">
-    <!-- Заполняется product-page.ts -->
+  <main>
+    <section class="newshero">
+      <div class="container">
+        <p class="eyebrow">МОСТОВОЙ · Бишкек</p>
+        <h1>Новости магазина</h1>
+        <p>Новые поступления, акции и важные обновления — без лишней рекламы.</p>
+      </div>
+    </section>
+
+    <section class="section newssection">
+      <div class="container newsfeed" id="newsFeed" aria-live="polite">
+        <p class="newsfeed__state">Загружаем новости…</p>
+      </div>
+    </section>
   </main>
 
-  <!-- Footer -->
   <footer class="footer" id="footer">
     <div class="container footer__inner">
       <div>
@@ -40,34 +50,27 @@
           <span class="logo__badge" role="img" aria-label="Мостовой"></span>
           <span class="logo__text">МОСТОВОЙ</span>
         </a>
-        <p class="footer__desc">Продажа техники Apple. Обмен и рассрочка.</p>
+        <p class="footer__desc">Продажа техники. Обмен и рассрочка.</p>
       </div>
       <div class="footer__col">
         <h4>Навигация</h4>
         <a href="index.html#catalog">Каталог</a>
         <a href="index.html#trade">Обмен</a>
-        <a href="index.html#credit">Доступ</a>
         <a href="news.html">Новости</a>
       </div>
       <div class="footer__col">
         <h4>Контакты</h4>
-        <a href="https://wa.me/996999110110" target="_blank" rel="noopener">Заказать в WhatsApp — 0999 110 110</a>
+        <a href="https://wa.me/996999110110" target="_blank" rel="noopener">WhatsApp — 0999 110 110</a>
         <a href="tel:+996700922622">0700 922 622 — Рахмон</a>
-        <a href="tel:+996999110110">0999 110 110 — рабочий номер</a>
-        <a href="https://t.me/mostovoyshop" target="_blank" rel="noopener">Связаться в Telegram — @mostovoyshop</a>
-        <a href="https://t.me/mostovoyshopp" target="_blank" rel="noopener">Следите за нами — @mostovoyshopp</a>
+        <a href="https://t.me/mostovoyshop" target="_blank" rel="noopener">Telegram — @mostovoyshop</a>
       </div>
     </div>
     <div class="footer__bottom container">
-      <span>© 2026 МОСТОВОЙ. Цены и наличие обновляются из Telegram-канала.</span>
-      <span>Apple, iPhone, Samsung — товарные знаки правообладателей.</span>
-    </div>
-    <div class="footer__credits container">
-      Сделано <a href="https://alihan-torebekov.kg" target="_blank" rel="noopener">Алиханом</a>
-      под руководством <a href="https://www.instagram.com/atavaliev/" target="_blank" rel="noopener">Азиза</a>
+      <span>© 2026 МОСТОВОЙ.</span>
+      <span>Цены и наличие обновляются из Telegram-канала.</span>
     </div>
   </footer>
 
-  <script type="module" src="/src/product-page.ts"></script>
+  <script type="module" src="/src/news-page.ts"></script>
 </body>
 </html>

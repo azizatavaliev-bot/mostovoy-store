@@ -14,18 +14,32 @@ function parseJson(value, fallback) {
   }
 }
 
+// Цена со скидкой — если акция наложена, иначе null. Скидка не меняет
+// хранимую цену: снять акцию — значит вернуть исходную, не пересчитывать.
+function salePriceOf(row) {
+  return row.discount_percent
+    ? Math.round(row.price * (1 - row.discount_percent / 100) * 100) / 100
+    : null;
+}
+
 function toPublic(row) {
+  const salePrice = salePriceOf(row);
   return {
     id: row.slug,
     name: row.official_name,
     brand: row.brand,
     model: row.model,
     category: row.category,
+    group: row.product_group,
     variant: row.variant,
     storage: row.storage,
     color: row.color,
+    swatches: parseJson(row.swatches, []),
     price: row.price,
     currency: row.currency,
+    discountPercent: row.discount_percent ?? null,
+    discountLabel: row.discount_label,
+    salePrice,
     available: Boolean(row.available),
     description: row.description,
     specifications: parseJson(row.specifications, {}),
@@ -91,10 +105,13 @@ function createCatalogRouter({ db }) {
     const row = db.prepare("SELECT * FROM products WHERE slug = ?").get(req.params.slug);
     if (!row) return res.status(404).json({ error: "not_found" });
     const product = toPublic(row);
+    // Сообщения магазину называют ту цену, которую реально заплатят —
+    // со скидкой, если акция активна.
+    const priced = product.salePrice != null ? { ...row, price: product.salePrice } : row;
     res.json({
       product,
-      order: buildWhatsappLink(config.contact.whatsapp, row),
-      contact: buildContactLink(contactUser, row),
+      order: buildWhatsappLink(config.contact.whatsapp, priced),
+      contact: buildContactLink(contactUser, priced),
       sources: db
         .prepare(
           `SELECT m.telegram_message_id, m.telegram_message_updated_at, mp.price, mp.currency, mp.active, mp.available
@@ -107,7 +124,22 @@ function createCatalogRouter({ db }) {
     });
   });
 
+  router.get("/news", (req, res) => {
+    const rows = db
+      .prepare("SELECT * FROM posts WHERE status = 'published' ORDER BY published_at DESC LIMIT 50")
+      .all();
+    res.json({
+      posts: rows.map((r) => ({
+        slug: r.slug,
+        title: r.title,
+        body: r.body,
+        image: r.image,
+        publishedAt: r.published_at,
+      })),
+    });
+  });
+
   return router;
 }
 
-module.exports = { createCatalogRouter, toPublic, VISIBLE_STATUSES };
+module.exports = { createCatalogRouter, toPublic, salePriceOf, VISIBLE_STATUSES };

@@ -145,4 +145,57 @@ module.exports = [
       CREATE INDEX idx_products_match_key ON products(match_key);
     `,
   },
+  {
+    // Группа для сайдбар-фильтра витрины (Гаджеты/Игры/Аксессуары/Другое),
+    // доступные цвета (swatches — как у легаси-телефонов, [[название, hex]]),
+    // и наложенная акция — процент скидки с опциональной подписью.
+    name: "003_group_swatches_discount",
+    sql: `
+      ALTER TABLE products ADD COLUMN product_group TEXT;
+      ALTER TABLE products ADD COLUMN swatches TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE products ADD COLUMN discount_percent REAL;
+      ALTER TABLE products ADD COLUMN discount_label TEXT;
+      CREATE INDEX idx_products_group ON products(product_group);
+    `,
+  },
+  {
+    // Новости магазина. Отдельно от каталога: своя таблица, свой публичный
+    // эндпоинт, своя вкладка в админке.
+    name: "004_posts",
+    sql: `
+      CREATE TABLE posts (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug          TEXT NOT NULL UNIQUE,
+        title         TEXT NOT NULL,
+        body          TEXT NOT NULL,
+        image         TEXT,
+        status        TEXT NOT NULL DEFAULT 'published',
+        published_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_posts_published ON posts(status, published_at);
+    `,
+  },
+  {
+    // Журнал изменений цены — для вкладки «Обновления» в админке: когда,
+    // у какого товара и из какого источника (Telegram / админка) изменилась
+    // цена. Название и слаг денормализованы: товар мог быть переименован
+    // или скрыт, а запись в истории должна оставаться читаемой как есть.
+    name: "005_price_history",
+    sql: `
+      CREATE TABLE price_history (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id    INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        product_slug  TEXT,
+        product_name  TEXT NOT NULL,
+        old_price     REAL,
+        new_price     REAL NOT NULL,
+        currency      TEXT NOT NULL,
+        source        TEXT NOT NULL, -- telegram | admin
+        changed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_price_history_changed ON price_history(changed_at);
+    `,
+  },
 ];

@@ -8,11 +8,12 @@
 const crypto = require("crypto");
 const config = require("../config");
 const logger = require("../logger");
-const { transaction, logSync } = require("../db");
-const { normalizedKey, matchKey, slugify, normalizeStorage, normalizeText, looksUnavailable } = require("../lib/normalize");
+const { transaction, logSync, logPriceChange } = require("../db");
+const { normalizedKey, matchKey, normalizeStorage, normalizeText, looksUnavailable } = require("../lib/normalize");
 const { validateExtraction } = require("../lib/validate");
 const { EXTRACT_SYSTEM, buildExtractUser } = require("../prompts");
 const { matchProduct } = require("./matcher");
+const { slugForProduct } = require("./products");
 
 const MIN_CONFIDENCE_FOR_ACTIVE = 0.75;
 
@@ -28,16 +29,6 @@ function priceAppearsInText(price, text) {
   const asFloat = String(price);
   if (haystack.includes(asFloat)) return true;
   return haystack.includes(asFloat.replace(".", ","));
-}
-
-function uniqueSlug(db, base) {
-  const root = slugify(base);
-  let slug = root;
-  let i = 2;
-  while (db.prepare("SELECT 1 FROM products WHERE slug = ?").get(slug)) {
-    slug = `${root}-${i++}`;
-  }
-  return slug;
 }
 
 function addAlias(db, productId, alias) {
@@ -238,6 +229,17 @@ class SyncService {
            WHERE id = ?`
         ).run(item.price, item.currency, productId);
         addAlias(db, productId, item.source_name);
+        if (match.row.price !== item.price || match.row.currency !== item.currency) {
+          logPriceChange(db, {
+            productId,
+            slug: match.row.slug,
+            name: match.row.official_name,
+            oldPrice: match.row.price,
+            newPrice: item.price,
+            currency: item.currency,
+            source: "telegram",
+          });
+        }
       });
       logger.debug("sync.matched", { product: item.official_name, method: match.method, score: match.score });
     } else {
@@ -255,13 +257,12 @@ class SyncService {
 
       created = true;
       productId = transaction(db, () => {
-        // Признак добавляем в slug, только если его ещё нет в названии,
-        // иначе выходит «steam-deck-oled-512-gb-512-gb».
-        const nameNorm = normalizeText(item.official_name);
-        const extra = [item.storage, item.color, item.variant]
-          .filter((v) => v && !nameNorm.includes(normalizeText(String(v))))
-          .join(" ");
-        const slug = uniqueSlug(db, [item.official_name, extra].filter(Boolean).join(" "));
+        const slug = slugForProduct(db, {
+          name: item.official_name,
+          storage: item.storage,
+          color: item.color,
+          variant: item.variant,
+        });
         db.prepare(
           `INSERT INTO products
              (slug, normalized_key, match_key, official_name, brand, model, category, variant, storage, color,

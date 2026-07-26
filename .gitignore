@@ -11,10 +11,14 @@ dist/
 build/
 
 # локальная база
-data/
+/data/
+uploads/
 *.db
 *.db-wal
 *.db-shm
+
+# build cache
+*.tsbuildinfo
 
 # os / editor
 .DS_Store

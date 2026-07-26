@@ -150,10 +150,11 @@ test("/api/products/:slug отдаёт товар и готовое сообще
   assert.equal(missing.status, 404);
 });
 
-test("витрина отдаётся статикой", async (t) => {
+test("витрина собирается отдельно (frontend/), без сборки — 404", async (t) => {
+  // Фронт теперь на Vite (frontend/), Express отдаёт только frontend/dist —
+  // в тестовом окружении сборки нет, поэтому статика не подключена.
   const app = startApp();
   t.after(app.close);
   const res = await fetch(`${app.base}/index.html`);
-  assert.equal(res.status, 200);
-  assert.ok((await res.text()).includes("МОСТОВОЙ"));
+  assert.equal(res.status, 404);
 });

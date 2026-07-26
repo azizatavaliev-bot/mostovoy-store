@@ -6,7 +6,6 @@
   <title>МОСТОВОЙ — техника в Бишкеке: обмен и рассрочка Zero</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <!-- Header -->
@@ -21,7 +20,7 @@
         <a href="#trade">Обмен</a>
         <a href="#credit">Доступ</a>
         <a href="#why">О нас</a>
-        <a href="#footer">Контакты</a>
+        <a href="#location">Контакты</a>
       </nav>
       <a href="#catalog" class="btn btn--sm header__cta">Купить</a>
       <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
@@ -34,14 +33,13 @@
       <div class="hero__text">
         <p class="eyebrow">Техника · Бишкек</p>
         <h1 class="hero__title">Новая техника.<br /><span class="accent">Уже твоя.</span></h1>
-        <p class="hero__sub">Смартфоны, приставки, гаджеты. Обмен старого на новый и рассрочка Zero. Цены обновляются из нашего Telegram-канала.</p>
+        <p class="hero__sub">Смартфоны, приставки, гаджеты. Обмен старого на новый. Цены обновляются из нашего Telegram-канала.</p>
         <div class="hero__actions">
           <a href="#catalog" class="btn">Смотреть каталог</a>
           <a href="#trade" class="btn btn--ghost">Обменять свой</a>
         </div>
         <div class="hero__stats">
           <div><b id="heroCount">—</b><span>товаров</span></div>
-          <div><b>Zero</b><span>рассрочка</span></div>
           <div><b>2 мин</b><span>оценка обмена</span></div>
         </div>
       </div>
@@ -53,10 +51,23 @@
   <!-- Stats strip -->
   <section class="stats">
     <div class="container stats__inner">
-      <div class="stat reveal"><b>12+</b><span>лет на рынке</span></div>
-      <div class="stat reveal"><b>50 000+</b><span>довольных клиентов</span></div>
+      <div class="stat reveal"><b data-count="12" data-suffix="+">0</b><span>лет на рынке</span></div>
+      <div class="stat reveal"><b data-count="50000" data-suffix="+">0</b><span>довольных клиентов</span></div>
       <div class="stat reveal"><b>#1</b><span>в Кыргызстане</span></div>
-      <div class="stat reveal"><b>1 год</b><span>гарантии</span></div>
+      <div class="stat reveal"><b data-count="1" data-suffix=" год">0</b><span>гарантии</span></div>
+    </div>
+  </section>
+
+  <!-- Акции -->
+  <section class="section sales" id="sales" hidden>
+    <div class="container">
+      <div class="section__head reveal">
+        <div>
+          <p class="eyebrow">Скидки</p>
+          <h2 class="section__title">Акции</h2>
+        </div>
+      </div>
+      <div class="grid" id="salesGrid"></div>
     </div>
   </section>
 
@@ -66,31 +77,40 @@
       <div class="section__head reveal">
         <div>
           <p class="eyebrow">Каталог</p>
-          <h2 class="section__title">Смартфоны</h2>
+          <h2 class="section__title">Товары</h2>
+        </div>
+        <button type="button" class="btn btn--ghost catalog__filtersBtn" id="btnOpenFilters">
+          Фильтры <span class="catalog__filtersCount" id="filtersCount" hidden>0</span>
+        </button>
+      </div>
+
+      <div class="catalog__layout">
+        <div class="catalog__sidebarOverlay" id="sidebarOverlay"></div>
+        <aside class="catalog__sidebar" id="sidebar">
+          <div class="catalog__sidebarHead">
+            <b>Фильтры</b>
+            <button type="button" class="catalog__sidebarClose" id="btnCloseFilters" aria-label="Закрыть">✕</button>
+          </div>
+          <div class="catalog__sidebarBody" id="sidebarBody"><!-- рендерится в script.js --></div>
+        </aside>
+
+        <div class="catalog__main">
+          <div class="toolbar reveal">
+            <div class="search">
+              <span>🔍</span>
+              <input id="search" type="text" placeholder="Поиск товара..." />
+            </div>
+            <select id="sort" class="sortsel">
+              <option value="pop">По популярности</option>
+              <option value="asc">Сначала дешёвые</option>
+              <option value="desc">Сначала дорогие</option>
+            </select>
+          </div>
+          <div class="catalog__chips" id="activeChips"></div>
+          <div class="grid" id="grid"></div>
+          <p class="grid__empty" id="gridEmpty" hidden>Ничего не найдено 🙁</p>
         </div>
       </div>
-      <div class="toolbar reveal">
-        <div class="brandtabs" id="brandTabs"></div>
-        <div class="toolbar__right">
-          <div class="search">
-            <span>🔍</span>
-            <input id="search" type="text" placeholder="Поиск товара..." />
-          </div>
-          <div class="pricefilter">
-            <input id="priceMin" type="number" min="0" placeholder="от" aria-label="Цена от" />
-            <span>—</span>
-            <input id="priceMax" type="number" min="0" placeholder="до" aria-label="Цена до" />
-          </div>
-          <select id="sort" class="sortsel">
-            <option value="pop">По популярности</option>
-            <option value="asc">Сначала дешёвые</option>
-            <option value="desc">Сначала дорогие</option>
-          </select>
-        </div>
-      </div>
-      <div class="filters" id="filters"></div>
-      <div class="grid" id="grid"></div>
-      <p class="grid__empty" id="gridEmpty" hidden>Ничего не найдено 🙁</p>
     </div>
   </section>
 
@@ -148,7 +168,7 @@
   <section class="section" id="credit">
     <div class="container split">
       <div class="calc reveal" id="creditCalc">
-        <h3>Калькулятор рассрочки Zero</h3>
+        <h3>Расчёт рассрочки</h3>
         <div class="calc__row2">
           <label>Товар
             <select id="creditPrice"></select>
@@ -181,6 +201,44 @@
     </div>
   </section>
 
+  <!-- Где мы находимся -->
+  <section class="section section--gray" id="location">
+    <div class="container split">
+      <div class="split__text reveal">
+        <p class="eyebrow">Магазин в Бишкеке</p>
+        <h2 class="section__title">Где мы находимся</h2>
+        <p class="lead">Заходите в шоу-рум — покажем технику вживую, оформим обмен и рассрочку на месте.</p>
+        <address class="location__address">
+          ТЦ ЦУМ «Айчурек», проспект Чуй, 155<br />
+          1 этаж, отдел D14 (2-й филиал)<br />
+          Свердловский район, Бишкек, 720011
+        </address>
+        <ul class="checklist">
+          <li>Доставка по всему Кыргызстану</li>
+          <li>Оценка обмена и оформление рассрочки на месте</li>
+        </ul>
+        <div class="location__contacts">
+          <p class="opt__title">Связаться</p>
+          <a href="tel:+996999110110">Рабочий — 0999 110 110</a>
+          <a href="tel:+996700922622">Рахмон — 0700 922 622</a>
+          <a href="tel:+996708933633">Ислам — 0708 933 633</a>
+        </div>
+        <a
+          href="https://www.google.com/maps/search/?api=1&query=%D0%A6%D0%A3%D0%9C%20%D0%90%D0%B9%D1%87%D1%83%D1%80%D0%B5%D0%BA%2C%20%D0%BF%D1%80%D0%BE%D1%81%D0%BF%D0%B5%D0%BA%D1%82%20%D0%A7%D1%83%D0%B9%20155%2C%20%D0%91%D0%B8%D1%88%D0%BA%D0%B5%D0%BA"
+          target="_blank" rel="noopener" class="btn btn--ghost location__mapLink">Открыть в Google Картах</a>
+      </div>
+      <div class="location__mapWrap reveal">
+        <iframe
+          class="location__map"
+          src="https://www.google.com/maps?q=%D0%A6%D0%A3%D0%9C%20%D0%90%D0%B9%D1%87%D1%83%D1%80%D0%B5%D0%BA%2C%20%D0%BF%D1%80%D0%BE%D1%81%D0%BF%D0%B5%D0%BA%D1%82%20%D0%A7%D1%83%D0%B9%20155%2C%20%D0%91%D0%B8%D1%88%D0%BA%D0%B5%D0%BA&output=embed"
+          title="ТЦ ЦУМ «Айчурек» на карте — МОСТОВОЙ"
+          loading="lazy"
+          referrerpolicy="no-referrer-when-downgrade"
+        ></iframe>
+      </div>
+    </div>
+  </section>
+
   <!-- Footer -->
   <footer class="footer" id="footer">
     <div class="container footer__inner">
@@ -196,12 +254,14 @@
         <a href="#catalog">Каталог</a>
         <a href="#trade">Обмен</a>
         <a href="#credit">Доступ</a>
+        <a href="#location">Где мы находимся</a>
       </div>
       <div class="footer__col">
         <h4>Контакты</h4>
         <a href="https://wa.me/996999110110" target="_blank" rel="noopener">Заказать в WhatsApp — 0999 110 110</a>
         <a href="tel:+996700922622">0700 922 622 — Рахмон</a>
         <a href="tel:+996999110110">0999 110 110 — рабочий номер</a>
+        <a href="tel:+996708933633">0708 933 633 — Ислам</a>
         <a href="https://t.me/mostovoyshop" target="_blank" rel="noopener">Связаться в Telegram — @mostovoyshop</a>
         <a href="https://t.me/mostovoyshopp" target="_blank" rel="noopener">Следите за нами — @mostovoyshopp</a>
       </div>
@@ -210,12 +270,12 @@
       <span>© 2026 МОСТОВОЙ. Цены и наличие обновляются из Telegram-канала.</span>
       <span>Apple, iPhone, Samsung — товарные знаки правообладателей.</span>
     </div>
+    <div class="footer__credits container">
+      Сделано <a href="https://alihan-torebekov.kg" target="_blank" rel="noopener">Алиханом</a>
+      под руководством <a href="https://www.instagram.com/atavaliev/" target="_blank" rel="noopener">Азиза</a>
+    </div>
   </footer>
 
-  <script src="data.js"></script>
-  <script src="photos.js"></script>
-  <script src="render.js"></script>
-  <script src="catalog.js"></script>
-  <script src="script.js"></script>
+  <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

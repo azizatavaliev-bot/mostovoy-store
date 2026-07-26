@@ -1,16 +1,61 @@
 // Страница товара: данные из живого каталога, выбор цвета/памяти,
 // рассрочка Zero, трейд-ин, корзина и кнопка «Связаться» в Telegram.
+import "./styles.css";
+import {
+  CATALOG,
+  cartAdd,
+  convertPrice,
+  fmt,
+  getProduct,
+  handleOrderClick,
+  handleTelegramClick,
+  loadCatalog,
+  mountCartDrawer,
+  mountHeaderControls,
+  mountWhatsappFloat,
+  onCurrencyChange,
+  productMessage,
+  toast,
+} from "./catalog";
+import { enhanceSelects, installment, mediaHTML, ZERO_TERM_LIST } from "./render";
+import type { Product } from "./types";
 
-const root = document.getElementById("product");
+const root = document.getElementById("product") as HTMLElement;
 
 // Выбранные пользователем опции — попадают в сообщение магазину.
-const selected = { color: null, storage: null, variant: null };
+const selected: { color: string | null; storage: string | null; variant: string | null } = {
+  color: null,
+  storage: null,
+  variant: null,
+};
 
-function specRow(k, v) {
+function specRow(k: string, v: string | undefined): string {
   return v ? `<div class="spec"><span>${k}</span><span>${v}</span></div>` : "";
 }
 
-function notFound() {
+// Объём памяти в ГБ из строки вида «256 ГБ» / «1 ТБ» / «512GB».
+function storageGB(str: string | null | undefined): number | null {
+  const m = String(str || "")
+    .toUpperCase()
+    .match(/([\d.]+)\s*(TB|ТБ|GB|ГБ)/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  return /TB|ТБ/.test(m[2]) ? n * 1024 : n;
+}
+
+// Цена товара зависит от выбранной памяти: у p.price — цена младшего варианта
+// (storageOptions[0]), у остальных — наценка. В реальных прайсах Apple/Samsung
+// удвоение объёма стоит дороже не в 2 раза, а примерно на 15–20%, поэтому берём
+// степенную зависимость (ratio ** 0.25), а не линейную или пропорциональную.
+function priceForStorage(basePrice: number, storageOptions: string[], selectedStorage: string | null): number {
+  if (!storageOptions?.length || !selectedStorage) return basePrice;
+  const baseGB = storageGB(storageOptions[0]);
+  const selGB = storageGB(selectedStorage);
+  if (!baseGB || !selGB || baseGB === selGB) return basePrice;
+  return Math.round(basePrice * Math.pow(selGB / baseGB, 0.25));
+}
+
+function notFound(): void {
   root.innerHTML = `<div class="container empty">
     <h1>Товар не найден</h1>
     <p class="lead">Возможно, он больше не продаётся или ссылка устарела.</p>
@@ -18,7 +63,11 @@ function notFound() {
   </div>`;
 }
 
-function renderProduct(p, all) {
+interface PriceState {
+  value: number;
+}
+
+function renderProduct(p: Product, all: Product[]): void {
   document.title = `МОСТОВОЙ — ${p.name}`;
   selected.color = p.color || null;
   selected.storage = p.storage || null;
@@ -39,7 +88,11 @@ function renderProduct(p, all) {
   // По умолчанию выбран первый вариант памяти — он же активная «пилюля».
   if (storageOptions.length) selected.storage = storageOptions[0].trim();
 
-  const specs = Object.entries(p.specifications || {}).filter(([, v]) => v);
+  // Текущая цена с учётом выбранной памяти. p.price всегда остаётся ценой
+  // младшего варианта — от неё считается наценка при переключении пилюль.
+  const priceState: PriceState = { value: p.price };
+
+  const specs = Object.entries(p.specifications || {}).filter(([, v]) => v) as [string, string][];
 
   root.innerHTML = `
   <div class="crumbs container">
@@ -51,7 +104,7 @@ function renderProduct(p, all) {
   <section class="product container">
     <div class="product__media reveal in">
       ${mediaHTML(p, "gallery")}
-      ${p.images?.length > 1 ? `<div class="thumbs">${p.images.slice(0, 5).map((u, i) => `<img src="${u}" alt="" data-i="${i}" class="${i === 0 ? "active" : ""}" onerror="this.remove()">`).join("")}</div>` : ""}
+      ${p.images?.length && p.images.length > 1 ? `<div class="thumbs">${p.images.slice(0, 5).map((u, i) => `<img src="${u}" alt="" data-i="${i}" class="${i === 0 ? "active" : ""}" onerror="this.remove()">`).join("")}</div>` : ""}
     </div>
 
     <div class="product__info reveal in">
@@ -67,7 +120,7 @@ function renderProduct(p, all) {
 
       ${swatches
         ? `<div class="opt">
-             <p class="opt__title">Цвет: <em id="colorName">${p.swatches[0][0]}</em></p>
+             <p class="opt__title">Цвет: <em id="colorName">${(p.swatches as NonNullable<Product["swatches"]>)[0][0]}</em></p>
              <div class="swatches">${swatches}</div>
            </div>`
         : p.color
@@ -117,9 +170,9 @@ function renderProduct(p, all) {
           </select>
         </label>
         <div class="tcalc__rows">
-          <div><span>Цена ${p.name}</span><b>${fmt(p.price, p.currency)}</b></div>
+          <div><span>Цена ${p.name}</span><b id="tcBasePrice">${fmt(priceState.value, p.currency)}</b></div>
           <div class="minus"><span>− Обмен твоего телефона</span><b id="tvVal">− 0</b></div>
-          <div class="total"><span>Остаток</span><b id="tvPay">${fmt(p.price, p.currency)}</b></div>
+          <div class="total"><span>Остаток</span><b id="tvPay">${fmt(priceState.value, p.currency)}</b></div>
         </div>
         <p class="tcalc__sub">Сумма к оплате по Zero:</p>
         <div class="terms" id="terms"></div>
@@ -147,17 +200,17 @@ function renderProduct(p, all) {
   </section>`;
 
   renderRelated(p, all);
-  wireTradeIn(p);
-  wireInteractions(p);
+  const tradeRecalc = wireTradeIn(p, priceState);
+  wireInteractions(p, priceState, tradeRecalc);
 }
 
-function renderRelated(p, all) {
+function renderRelated(p: Product, all: Product[]): void {
   const rel = all
     .filter((x) => x.id !== p.id && x.category === p.category)
     .concat(all.filter((x) => x.id !== p.id && x.category !== p.category))
     .slice(0, 4);
 
-  document.getElementById("related").innerHTML = rel
+  document.getElementById("related")!.innerHTML = rel
     .map(
       (r) => `<article class="card in">
         <a class="card__link" href="product.html?id=${encodeURIComponent(r.id)}">
@@ -173,7 +226,7 @@ function renderRelated(p, all) {
 }
 
 // Оценки трейд-ина заданы в долларах.
-const TRADEIN = [
+const TRADEIN: [string, number][] = [
   ["Не сдаю телефон", 0],
   ["iPhone 15 Pro Max", 900], ["iPhone 15 Pro", 800], ["iPhone 15", 620],
   ["iPhone 14 Pro", 600], ["iPhone 14", 480], ["iPhone 13", 360], ["iPhone 12", 260],
@@ -181,25 +234,27 @@ const TRADEIN = [
   ["Другой Android (флагман)", 180], ["Другой Android (бюджет)", 65],
 ];
 
-function wireTradeIn(p) {
-  const pOld = document.getElementById("pOld");
-  const pCond = document.getElementById("pCond");
+function wireTradeIn(p: Product, priceState: PriceState): () => void {
+  const pOld = document.getElementById("pOld") as HTMLSelectElement;
+  const pCond = document.getElementById("pCond") as HTMLSelectElement;
   pOld.innerHTML = TRADEIN.map((t, i) => `<option value="${t[1]}"${i === 0 ? " selected" : ""}>${t[0]}</option>`).join("");
 
   function recalc() {
+    document.getElementById("tcBasePrice")!.textContent = fmt(priceState.value, p.currency);
+
     // Оценка обмена в USD — приводим к валюте товара, чтобы вычесть из цены.
     const tradeUsd = +pOld.value * +pCond.value;
-    const principal = Math.max(p.price - convertPrice(tradeUsd, "USD", p.currency), 0);
+    const principal = Math.max(priceState.value - (convertPrice(tradeUsd, "USD", p.currency) || 0), 0);
 
-    document.getElementById("tvVal").textContent = "− " + fmt(tradeUsd, "USD");
-    document.getElementById("tvPay").textContent = fmt(principal, p.currency);
-    document.getElementById("terms").innerHTML = ZERO_TERM_LIST.map((t) => {
+    document.getElementById("tvVal")!.textContent = "− " + fmt(tradeUsd, "USD");
+    document.getElementById("tvPay")!.textContent = fmt(principal, p.currency);
+    document.getElementById("terms")!.innerHTML = ZERO_TERM_LIST.map((t) => {
       const r = installment(principal, t);
       return `<div class="term"><b>${fmt(r.monthly, p.currency)}</b><span>× ${t} мес</span><em>всего ${fmt(r.total, p.currency)}</em></div>`;
     }).join("");
 
     const year = installment(principal, 12);
-    document.getElementById("tvOver").textContent =
+    document.getElementById("tvOver")!.textContent =
       principal > 0
         ? `Переплата за 12 мес: + ${fmt(year.overpay, p.currency)} — стоимость делится на ${year.rate}`
         : "Обмен полностью покрывает стоимость 🎉";
@@ -208,27 +263,45 @@ function wireTradeIn(p) {
   [pOld, pCond].forEach((el) => el.addEventListener("change", recalc));
   recalc();
   onCurrencyChange(recalc);
+  return recalc;
 }
 
-function wireInteractions(p) {
+function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () => void): void {
+  // Варианты памяти для расчёта наценки — те же, что показаны пилюлями.
+  const storageOptions = p.specifications?.Память
+    ? String(p.specifications.Память).split(" / ").map((s) => s.trim())
+    : p.storage
+      ? [p.storage]
+      : [];
+
+  function refreshPrice() {
+    document.getElementById("pPrice")!.textContent = fmt(priceState.value, p.currency);
+    document.getElementById("pMonthly")!.textContent =
+      `или от ${fmt(installment(priceState.value, 12).monthly, p.currency)} / мес · Zero`;
+    tradeRecalc();
+  }
+
   root.addEventListener("click", (e) => {
-    const sw = e.target.closest(".swatch");
+    const target = e.target as HTMLElement;
+    const sw = target.closest<HTMLElement>(".swatch");
     if (sw) {
       root.querySelectorAll(".swatch").forEach((s) => s.classList.remove("active"));
       sw.classList.add("active");
-      selected.color = sw.dataset.name;
+      selected.color = sw.dataset.name as string;
       const label = document.getElementById("colorName");
-      if (label) label.textContent = sw.dataset.name;
+      if (label) label.textContent = sw.dataset.name as string;
     }
-    const pill = e.target.closest(".pill");
+    const pill = target.closest<HTMLElement>(".pill");
     if (pill) {
-      pill.parentElement.querySelectorAll(".pill").forEach((s) => s.classList.remove("active"));
+      pill.parentElement!.querySelectorAll(".pill").forEach((s) => s.classList.remove("active"));
       pill.classList.add("active");
-      selected.storage = pill.textContent.trim();
+      selected.storage = (pill.textContent || "").trim();
+      priceState.value = priceForStorage(p.price, storageOptions, selected.storage);
+      refreshPrice();
     }
-    const thumb = e.target.closest(".thumbs img");
+    const thumb = target.closest<HTMLImageElement>(".thumbs img");
     if (thumb) {
-      const main = root.querySelector(".gallery img");
+      const main = root.querySelector<HTMLImageElement>(".gallery img");
       if (main) main.src = thumb.src;
       root.querySelectorAll(".thumbs img").forEach((t) => t.classList.remove("active"));
       thumb.classList.add("active");
@@ -236,23 +309,22 @@ function wireInteractions(p) {
   });
 
   // Заказ — в WhatsApp с готовым текстом, вопрос — в Telegram.
-  document.getElementById("btnBuy").addEventListener("click", () => {
-    handleOrderClick(productMessage(p, selected));
+  // Цена в сообщении — с учётом выбранной памяти (priceState.value).
+  document.getElementById("btnBuy")!.addEventListener("click", () => {
+    handleOrderClick(productMessage({ ...p, price: priceState.value }, selected));
   });
 
-  document.getElementById("btnContact").addEventListener("click", () => {
-    handleTelegramClick(productMessage(p, selected));
+  document.getElementById("btnContact")!.addEventListener("click", () => {
+    handleTelegramClick(productMessage({ ...p, price: priceState.value }, selected));
   });
 
-  document.getElementById("btnCart").addEventListener("click", () => {
+  document.getElementById("btnCart")!.addEventListener("click", () => {
     cartAdd(p.id, 1);
     toast("Добавлено в корзину");
   });
 
   onCurrencyChange(() => {
-    document.getElementById("pPrice").textContent = fmt(p.price, p.currency);
-    document.getElementById("pMonthly").textContent =
-      `или от ${fmt(installment(p.price, 12).monthly, p.currency)} / мес · Zero`;
+    refreshPrice();
     renderRelated(p, CATALOG.products);
   });
 }
@@ -261,9 +333,10 @@ function wireInteractions(p) {
   const all = await loadCatalog();
   mountHeaderControls();
   mountCartDrawer();
+  mountWhatsappFloat();
 
   const id = new URLSearchParams(location.search).get("id");
-  const product = getProduct(id);
+  const product = id ? getProduct(id) : null;
 
   if (!product) notFound();
   else renderProduct(product, all);

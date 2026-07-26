@@ -41,9 +41,9 @@ const get = (url) =>
     }
   }
   fs.writeFileSync(
-    "photos.js",
-    "// Автогенерация из Icecat (fetch-photos.js). Фото Samsung. Apple — рендеры.\nwindow.PHOTOS = " +
+    "frontend/src/photos.ts",
+    "// Автогенерация из Icecat (fetch-photos.js). Фото Samsung. Apple — рендеры.\nexport const PHOTOS: Record<string, string> = " +
       JSON.stringify(out, null, 2) + ";\n"
   );
-  console.log(`\nГотово: ${Object.keys(out).length} фото → photos.js`);
+  console.log(`\nГотово: ${Object.keys(out).length} фото → frontend/src/photos.ts`);
 })();

@@ -1,36 +1,23 @@
-// Первичное наполнение каталога из data.js, чтобы витрина не была пустой
-// до первого поста в канале. data.js — браузерный файл без экспортов,
-// поэтому читаем его через vm (так же, как это делает проверка синтаксиса).
+// Первичное наполнение каталога из frontend/src/data/phones.json, чтобы
+// витрина не была пустой до первого поста в канале. Тот же JSON читает и
+// фронт (frontend/src/data.ts) — единый источник данных для backend и UI.
 const fs = require("fs");
 const path = require("path");
-const vm = require("vm");
 const logger = require("../logger");
 const { normalizedKey, matchKey, slugify } = require("../lib/normalize");
 
-// Читает data.js и photos.js в одной песочнице: PHONES + window.PHOTOS.
-function readLegacyPhones(dir = path.join(__dirname, "..", "..")) {
-  const dataFile = path.join(dir, "data.js");
-  if (!fs.existsSync(dataFile)) return { phones: [], photos: {} };
-  const sandbox = { window: {}, __out: {} };
-  vm.createContext(sandbox);
-  for (const name of ["data.js", "photos.js"]) {
-    const file = path.join(dir, name);
-    if (!fs.existsSync(file)) continue;
-    try {
-      // Эпилог в том же скрипте: `const PHONES` — лексическая переменная,
-      // сама по себе она не становится свойством global в песочнице.
-      const source =
-        fs.readFileSync(file, "utf8") +
-        "\n;try { __out.PHONES = typeof PHONES !== 'undefined' ? PHONES : __out.PHONES; } catch (e) {}";
-      vm.runInContext(source, sandbox, { timeout: 2000 });
-    } catch (e) {
-      logger.warn("seed.legacy_file_failed", { file: name, error: e.message });
-    }
+function readLegacyPhones(dir = path.join(__dirname, "..", "..", "frontend", "src", "data")) {
+  const phonesFile = path.join(dir, "phones.json");
+  const photosFile = path.join(dir, "photos.json");
+  let phones = [];
+  let photos = {};
+  try {
+    if (fs.existsSync(phonesFile)) phones = JSON.parse(fs.readFileSync(phonesFile, "utf8"));
+    if (fs.existsSync(photosFile)) photos = JSON.parse(fs.readFileSync(photosFile, "utf8"));
+  } catch (e) {
+    logger.warn("seed.legacy_file_failed", { error: e.message });
   }
-  return {
-    phones: Array.isArray(sandbox.__out.PHONES) ? sandbox.__out.PHONES : [],
-    photos: sandbox.window.PHOTOS || {},
-  };
+  return { phones: Array.isArray(phones) ? phones : [], photos };
 }
 
 // Цены в data.js — демо в рублях, поэтому валюта RUB.

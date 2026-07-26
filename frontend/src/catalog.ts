@@ -1,21 +1,26 @@
 // Общий слой витрины: живой каталог из API, валюта отображения и корзина.
-// Загружается после render.js и до script.js / product.js.
+// Импортируется из main.ts / product-page.ts.
 //
 // Каталог берётся из /api/catalog (данные из Telegram). Если бэкенд недоступен
 // (например, сайт открыт как статика), используется PHONES из data.js —
 // витрина продолжает работать.
+import { PHONES, type Phone } from "./data";
+import { PHOTOS } from "./photos";
+import type { Cart, CartItem, Contact, Product, Rates } from "./types";
 
 // --- Валюта отображения ---------------------------------------------------
 // Цена товара хранится в базе как есть (из Telegram) и не пересчитывается.
 // Здесь только показ: пользователь выбирает, в чём смотреть.
 
-const CURRENCIES = {
+export type CurrencyCode = "USD" | "KGS" | "RUB";
+
+export const CURRENCIES: Record<CurrencyCode, { code: CurrencyCode; label: string; suffix: string; decimals: number }> = {
   USD: { code: "USD", label: "$ USD", suffix: "$", decimals: 0 },
   KGS: { code: "KGS", label: "с KGS", suffix: "с", decimals: 0 },
   RUB: { code: "RUB", label: "₽ RUB", suffix: "₽", decimals: 0 },
 };
 
-const CATALOG = {
+export const CATALOG: { products: Product[]; contact: Contact; rates: Rates; live: boolean } = {
   products: [],
   contact: {
     // Заказ — в WhatsApp (он умеет предзаполнять текст), вопросы — в Telegram.
@@ -32,50 +37,49 @@ const CATALOG = {
 
 const STORE_KEYS = { currency: "mostovoy_currency", cart: "mostovoy_cart" };
 
-function getDisplayCurrency() {
-  const saved = localStorage.getItem(STORE_KEYS.currency);
-  return CURRENCIES[saved] ? saved : "USD";
+export function getDisplayCurrency(): CurrencyCode {
+  const saved = localStorage.getItem(STORE_KEYS.currency) as CurrencyCode | null;
+  return saved && CURRENCIES[saved] ? saved : "USD";
 }
 
-function setDisplayCurrency(code) {
-  if (!CURRENCIES[code]) return;
+export function setDisplayCurrency(code: string): void {
+  if (!CURRENCIES[code as CurrencyCode]) return;
   localStorage.setItem(STORE_KEYS.currency, code);
   document.dispatchEvent(new CustomEvent("currency:change", { detail: { code } }));
 }
 
 // Пересчёт через доллар — только для отображения.
-function convertPrice(amount, from, to) {
+export function convertPrice(amount: number | null | undefined, from: string, to: string): number | null {
   if (amount == null) return null;
   const rates = CATALOG.rates;
-  const src = rates[from] || 1;
-  const dst = rates[to] || 1;
+  const src = Number(rates[from]) || 1;
+  const dst = Number(rates[to]) || 1;
   if (from === to) return amount;
   return (amount / src) * dst;
 }
 
 // Форматирование цены в выбранной валюте.
-function fmt(amount, sourceCurrency) {
+export function fmt(amount: number | null | undefined, sourceCurrency?: string | null): string {
   if (amount == null) return "—";
   const to = getDisplayCurrency();
   const from = sourceCurrency || "RUB";
   const value = convertPrice(amount, from, to);
   const cur = CURRENCIES[to];
-  return Math.round(value).toLocaleString("ru-RU") + " " + cur.suffix;
+  return Math.round(value as number).toLocaleString("ru-RU") + " " + cur.suffix;
 }
 
 // Цена в исходной валюте — для сообщений в Telegram (там нужна реальная цена).
-function fmtSource(amount, currency) {
+export function fmtSource(amount: number | null | undefined, currency?: string | null): string {
   if (amount == null) return "—";
-  const cur = CURRENCIES[currency] || { suffix: currency || "" };
+  const cur = CURRENCIES[currency as CurrencyCode] || { suffix: currency || "" };
   return Math.round(amount).toLocaleString("ru-RU") + " " + cur.suffix;
 }
 
 // --- Загрузка каталога ----------------------------------------------------
 
 // Легаси-товары из data.js приводим к тому же виду, что и товары из API.
-function fromLegacyPhones() {
-  if (typeof PHONES === "undefined") return [];
-  return PHONES.map((p) => ({
+function fromLegacyPhones(): Product[] {
+  return PHONES.map((p): Product => ({
     id: p.id,
     name: p.name,
     brand: p.brand,
@@ -83,7 +87,7 @@ function fromLegacyPhones() {
     price: p.price,
     currency: "RUB",
     available: true,
-    image: p.img || (window.PHOTOS && window.PHOTOS[p.id]) || null,
+    image: p.img || PHOTOS[p.id] || null,
     images: [],
     description: p.desc,
     specifications: {
@@ -100,15 +104,21 @@ function fromLegacyPhones() {
   }));
 }
 
-async function loadCatalog() {
+interface CatalogResponse {
+  products?: Product[];
+  contact?: Partial<Contact>;
+  rates?: Partial<Rates>;
+}
+
+export async function loadCatalog(): Promise<Product[]> {
   try {
     const res = await fetch("/api/catalog", { headers: { accept: "application/json" } });
     if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json();
+    const data = (await res.json()) as CatalogResponse;
     if (Array.isArray(data.products) && data.products.length) {
       // Цена и наличие — из базы. Визуальные поля телефонов (цвет корпуса,
       // число камер, свотчи) берём из data.js по совпадению id: в базе их нет.
-      const legacy = new Map((typeof PHONES !== "undefined" ? PHONES : []).map((p) => [p.id, p]));
+      const legacy = new Map<string, Phone>(PHONES.map((p) => [p.id, p]));
       CATALOG.products = data.products.map((p) => {
         const l = legacy.get(p.id);
         const visual = l ? { tone: l.tone, lenses: l.lenses, style: l.style, swatches: l.swatches } : {};
@@ -120,27 +130,29 @@ async function loadCatalog() {
       return CATALOG.products;
     }
   } catch (e) {
-    console.warn("Каталог из API недоступен, показываем data.js:", e.message);
+    console.warn("Каталог из API недоступен, показываем data.js:", (e as Error).message);
   }
   CATALOG.products = fromLegacyPhones();
   CATALOG.live = false;
   return CATALOG.products;
 }
 
-function getProduct(id) {
+export function getProduct(id: string): Product | null {
   return CATALOG.products.find((p) => String(p.id) === String(id)) || null;
 }
 
 // --- Корзина --------------------------------------------------------------
 
 // Позиция корзины: { qty, color }. Старый формат { id: число } поддерживаем.
-function readCart() {
+function readCart(): Cart {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORE_KEYS.cart) || "{}");
+    const raw = JSON.parse(localStorage.getItem(STORE_KEYS.cart) || "{}") as Record<string, unknown>;
     if (!raw || typeof raw !== "object") return {};
-    const out = {};
+    const out: Cart = {};
     for (const [id, v] of Object.entries(raw)) {
-      out[id] = typeof v === "number" ? { qty: v, color: null } : { qty: v.qty || 1, color: v.color || null };
+      out[id] = typeof v === "number"
+        ? { qty: v, color: null }
+        : { qty: (v as { qty?: number }).qty || 1, color: (v as { color?: string | null }).color || null };
     }
     return out;
   } catch {
@@ -148,63 +160,63 @@ function readCart() {
   }
 }
 
-function writeCart(cart) {
+function writeCart(cart: Cart): void {
   localStorage.setItem(STORE_KEYS.cart, JSON.stringify(cart));
   document.dispatchEvent(new CustomEvent("cart:change", { detail: { cart } }));
 }
 
-function cartAdd(id, qty = 1, color = null) {
+export function cartAdd(id: string, qty = 1, color: string | null = null): void {
   const cart = readCart();
   const item = cart[id] || { qty: 0, color: null };
   cart[id] = { qty: Math.max(1, item.qty + qty), color: color ?? item.color };
   writeCart(cart);
 }
 
-function cartSet(id, qty) {
+export function cartSet(id: string, qty: number): void {
   const cart = readCart();
   if (qty <= 0) delete cart[id];
   else cart[id] = { qty, color: cart[id]?.color ?? null };
   writeCart(cart);
 }
 
-function cartRemove(id) {
+export function cartRemove(id: string): void {
   cartSet(id, 0);
 }
 
-function cartClear() {
+export function cartClear(): void {
   writeCart({});
 }
 
-function cartCount() {
+export function cartCount(): number {
   return Object.values(readCart()).reduce((a, i) => a + i.qty, 0);
 }
 
 // Позиции корзины с раскрытыми товарами. Пропавшие товары отбрасываем.
-function cartItems() {
+export function cartItems(): CartItem[] {
   const cart = readCart();
   return Object.entries(cart)
     .map(([id, i]) => ({ product: getProduct(id), qty: i.qty, color: i.color }))
-    .filter((i) => i.product);
+    .filter((i): i is CartItem => Boolean(i.product));
 }
 
 // Итог в валюте отображения (позиции могут быть в разных валютах).
-function cartTotal() {
+export function cartTotal(): number {
   const to = getDisplayCurrency();
-  return cartItems().reduce((sum, i) => sum + convertPrice(i.product.price, i.product.currency, to) * i.qty, 0);
+  return cartItems().reduce((sum, i) => sum + (convertPrice(i.product.price, i.product.currency, to) || 0) * i.qty, 0);
 }
 
 // --- Сообщения в Telegram -------------------------------------------------
 
 // t.me/<username> не умеет предзаполнять текст, поэтому текст кладём
 // в буфер обмена и открываем чат магазина.
-function telegramContactUrl() {
+export function telegramContactUrl(): string {
   return CATALOG.contact.url || `https://t.me/${CATALOG.contact.telegram}`;
 }
 
-function productMessage(product, selected = {}) {
+export function productMessage(product: Product | null, selected: Partial<Pick<Product, "storage" | "color" | "variant">> = {}): string {
   if (!product) return "Здравствуйте! Хочу проконсультироваться по выбору техники.";
   const parts = [product.name];
-  const inName = (v) => v && product.name.toLowerCase().includes(String(v).toLowerCase());
+  const inName = (v: unknown) => v && product.name.toLowerCase().includes(String(v).toLowerCase());
   const storage = selected.storage ?? product.storage;
   const color = selected.color ?? product.color;
   const variant = selected.variant ?? product.variant;
@@ -220,7 +232,7 @@ function productMessage(product, selected = {}) {
 }
 
 // Заказ целиком: список позиций и итог.
-function cartMessage() {
+export function cartMessage(): string {
   const items = cartItems();
   if (!items.length) return "Здравствуйте! Хочу проконсультироваться по выбору техники.";
 
@@ -231,7 +243,7 @@ function cartMessage() {
   });
 
   // Итог считаем отдельно по каждой валюте — конвертацию магазину не навязываем.
-  const byCurrency = {};
+  const byCurrency: Record<string, number> = {};
   for (const i of items) {
     byCurrency[i.product.currency] = (byCurrency[i.product.currency] || 0) + i.product.price * i.qty;
   }
@@ -245,17 +257,17 @@ function cartMessage() {
 // --- WhatsApp: сюда уходят заказы -----------------------------------------
 // wa.me поддерживает ?text=, поэтому сообщение подставляется само.
 
-function whatsappUrl(text) {
+export function whatsappUrl(text: string): string {
   const phone = String(CATALOG.contact.whatsapp || "").replace(/\D/g, "");
   return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 
-function openWhatsApp(text) {
+export function openWhatsApp(text: string): void {
   window.open(whatsappUrl(text), "_blank", "noopener");
 }
 
 // Копирует текст и открывает чат магазина. Возвращает true, если скопировалось.
-async function openTelegramWith(text) {
+export async function openTelegramWith(text: string): Promise<boolean> {
   let copied = false;
   try {
     await navigator.clipboard.writeText(text);
@@ -267,8 +279,10 @@ async function openTelegramWith(text) {
   return copied;
 }
 
-function toast(message) {
-  let el = document.querySelector(".toast");
+let toastTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function toast(message: string): void {
+  let el = document.querySelector<HTMLDivElement>(".toast");
   if (!el) {
     el = document.createElement("div");
     el.className = "toast";
@@ -276,18 +290,18 @@ function toast(message) {
   }
   el.textContent = message;
   el.classList.add("show");
-  clearTimeout(el._t);
-  el._t = setTimeout(() => el.classList.remove("show"), 3200);
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el!.classList.remove("show"), 3200);
 }
 
 // «Купить» / «Оформить заказ» — WhatsApp с готовым текстом.
-function handleOrderClick(text) {
+export function handleOrderClick(text: string): void {
   openWhatsApp(text);
   toast("Открываем WhatsApp с вашим заказом");
 }
 
 // «Связаться» — Telegram. Текст кладём в буфер: t.me не умеет ?text=.
-async function handleTelegramClick(text) {
+export async function handleTelegramClick(text: string): Promise<void> {
   const copied = await openTelegramWith(text);
   toast(copied ? "Сообщение скопировано — вставьте его в чат" : "Открываем чат магазина");
 }
@@ -296,7 +310,7 @@ async function handleTelegramClick(text) {
 // Создаётся из JS, чтобы обе страницы (главная и товар) получили его без
 // дублирования разметки в index.html и product.html.
 
-function mountHeaderControls() {
+export function mountHeaderControls(): void {
   const header = document.querySelector(".header__inner");
   if (!header || header.querySelector(".curswitch")) return;
 
@@ -312,8 +326,8 @@ function mountHeaderControls() {
     .map((c) => `<button type="button" data-cur="${c.code}" title="Показывать цены в ${c.code}">${c.suffix}</button>`)
     .join("");
   cur.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-cur]");
-    if (btn) setDisplayCurrency(btn.dataset.cur);
+    const btn = (e.target as HTMLElement).closest<HTMLElement>("[data-cur]");
+    if (btn) setDisplayCurrency(btn.dataset.cur as string);
   });
 
   // Минималистичная иконка-сумка в стиле Feather Icons (MIT), встроена в код —
@@ -338,11 +352,11 @@ function mountHeaderControls() {
 
   const syncCur = () => {
     const active = getDisplayCurrency();
-    cur.querySelectorAll("[data-cur]").forEach((b) => b.classList.toggle("active", b.dataset.cur === active));
+    cur.querySelectorAll<HTMLElement>("[data-cur]").forEach((b) => b.classList.toggle("active", b.dataset.cur === active));
   };
   const syncCount = () => {
     const n = cartCount();
-    cartBtn.querySelector(".cartbtn__n").textContent = String(n);
+    cartBtn.querySelector(".cartbtn__n")!.textContent = String(n);
     cartBtn.classList.toggle("has", n > 0);
   };
   document.addEventListener("currency:change", syncCur);
@@ -351,7 +365,26 @@ function mountHeaderControls() {
   syncCount();
 }
 
-function mountCartDrawer() {
+// Плавающая кнопка WhatsApp — всегда видна справа, на любой странице.
+export function mountWhatsappFloat(): void {
+  if (document.querySelector(".wafloat")) return;
+
+  const WA_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12.04 2c-5.52 0-10 4.48-10 10 0 1.77.46 3.45 1.27 4.9L2 22l5.25-1.38A9.96 9.96 0 0 0 12.04 22c5.52 0 10-4.48 10-10s-4.48-10-10-10zm5.87 14.2c-.25.7-1.45 1.34-2 1.43-.5.08-1.15.11-1.86-.12-.43-.14-.98-.32-1.69-.63-2.97-1.28-4.9-4.27-5.05-4.47-.15-.2-1.2-1.6-1.2-3.05 0-1.45.76-2.16 1.03-2.46.27-.3.6-.37.8-.37h.57c.18 0 .43-.07.67.51.25.6.85 2.08.92 2.23.07.15.12.33.02.53-.1.2-.15.32-.3.5-.15.18-.32.4-.45.53-.15.15-.31.32-.13.63.18.3.79 1.3 1.7 2.1 1.17 1.04 2.15 1.37 2.46 1.52.31.15.49.13.67-.08.18-.2.77-.9.98-1.2.2-.31.4-.26.68-.16.27.1 1.75.82 2.05.97.3.15.5.23.57.35.08.13.08.73-.17 1.43z"/>
+    </svg>`;
+
+  const a = document.createElement("a");
+  a.className = "wafloat";
+  a.href = whatsappUrl("Здравствуйте! Хочу узнать про товар.");
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.setAttribute("aria-label", "Написать в WhatsApp");
+  a.innerHTML = WA_ICON;
+
+  document.body.appendChild(a);
+}
+
+export function mountCartDrawer(): void {
   if (document.querySelector(".cart")) return;
 
   const overlay = document.createElement("div");
@@ -373,19 +406,19 @@ function mountCartDrawer() {
       <p class="cart__hint">Откроется WhatsApp с готовым списком заказа — останется только отправить.</p>
     </div>`;
 
-  drawer.querySelector(".cart__close").addEventListener("click", () => openCart(false));
-  drawer.querySelector(".cart__clear").addEventListener("click", () => cartClear());
-  drawer.querySelector(".cart__buy").addEventListener("click", () => {
+  drawer.querySelector(".cart__close")!.addEventListener("click", () => openCart(false));
+  drawer.querySelector(".cart__clear")!.addEventListener("click", () => cartClear());
+  drawer.querySelector(".cart__buy")!.addEventListener("click", () => {
     if (!cartItems().length) return toast("Корзина пуста");
     handleOrderClick(cartMessage());
   });
 
-  drawer.querySelector(".cart__body").addEventListener("click", (e) => {
-    const id = e.target.closest("[data-id]")?.dataset.id;
+  drawer.querySelector(".cart__body")!.addEventListener("click", (e) => {
+    const id = (e.target as HTMLElement).closest<HTMLElement>("[data-id]")?.dataset.id;
     if (!id) return;
-    if (e.target.closest(".ci__plus")) cartAdd(id, 1);
-    if (e.target.closest(".ci__minus")) cartSet(id, (readCart()[id] || 1) - 1);
-    if (e.target.closest(".ci__del")) cartRemove(id);
+    if ((e.target as HTMLElement).closest(".ci__plus")) cartAdd(id, 1);
+    if ((e.target as HTMLElement).closest(".ci__minus")) cartSet(id, (readCart()[id]?.qty || 1) - 1);
+    if ((e.target as HTMLElement).closest(".ci__del")) cartRemove(id);
   });
 
   document.body.appendChild(overlay);
@@ -396,13 +429,13 @@ function mountCartDrawer() {
   renderCart();
 }
 
-function openCart(show) {
+export function openCart(show: boolean): void {
   document.querySelector(".cart")?.classList.toggle("open", show);
   document.querySelector(".cart__overlay")?.classList.toggle("show", show);
   document.body.classList.toggle("noscroll", show);
 }
 
-function renderCart() {
+export function renderCart(): void {
   const body = document.querySelector(".cart__body");
   if (!body) return;
   const items = cartItems();
@@ -434,6 +467,6 @@ function renderCart() {
 }
 
 // Перерисовываем цены на странице при смене валюты.
-function onCurrencyChange(fn) {
+export function onCurrencyChange(fn: () => void): void {
   document.addEventListener("currency:change", fn);
 }

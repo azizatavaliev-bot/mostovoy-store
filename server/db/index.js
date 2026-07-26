@@ -99,4 +99,17 @@ function logSync(conn, { level = "info", event, chatId, messageId, productId, de
     );
 }
 
-module.exports = { getDb, createConnection, closeDb, transaction, migrate, logSync };
+// Для вкладки «Обновления» в админке: когда, у какого товара и откуда
+// (Telegram-синхронизация или админка) изменилась цена. Пишем только когда
+// цена реально меняется — не на каждый sync, иначе журнал бесполезен.
+function logPriceChange(conn, { productId, slug, name, oldPrice, newPrice, currency, source }) {
+  if (oldPrice === newPrice) return;
+  conn
+    .prepare(
+      `INSERT INTO price_history (product_id, product_slug, product_name, old_price, new_price, currency, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(productId, slug || null, name, oldPrice ?? null, newPrice, currency, source);
+}
+
+module.exports = { getDb, createConnection, closeDb, transaction, migrate, logSync, logPriceChange };

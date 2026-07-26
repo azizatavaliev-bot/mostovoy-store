@@ -1,24 +1,26 @@
 // Рендер телефона: реалистичный SVG «вид сзади» по данным модели.
 // Если есть фото images/{id}.jpg — оно перекрывает SVG.
+import { PHOTOS } from "./photos";
+import type { Installment, Product } from "./types";
 
-function darken(hex, amt) {
+function darken(hex: string, amt: number): string {
   const n = parseInt(hex.slice(1), 16);
-  const cl = (v) => Math.max(0, Math.min(255, v));
+  const cl = (v: number) => Math.max(0, Math.min(255, v));
   const r = cl((n >> 16) - amt), g = cl(((n >> 8) & 255) - amt), b = cl((n & 255) - amt);
   return "#" + ((r << 16) | (g << 8) | b).toString(16).padStart(6, "0");
 }
 
-function lensSVG(cx, cy, r) {
+function lensSVG(cx: number, cy: number, r: number): string {
   return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="#0b0b0d"/>
     <circle cx="${cx}" cy="${cy}" r="${r * 0.62}" fill="#20222a"/>
     <circle cx="${cx}" cy="${cy}" r="${r * 0.34}" fill="#0c0d12"/>
     <circle cx="${cx - r * 0.28}" cy="${cy - r * 0.28}" r="${r * 0.16}" fill="#4a5568"/>`;
 }
 
-function cameraModule(p) {
+function cameraModule(p: Product): string {
   // Samsung: отдельные линзы вертикально слева (без модуля).
   if (p.style === "samsung") {
-    const n = p.lenses;
+    const n = p.lenses || 0;
     let out = "";
     for (let i = 0; i < n; i++) {
       out += lensSVG(62, 46 + i * (n >= 4 ? 40 : 48), i < 2 ? 13 : 10);
@@ -27,7 +29,7 @@ function cameraModule(p) {
     return out;
   }
   // Apple: модуль камеры сверху-слева. Pro (3 линзы) — квадратный блок, обычный (2) — компактный, SE (1) — одиночная.
-  if (p.lenses >= 3) {
+  if ((p.lenses || 0) >= 3) {
     return `<rect x="42" y="30" width="70" height="70" rx="22" fill="rgba(0,0,0,.16)" stroke="rgba(0,0,0,.22)"/>
       ${lensSVG(62, 50, 12)}${lensSVG(62, 80, 12)}${lensSVG(92, 65, 12)}
       <circle cx="96" cy="42" r="4.5" fill="#e6e6ea"/>
@@ -41,8 +43,9 @@ function cameraModule(p) {
   return `${lensSVG(72, 56, 13)}<circle cx="98" cy="50" r="4" fill="#e6e6ea"/>`;
 }
 
-function phoneSVG(p) {
-  const light = darken(p.tone, -14), mid = p.tone, dark = darken(p.tone, 30);
+function phoneSVG(p: Product): string {
+  const tone = p.tone as string;
+  const light = darken(tone, -14), mid = tone, dark = darken(tone, 30);
   return `<svg viewBox="0 0 200 410" class="psvg" role="img" aria-label="${p.name}">
     <defs>
       <linearGradient id="body-${p.id}" x1="0" y1="0" x2="1" y2="1">
@@ -63,7 +66,7 @@ function phoneSVG(p) {
       </radialGradient>
     </defs>
     <ellipse cx="100" cy="398" rx="60" ry="11" fill="url(#floor-${p.id})"/>
-    <rect x="30" y="6" width="140" height="384" rx="46" fill="url(#body-${p.id})" stroke="${darken(p.tone, 40)}" stroke-width="1.2"/>
+    <rect x="30" y="6" width="140" height="384" rx="46" fill="url(#body-${p.id})" stroke="${darken(tone, 40)}" stroke-width="1.2"/>
     <rect x="34" y="10" width="132" height="376" rx="42" fill="none" stroke="rgba(255,255,255,.14)" stroke-width="1"/>
     ${cameraModule(p)}
     <circle cx="100" cy="210" r="16" fill="rgba(255,255,255,.09)"/>
@@ -74,7 +77,7 @@ function phoneSVG(p) {
 
 // Заглушка для товаров не-телефонов (приставки, микрофоны, книги…),
 // а также когда внешнее фото перестало открываться.
-function placeholderSVG(p) {
+function placeholderSVG(p: Product): string {
   const letter = String(p.name || "?").trim().charAt(0).toUpperCase();
   return `<svg viewBox="0 0 200 200" class="psvg psvg--ph" role="img" aria-label="${p.name || ""}">
     <rect x="12" y="12" width="176" height="176" rx="28" fill="#f2f2f4" stroke="#e6e6ea"/>
@@ -86,9 +89,9 @@ function placeholderSVG(p) {
 // Обёртка: подложка (SVG-рендер телефона или заглушка) + фото поверх.
 // Фото берём из p.image (каталог из базы) или p.img/PHOTOS/images (легаси).
 // Если картинка не загрузилась — она удаляется и остаётся подложка.
-function mediaHTML(p, cls) {
-  const fromFeed = typeof window !== "undefined" && window.PHOTOS && window.PHOTOS[p.id];
-  const src = p.image || p.img || fromFeed || (p.id ? `images/${p.id}.jpg` : "");
+export function mediaHTML(p: Product, cls: string): string {
+  const fromFeed = PHOTOS[p.id];
+  const src = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.jpg` : "");
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);
   const img = src
@@ -105,10 +108,10 @@ function mediaHTML(p, cls) {
 //   3 мес  → / 0.94   (40000 / 0.94 = 42 553,19)
 //   6 мес  → / 0.89   (40000 / 0.89 = 44 943,82)
 //   12 мес → / 0.84   (40000 / 0.84 = 47 619,05)
-const ZERO_TERMS = { 3: 0.94, 6: 0.89, 12: 0.84 };
-const ZERO_TERM_LIST = [3, 6, 12];
+const ZERO_TERMS: Record<number, number> = { 3: 0.94, 6: 0.89, 12: 0.84 };
+export const ZERO_TERM_LIST = [3, 6, 12];
 
-function installment(principal, months) {
+export function installment(principal: number, months: number): Installment {
   principal = Math.max(principal, 0);
   const k = ZERO_TERMS[months];
   if (!k) return { monthly: 0, total: 0, overpay: 0, rate: null };
@@ -122,12 +125,14 @@ function installment(principal, months) {
 }
 
 // --- Кастомные дропдауны (замена системных <select>) ---
-function enhanceSelect(sel) {
+const customSelects = new WeakMap<HTMLSelectElement, { build: () => void; update: () => void }>();
+
+function enhanceSelect(sel: HTMLSelectElement): void {
   if (sel.dataset.cs) return;
   sel.dataset.cs = "1";
   const wrap = document.createElement("div");
   wrap.className = "cselect";
-  sel.parentNode.insertBefore(wrap, sel);
+  sel.parentNode!.insertBefore(wrap, sel);
   wrap.appendChild(sel);
   const btn = document.createElement("button");
   btn.type = "button";
@@ -166,11 +171,21 @@ function enhanceSelect(sel) {
   });
   build();
   update();
-  sel._cs = { build, update };
+  customSelects.set(sel, { build, update });
 }
-function enhanceSelects(root = document) {
-  root.querySelectorAll("select").forEach(enhanceSelect);
+
+export function enhanceSelects(root: ParentNode = document): void {
+  root.querySelectorAll("select").forEach((sel) => enhanceSelect(sel as HTMLSelectElement));
 }
+
+// Перестроить кастомный дропдаун после того, как его options поменяли в JS
+// (enhanceSelect строит меню один раз и дальше не следит за <option>).
+export function refreshCustomSelect(sel: HTMLSelectElement): void {
+  const cs = customSelects.get(sel);
+  cs?.build();
+  cs?.update();
+}
+
 document.addEventListener("click", () =>
   document.querySelectorAll(".cselect.open").forEach((w) => w.classList.remove("open"))
 );

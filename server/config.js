@@ -85,9 +85,17 @@ const config = {
     channel: (process.env.TELEGRAM_CHANNEL_USERNAME || "mostovoyshopp").replace(/^@/, ""),
     // Телефоны для футера.
     phones: [
-      { number: "996700922622", label: "0700 922 622", who: "Рахмон" },
       { number: "996999110110", label: "0999 110 110", who: "рабочий номер" },
+      { number: "996700922622", label: "0700 922 622", who: "Рахмон" },
+      { number: "996708933633", label: "0708 933 633", who: "Ислам" },
     ],
+    // Шоу-рум магазина — для блока «Где мы находимся» на главной.
+    address: {
+      line1: "ТЦ ЦУМ «Айчурек», проспект Чуй, 155",
+      line2: "1 этаж, отдел D14 (2-й филиал)",
+      line3: "Свердловский район, Бишкек, 720011",
+      mapQuery: "ЦУМ Айчурек, проспект Чуй 155, Бишкек",
+    },
   },
 
   // Курсы ТОЛЬКО для показа цены в другой валюте на витрине.
@@ -98,6 +106,27 @@ const config = {
     KGS: Number(process.env.RATE_USD_KGS) || 87.5,
     RUB: Number(process.env.RATE_USD_RUB) || 79,
   },
+
+  // Админка (/admin.html и /api/admin/*): ручное добавление и правка товаров.
+  // Два независимых способа войти:
+  //  - token — для CLI/скриптов (npm run admin, curl), заголовок x-admin-token;
+  //  - username/passwordHash — для входа в браузере по логину и паролю,
+  //    выдаёт подписанную сессионную cookie (см. server/lib/auth.js).
+  // Без обоих способов раздел выключен целиком — дефолтов нет.
+  admin: {
+    token: process.env.ADMIN_TOKEN || "",
+    username: process.env.ADMIN_USERNAME || "",
+    passwordHash: process.env.ADMIN_PASSWORD_HASH || "",
+    // Подпись сессионных cookie. Без него вход по паролю недоступен —
+    // подписывать сессии нечем.
+    sessionSecret: process.env.SESSION_SECRET || "",
+    sessionTtlMs: int(process.env.ADMIN_SESSION_TTL_HOURS, 12) * 60 * 60 * 1000,
+  },
+
+  uploads: {
+    dir: resolvePath(process.env.UPLOADS_DIR, "uploads"),
+    maxBytes: int(process.env.UPLOAD_MAX_BYTES, 8 * 1024 * 1024),
+  },
 };
 
 // Что реально настроено — используется в /api/health и при старте.
@@ -106,6 +135,9 @@ config.features = {
   deepseek: Boolean(config.deepseek.apiKey),
   research: config.research.provider !== "none",
   contact: Boolean(config.contact.telegram),
+  adminToken: Boolean(config.admin.token),
+  adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
 };
+config.features.admin = config.features.adminToken || config.features.adminLogin;
 
 module.exports = config;

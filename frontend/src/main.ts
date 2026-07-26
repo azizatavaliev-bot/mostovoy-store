@@ -9,9 +9,9 @@ import {
   getDisplayCurrency,
   loadCatalog,
   mountCartDrawer,
-  mountHeaderControls,
   mountWhatsappFloat,
   onCurrencyChange,
+  openCart,
   toast,
 } from "./catalog";
 import { enhanceSelects, installment, mediaHTML, refreshCustomSelect } from "./render";
@@ -33,8 +33,6 @@ const grid = document.getElementById("grid") as HTMLDivElement;
 const gridEmpty = document.getElementById("gridEmpty") as HTMLParagraphElement;
 const searchInput = document.getElementById("search") as HTMLInputElement;
 const sortSel = document.getElementById("sort") as HTMLSelectElement;
-const heroVisual = document.getElementById("heroVisual");
-
 let products: Product[] = [];
 
 // --- Сайдбар: тип товара → подкатегория, бренд, диапазон цены -------------
@@ -471,22 +469,20 @@ function observeCards(): void {
 (async function init() {
   products = await loadCatalog();
 
-  mountHeaderControls();
   mountCartDrawer();
   mountWhatsappFloat();
 
-  // В герое показываем флагманский iPhone — витринный товар магазина.
-  const heroProduct =
-    products.find((p) => /iphone 17 pro max/i.test(p.name)) ||
-    products.find((p) => /iphone 16 pro max/i.test(p.name)) ||
-    products.find((p) => /iphone/i.test(p.name)) ||
-    products[0];
-  if (heroVisual && heroProduct) heroVisual.innerHTML = mediaHTML(heroProduct, "hero__phone");
   const heroCount = document.getElementById("heroCount");
   if (heroCount) {
     heroCount.dataset.count = String(products.length);
     animateCount(heroCount);
   }
+  document.getElementById("headerSearch")?.addEventListener("click", () => {
+    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+    window.setTimeout(() => searchInput.focus(), 500);
+  });
+  document.getElementById("headerFavorites")?.addEventListener("click", () => toast("Избранное появится скоро"));
+  document.getElementById("headerCart")?.addEventListener("click", () => openCart(true));
 
   renderSidebar();
   renderGrid();

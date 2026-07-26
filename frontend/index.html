@@ -7,23 +7,32 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 </head>
-<body>
+<body class="home">
   <!-- Header -->
   <header class="header" id="top">
     <div class="container header__inner">
-      <a href="#top" class="logo" aria-label="Мостовой">
-        <span class="logo__badge" role="img" aria-label="Мостовой"></span>
-        <span class="logo__text">МОСТОВОЙ</span>
+      <a href="#top" class="home-logo" aria-label="Мостовой — магазин техники">
+        <span class="home-logo__mark" aria-hidden="true">М</span>
+        <span class="home-logo__copy"><b>МОСТОВОЙ</b><small>магазин техники</small></span>
       </a>
       <nav class="nav" id="nav">
-        <a href="#catalog">Каталог</a>
+        <a href="#catalog">Каталог <span class="nav__chevron">⌄</span></a>
         <a href="#trade">Обмен</a>
-        <a href="#credit">Доступ</a>
-        <a href="news.html">Новости</a>
+        <a href="#credit">Доставка и оплата</a>
         <a href="#why">О нас</a>
         <a href="#location">Контакты</a>
       </nav>
-      <a href="#catalog" class="btn btn--sm header__cta">Купить</a>
+      <div class="home-header__actions">
+        <button type="button" class="home-header__icon" id="headerSearch" aria-label="Поиск">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
+        </button>
+        <button type="button" class="home-header__icon" id="headerFavorites" aria-label="Избранное">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>
+        </button>
+        <button type="button" class="btn btn--sm header__cta" id="headerCart">Купить
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12l-1 12H7L6 8Z"></path><path d="M9 8V6a3 3 0 0 1 6 0v2"></path></svg>
+        </button>
+      </div>
       <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
     </div>
   </header>
@@ -32,30 +41,55 @@
   <section class="hero">
     <div class="container hero__inner">
       <div class="hero__text">
-        <p class="eyebrow">Техника · Бишкек</p>
-        <h1 class="hero__title">Новая техника.<br /><span class="accent">Уже твоя.</span></h1>
-        <p class="hero__sub">Смартфоны, приставки, гаджеты. Обмен старого на новый. Цены обновляются из нашего Telegram-канала.</p>
+        <p class="eyebrow">Apple · официально</p>
+        <h1 class="hero__title">Новый iPhone.<br /><span class="accent">Уже твой.</span></h1>
+        <p class="hero__sub">Обмен старого на новый и рассрочка без переплат.<br />Вся линейка iPhone в наличии.</p>
         <div class="hero__actions">
-          <a href="#catalog" class="btn">Смотреть каталог</a>
-          <a href="#trade" class="btn btn--ghost">Обменять свой</a>
+          <a href="#catalog" class="btn">Смотреть каталог <span aria-hidden="true">›</span></a>
+          <a href="#trade" class="btn btn--ghost">Обменять свой <span aria-hidden="true">›</span></a>
         </div>
-        <div class="hero__stats">
-          <div><b id="heroCount">—</b><span>товаров</span></div>
-          <div><b>2 мин</b><span>оценка обмена</span></div>
+        <div class="hero__quickfacts">
+          <div class="hero__quickfact">
+            <span class="hero__quickicon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 8 8-4 8 4-8 4-8-4Z"></path><path d="m4 8 8 4v8l-8-4V8Zm16 0-8 4v8l8-4V8Z"></path></svg>
+            </span>
+            <p><b id="heroCount">—</b><span>моделей</span></p>
+          </div>
+          <div class="hero__quickfact">
+            <span class="hero__quickicon hero__quickicon--round">%</span>
+            <p><b>0%</b><span>рассрочка</span></p>
+          </div>
+          <div class="hero__quickfact">
+            <span class="hero__quickicon hero__quickicon--round">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+            </span>
+            <p><b>2 мин</b><span>оценка обмена</span></p>
+          </div>
         </div>
       </div>
-      <div class="hero__visual" id="heroVisual"></div>
+      <div class="hero__visual" aria-hidden="true">
+        <span class="hero__orbit"></span>
+        <span class="hero__disc"></span>
+        <img class="hero__device" src="/images/iphone-hero.png" alt="" />
+      </div>
     </div>
-    <div class="hero__glow"></div>
-  </section>
-
-  <!-- Stats strip -->
-  <section class="stats">
-    <div class="container stats__inner">
-      <div class="stat reveal"><b data-count="12" data-suffix="+">0</b><span>лет на рынке</span></div>
-      <div class="stat reveal"><b data-count="50000" data-suffix="+">0</b><span>довольных клиентов</span></div>
-      <div class="stat reveal"><b>#1</b><span>в Кыргызстане</span></div>
-      <div class="stat reveal"><b data-count="1" data-suffix=" год">0</b><span>гарантии</span></div>
+    <div class="container hero__benefits">
+      <div class="hero__benefit reveal">
+        <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 7 3v5c0 4.6-3 8-7 10-4-2-7-5.4-7-10V6l7-3Z"></path><path d="m9 12 2 2 4-4"></path></svg></span>
+        <p><b>12+</b><small>месяцев гарантии</small></p>
+      </div>
+      <div class="hero__benefit reveal">
+        <span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"></circle><circle cx="17" cy="9" r="2.5"></circle><path d="M3 20v-2c0-3 2.7-5 6-5s6 2 6 5v2M15 14c3 0 6 1.6 6 4.5V20"></path></svg></span>
+        <p><b data-count="50000" data-suffix="+">0</b><small>довольных клиентов</small></p>
+      </div>
+      <div class="hero__benefit reveal">
+        <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3Z"></path></svg></span>
+        <p><b>#1</b><small>магазин техники</small></p>
+      </div>
+      <div class="hero__benefit reveal">
+        <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 14v-3a8 8 0 0 1 16 0v3"></path><path d="M4 14H2v4h4v-4H4Zm16 0h2v4h-4v-4h2ZM18 20c-1 1-3 1-5 1"></path></svg></span>
+        <p><b>1 год</b><small>поддержка после покупки</small></p>
+      </div>
     </div>
   </section>
 

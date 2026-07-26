@@ -186,18 +186,23 @@ function renderLogin(): void {
 
   root.innerHTML = `
     <div class="admin__login">
-      <span class="logo__badge admin__login-badge" role="img" aria-label="Мостовой"></span>
-      <h1 class="section__title">Вход в админку</h1>
+      <div class="admin__login-brand">
+        <span class="logo__badge admin__login-badge" role="img" aria-label="Мостовой"></span>
+        <span class="admin__login-kicker">Панель управления</span>
+      </div>
+      <h1 class="section__title">С возвращением</h1>
+      <p class="admin__login-copy">Войдите, чтобы управлять товарами, ценами и новостями магазина.</p>
       ${state.loginError ? `<p class="admin__error">${esc(state.loginError)}</p>` : ""}
-      <form id="loginForm" class="calc">
+      <form id="loginForm" class="admin__login-form">
         <label>Логин
-          <input type="text" name="username" autocomplete="username" required />
+          <input type="text" name="username" autocomplete="username" placeholder="Введите логин" required autofocus />
         </label>
         <label>Пароль
-          <input type="password" name="password" autocomplete="current-password" required />
+          <input type="password" name="password" autocomplete="current-password" placeholder="Введите пароль" required />
         </label>
         <button type="submit" class="btn">Войти</button>
       </form>
+      <a class="admin__login-back" href="index.html">← Вернуться в магазин</a>
     </div>`;
 
   document.getElementById("loginForm")!.addEventListener("submit", async (e) => {
@@ -507,6 +512,7 @@ function productRowHTML(p: AdminProduct): string {
       ${p.status === "hidden"
         ? `<button type="button" class="admin__link" data-restore="${p.slug}">Вернуть</button>`
         : `<button type="button" class="admin__link admin__link--danger" data-hide="${p.slug}">Скрыть</button>`}
+      <button type="button" class="admin__link admin__link--delete" data-delete="${p.slug}" data-name="${esc(p.name)}">Удалить</button>
     </div>
   </article>`;
 }
@@ -561,6 +567,16 @@ function renderProductsList(): void {
   list.querySelectorAll<HTMLElement>("[data-restore]").forEach((b) =>
     b.addEventListener("click", async () => {
       await api("POST", `/products/${encodeURIComponent(b.dataset.restore as string)}/restore`);
+      await loadProducts();
+    })
+  );
+  list.querySelectorAll<HTMLElement>("[data-delete]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const name = b.dataset.name || "этот товар";
+      if (!confirm(`Удалить «${name}» навсегда? Это действие нельзя отменить.`)) return;
+      await api("DELETE", `/products/${encodeURIComponent(b.dataset.delete as string)}/permanent`);
+      if (state.editingProductSlug === b.dataset.delete) state.editingProductSlug = null;
+      toast("Товар удалён");
       await loadProducts();
     })
   );

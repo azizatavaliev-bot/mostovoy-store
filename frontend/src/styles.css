@@ -863,10 +863,42 @@ body.noscroll { overflow: hidden; }
    ======================================================================== */
 
 .admin { padding: 44px 0 100px; }
-.admin__login { max-width: 420px; margin: 60px auto; text-align: center; }
+.admin__login {
+  position: relative; max-width: 460px; margin: 52px auto; padding: 42px;
+  text-align: center; background: #fff; border: 1px solid var(--line);
+  border-radius: 28px; box-shadow: 0 24px 70px rgba(20, 20, 24, .1);
+  overflow: hidden;
+}
+.admin__login::before {
+  content: ""; position: absolute; inset: 0 0 auto; height: 5px;
+  background: linear-gradient(90deg, #cf0f1b, var(--red), #ff6971);
+}
+.admin__login .section__title { margin-bottom: 10px; font-size: clamp(30px, 5vw, 40px); letter-spacing: -1.4px; }
 .admin__login .lead { margin-bottom: 24px; }
-.admin__login form { text-align: left; margin-top: 20px; }
-.admin__login .btn { width: 100%; justify-content: center; margin-top: 6px; }
+.admin__login-brand { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
+.admin__login-kicker {
+  color: var(--red); font-size: 12px; font-weight: 800;
+  letter-spacing: 1.4px; text-transform: uppercase;
+}
+.admin__login-copy { max-width: 330px; margin: 0 auto; color: var(--gray); font-size: 14px; line-height: 1.65; }
+.admin__login-form { display: grid; gap: 17px; margin-top: 28px; text-align: left; }
+.admin__login-form label { display: grid; gap: 8px; color: var(--ink); font-size: 13px; font-weight: 700; }
+.admin__login-form input {
+  width: 100%; height: 52px; padding: 0 16px; border: 1px solid var(--line);
+  border-radius: 14px; background: var(--bg-soft); color: var(--ink);
+  font: 500 15px/1 inherit; transition: border-color .2s, background .2s, box-shadow .2s;
+}
+.admin__login-form input::placeholder { color: #aaaab1; font-weight: 500; }
+.admin__login-form input:focus {
+  outline: none; border-color: var(--red); background: #fff;
+  box-shadow: 0 0 0 4px rgba(232, 0, 29, .09);
+}
+.admin__login .btn { width: 100%; justify-content: center; min-height: 52px; margin-top: 3px; }
+.admin__login-back {
+  display: inline-block; margin-top: 24px; color: var(--gray); font-size: 13px;
+  font-weight: 600; transition: color .2s;
+}
+.admin__login-back:hover { color: var(--ink); }
 
 .admin__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
 
@@ -912,8 +944,12 @@ body.noscroll { overflow: hidden; }
 .admin__link:hover { color: var(--red); }
 .admin__link--danger { color: var(--gray); }
 .admin__link--danger:hover { color: var(--red); }
+.admin__link--delete { color: var(--red); }
+.admin__link--delete:hover { color: #a80012; }
 
 @media (max-width: 700px) {
+  .admin { padding-top: 24px; }
+  .admin__login { margin: 24px auto; padding: 34px 22px 28px; border-radius: 22px; }
   .admin__table { font-size: 13px; }
   .admin__table th:nth-child(1), .admin__table td:nth-child(1) { display: none; }
 }
@@ -925,7 +961,7 @@ body.noscroll { overflow: hidden; }
 .admin__tab.active { background: #fff; color: var(--ink); box-shadow: var(--shadow-sm); }
 
 /* --- вход по логину/паролю --- */
-.admin__login-badge { display: block; width: 56px; height: 56px; margin: 0 auto 18px; }
+.admin__login-badge { display: block; width: 48px; height: 48px; flex: 0 0 48px; }
 
 /* --- select в форме (не только input/textarea) --- */
 .admin__form select {

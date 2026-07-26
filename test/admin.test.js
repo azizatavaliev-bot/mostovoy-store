@@ -216,6 +216,26 @@ test("скрытие и восстановление товара", async (t) =>
   assert.ok(cat.products.some((p) => p.id === slug), "восстановленный товар снова виден");
 });
 
+test("безвозвратное удаление товара", async (t) => {
+  const app = startApp();
+  t.after(app.close);
+  const created = await (
+    await fetch(`${app.base}/api/admin/products`, {
+      method: "POST", headers: H, body: JSON.stringify({ name: "Удаляемый товар", price: 10, currency: "USD" }),
+    })
+  ).json();
+  const slug = created.product.slug;
+
+  const deleted = await fetch(`${app.base}/api/admin/products/${slug}/permanent`, { method: "DELETE", headers: H });
+  assert.equal(deleted.status, 200);
+  assert.deepEqual(await deleted.json(), { deleted: true, slug });
+
+  const get = await fetch(`${app.base}/api/admin/products/${slug}`, { headers: H });
+  assert.equal(get.status, 404);
+  const repeated = await fetch(`${app.base}/api/admin/products/${slug}/permanent`, { method: "DELETE", headers: H });
+  assert.equal(repeated.status, 404);
+});
+
 test("несуществующий товар — 404 при обновлении и скрытии", async (t) => {
   const app = startApp();
   t.after(app.close);

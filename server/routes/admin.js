@@ -568,6 +568,16 @@ function createAdminRouter({ db }) {
     }
   });
 
+  // Безвозвратное удаление. Связанные алиасы и привязки к сообщениям
+  // удаляются каскадно; журнал цен сохраняется с product_id = NULL.
+  router.delete("/products/:slug/permanent", (req, res) => {
+    const row = db.prepare("SELECT id, slug, official_name FROM products WHERE slug = ?").get(req.params.slug);
+    if (!row) return res.status(404).json({ error: "not_found" });
+    db.prepare("DELETE FROM products WHERE id = ?").run(row.id);
+    logger.info("admin.product_deleted", { slug: row.slug, name: row.official_name });
+    res.json({ deleted: true, slug: row.slug });
+  });
+
   // Мягкое удаление: товар скрывается с витрины, но не стирается из базы.
   router.delete("/products/:slug", (req, res) => {
     const row = db.prepare("SELECT * FROM products WHERE slug = ?").get(req.params.slug);

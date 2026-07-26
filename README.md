@@ -34,6 +34,34 @@ npm start                # http://localhost:5190
 npm test                # 111 тестов (бэкенд), сеть не используется
 ```
 
+## Деплой на Railway
+
+Билд/старт уже описаны в [`railway.json`](railway.json) — Railway при деплое
+сам выполнит `npm run build` (соберёт `frontend/` через Vite) и запустит
+`npm start`. Отдельно настраивать ничего не нужно, кроме двух вещей:
+
+1. **Volume для данных.** Контейнер эфемерный — без volume база SQLite и
+   загруженные в админке фото будут пропадать при каждом деплое. Создай
+   Volume (например, смонтированный в `/data`) и укажи в переменных:
+   ```
+   DATABASE_PATH=/data/mostovoy.db
+   UPLOADS_DIR=/data/uploads
+   ```
+2. **Переменные окружения** — перенеси из локального `.env` (см. раздел
+   [«Переменные окружения»](#переменные-окружения) выше):
+   - обязательные: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`,
+     `TELEGRAM_CHANNEL_ID`, `DEEPSEEK_API_KEY`
+   - админка: `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`
+     (или `ADMIN_TOKEN` для входа только через CLI)
+   - опционально: `PRODUCT_RESEARCH_PROVIDER` + `TAVILY_API_KEY`/`BRAVE_SEARCH_API_KEY`,
+     курсы `RATE_USD_KGS`/`RATE_USD_RUB`, контакты (`WHATSAPP_PHONE`,
+     `TELEGRAM_CONTACT_USERNAME` и т.д.)
+   - `PORT` Railway подставляет сам — трогать не нужно.
+
+После первого деплоя не забудь `npm run migrate` (или он применится
+автоматически при старте — миграции идемпотентны) и переустановить вебхук
+Telegram на новый `PUBLIC_URL` (`npm run set-webhook`).
+
 ## Как работает синхронизация
 
 ```

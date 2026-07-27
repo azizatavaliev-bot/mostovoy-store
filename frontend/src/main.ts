@@ -4,6 +4,7 @@
 import "./styles.css";
 import {
   cartAdd,
+  cartCount,
   convertPrice,
   fmt,
   getDisplayCurrency,
@@ -693,17 +694,73 @@ grid.addEventListener("click", (e) => {
     }
     return;
   }
+});
 
-  // Корзина: кнопка на карточке (карточка — ссылка, поэтому гасим переход).
+const headerCart = document.getElementById("headerCart") as HTMLButtonElement;
+const headerCartLabel = document.getElementById("headerCartLabel") as HTMLSpanElement;
+
+function syncHeaderCart(): void {
+  const hasItems = cartCount() > 0;
+  headerCartLabel.textContent = hasItems ? "Купить" : "Корзина";
+  headerCart.setAttribute("aria-label", hasItems ? "Купить товары из корзины" : "Корзина пуста");
+  headerCart.classList.toggle("has-items", hasItems);
+}
+
+function animateToCart(addButton: HTMLElement): void {
+  const card = addButton.closest<HTMLElement>(".card");
+  const media = card?.querySelector<HTMLElement>(".card__media");
+  const target = headerCart.getBoundingClientRect();
+  if (!media || target.width === 0 || prefersReducedMotion) {
+    headerCart.classList.add("cart-pop");
+    window.setTimeout(() => headerCart.classList.remove("cart-pop"), 420);
+    return;
+  }
+
+  const source = media.getBoundingClientRect();
+  const size = Math.min(source.width, source.height, 132);
+  const fly = document.createElement("div");
+  fly.className = "cart-fly";
+  fly.style.width = `${size}px`;
+  fly.style.height = `${size}px`;
+  fly.style.left = `${source.left + source.width / 2 - size / 2}px`;
+  fly.style.top = `${source.top + source.height / 2 - size / 2}px`;
+  fly.style.setProperty("--cart-fly-x", `${target.left + target.width / 2 - (source.left + source.width / 2)}px`);
+  fly.style.setProperty("--cart-fly-y", `${target.top + target.height / 2 - (source.top + source.height / 2)}px`);
+
+  const image = media.querySelector<HTMLImageElement>("img");
+  const visual = image || media.querySelector<SVGElement>("svg");
+  if (visual) {
+    const clone = visual.cloneNode(true) as Element;
+    clone.removeAttribute("onload");
+    clone.removeAttribute("onerror");
+    clone.removeAttribute("loading");
+    fly.appendChild(clone);
+  }
+  document.body.appendChild(fly);
+  requestAnimationFrame(() => fly.classList.add("go"));
+  window.setTimeout(() => {
+    fly.remove();
+    headerCart.classList.add("cart-pop");
+    window.setTimeout(() => headerCart.classList.remove("cart-pop"), 420);
+  }, 680);
+}
+
+document.addEventListener("click", (e) => {
+  // Корзина: кнопка на любой карточке, включая блок акций.
+  const target = e.target as HTMLElement;
   const add = target.closest<HTMLElement>("[data-add]");
   if (!add) return;
   e.preventDefault();
   const id = add.dataset.add as string;
   const p = products.find((x) => String(x.id) === String(id));
   const color = p?.swatches?.length ? p.swatches[cardColor.get(id) || 0][0] : null;
+  animateToCart(add);
   cartAdd(id, 1, color);
   toast(color ? `Добавлено в корзину · ${color}` : "Добавлено в корзину");
 });
+
+document.addEventListener("cart:change", syncHeaderCart);
+syncHeaderCart();
 
 // --- Почему мы лучшие ------------------------------------------------------
 
@@ -836,7 +893,7 @@ function observeCards(): void {
     heroCount.dataset.count = String(products.length);
     animateCount(heroCount);
   }
-  document.getElementById("headerCart")?.addEventListener("click", () => openCart(true));
+  headerCart.addEventListener("click", () => openCart(true));
 
   renderSidebar();
   renderGrid();

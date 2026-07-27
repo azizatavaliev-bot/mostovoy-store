@@ -109,10 +109,18 @@ button { font-family: inherit; }
 .home .nav__chevron { display: inline-block; margin-left: 4px; font-size: 16px; transform: translateY(-1px); }
 .home-header__actions { display: flex; align-items: center; gap: 20px; }
 .home-header__icon {
+  position: relative;
   display: grid; place-items: center; width: 38px; height: 38px; padding: 0;
   border: 0; background: transparent; color: var(--ink); cursor: pointer;
 }
 .home-header__icon svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.home-header__icon.active svg { fill: var(--red); stroke: var(--red); }
+.home-header__badge {
+  position: absolute; top: -2px; right: -3px; min-width: 17px; height: 17px; padding: 0 4px;
+  display: grid; place-items: center; border: 2px solid #fff; border-radius: 999px;
+  background: var(--red); color: #fff; font-size: 9px; font-weight: 800; line-height: 1;
+}
+.home-header__badge[hidden] { display: none; }
 .home .header__cta { min-width: 139px; padding: 14px 25px; font-size: 15px; }
 .home .header__cta svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -622,7 +630,6 @@ body.search-open { overflow: hidden; }
   .home-search__result > svg { grid-column: 3; grid-row: 1 / span 2; }
   .home-header__actions { gap: 2px; }
   .home-header__icon { width: 34px; height: 34px; }
-  .home-header__icon:nth-child(2) { display: none; }
   .home-logo { gap: 9px; }
   .home-logo__mark { width: 38px; height: 38px; border-radius: 10px; font-size: 20px; }
   .home-logo__copy b { font-size: 16px; letter-spacing: -.4px; }
@@ -764,6 +771,19 @@ body.search-open { overflow: hidden; }
 .card { position: relative; }
 .card__link { display: flex; flex-direction: column; }
 .card__link--text { flex: 1; }
+.card__favorite {
+  position: absolute; z-index: 4; top: 15px; right: 15px; width: 38px; height: 38px;
+  display: grid; place-items: center; padding: 0; border: 1px solid var(--line); border-radius: 50%;
+  background: rgba(255,255,255,.94); color: var(--ink); cursor: pointer;
+  box-shadow: 0 6px 18px rgba(20,20,25,.08); transition: .2s var(--ease);
+}
+.card__favorite:hover { transform: scale(1.08); border-color: #ffc4ca; color: var(--red); }
+.card__favorite svg {
+  width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.card__favorite.active { color: var(--red); background: #fff4f5; border-color: #ffc4ca; }
+.card__favorite.active svg { fill: currentColor; }
 
 /* Выбор цвета прямо в каталоге */
 .card__sw { display: flex; gap: 7px; justify-content: center; margin: 2px 0 12px; }
@@ -853,6 +873,54 @@ body.noscroll { overflow: hidden; }
 .cart__clear:hover { color: var(--red); }
 .cart__hint { color: var(--gray-2); font-size: 11.5px; text-align: center; margin-top: 10px; line-height: 1.45; }
 
+/* --- избранное --- */
+.favorites__overlay {
+  position: fixed; inset: 0; z-index: 60; border: 0; background: rgba(11,11,13,.42);
+  opacity: 0; pointer-events: none; transition: opacity .28s var(--ease);
+}
+.favorites__overlay.show { opacity: 1; pointer-events: auto; }
+.favorites {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 61; width: min(430px, 94vw);
+  display: flex; flex-direction: column; background: #fff; box-shadow: -20px 0 60px rgba(15,15,20,.16);
+  transform: translateX(100%); transition: transform .32s var(--ease);
+}
+.favorites.open { transform: none; }
+.favorites__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 24px; border-bottom: 1px solid var(--line);
+}
+.favorites__head h3 { font-size: 22px; font-weight: 850; letter-spacing: -.6px; }
+.favorites__head p { margin-top: 4px; color: var(--gray); font-size: 12.5px; }
+.favorites__close, .favorite-item__remove {
+  border: 0; border-radius: 50%; background: var(--bg-soft); color: var(--gray);
+  cursor: pointer; transition: .2s var(--ease);
+}
+.favorites__close { width: 36px; height: 36px; flex: 0 0 36px; }
+.favorites__close:hover, .favorite-item__remove:hover { background: var(--red-soft); color: var(--red); }
+.favorites__body { flex: 1; overflow-y: auto; padding: 8px 24px; }
+.favorite-item { display: grid; grid-template-columns: 76px minmax(0, 1fr) 30px; align-items: center; gap: 14px; padding: 17px 0; border-bottom: 1px solid var(--line); }
+.favorite-item__media {
+  width: 76px; height: 76px; display: grid; place-items: center; overflow: hidden;
+  border-radius: 16px; background: var(--bg-soft); color: var(--gray-2); font-size: 22px; font-weight: 800;
+}
+.favorite-item__media img { width: 100%; height: 100%; padding: 8px; object-fit: contain; }
+.favorite-item__copy { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
+.favorite-item__copy a { max-width: 100%; font-size: 14px; font-weight: 750; line-height: 1.3; }
+.favorite-item__copy a:hover { color: var(--red); }
+.favorite-item__copy span { margin-top: 4px; color: var(--gray-2); font-size: 11.5px; }
+.favorite-item__copy b { margin-top: 9px; color: var(--red); font-size: 14px; }
+.favorite-item__remove { width: 30px; height: 30px; font-size: 11px; }
+.favorites__empty { max-width: 280px; margin: 90px auto 0; text-align: center; }
+.favorites__empty > span {
+  width: 72px; height: 72px; margin: 0 auto 20px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--red-soft); color: var(--red);
+}
+.favorites__empty svg { width: 32px; height: 32px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+.favorites__empty h4 { font-size: 18px; }
+.favorites__empty p { margin-top: 9px; color: var(--gray); font-size: 13.5px; line-height: 1.55; }
+.favorites__foot { padding: 18px 24px 24px; border-top: 1px solid var(--line); }
+.favorites__catalog { width: 100%; justify-content: center; }
+
 /* --- плавающая кнопка WhatsApp --- */
 .wafloat {
   position: fixed; right: 24px; bottom: 24px; z-index: 55;
@@ -872,6 +940,12 @@ body.noscroll { overflow: hidden; }
   100% { opacity: 0; transform: scale(1.9); }
 }
 @media (max-width: 520px) {
+  .favorites__head { padding: 20px; }
+  .favorites__body { padding: 6px 20px; }
+  .favorites__foot { padding: 16px 20px 20px; }
+  .favorite-item { grid-template-columns: 66px minmax(0, 1fr) 28px; gap: 11px; }
+  .favorite-item__media { width: 66px; height: 66px; }
+
   .wafloat { right: 16px; bottom: 16px; width: 52px; height: 52px; }
   .wafloat svg { width: 27px; height: 27px; }
 }

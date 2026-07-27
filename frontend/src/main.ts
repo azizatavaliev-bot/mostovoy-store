@@ -35,6 +35,147 @@ const searchInput = document.getElementById("search") as HTMLInputElement;
 const sortSel = document.getElementById("sort") as HTMLSelectElement;
 let products: Product[] = [];
 
+// --- Избранное -------------------------------------------------------------
+
+const FAVORITES_KEY = "mostovoy_favorites";
+const FAVORITE_ICON =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"></path></svg>';
+
+function loadFavorites(): Set<string> {
+  try {
+    const saved = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
+    return new Set(Array.isArray(saved) ? saved.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+const favoriteIds = loadFavorites();
+
+function saveFavorites(): void {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favoriteIds]));
+}
+
+function syncFavorites(): void {
+  document.querySelectorAll<HTMLElement>("[data-favorite]").forEach((button) => {
+    const active = favoriteIds.has(String(button.dataset.favorite));
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.setAttribute("aria-label", active ? "Удалить из избранного" : "Добавить в избранное");
+  });
+
+  const count = favoriteIds.size;
+  const badge = document.getElementById("favoritesCount");
+  if (badge) {
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+  }
+  document.getElementById("headerFavorites")?.classList.toggle("active", count > 0);
+}
+
+function favoriteMedia(product: Product): string {
+  const src = product.image || product.img || "";
+  return src
+    ? `<img src="${src}" alt="" onerror="this.remove()" />`
+    : `<span aria-hidden="true">${String(product.name || "?").trim().charAt(0).toUpperCase()}</span>`;
+}
+
+function favoriteCountLabel(count: number): string {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  const word = mod100 >= 11 && mod100 <= 14 ? "товаров" : mod10 === 1 ? "товар" : mod10 >= 2 && mod10 <= 4 ? "товара" : "товаров";
+  return `${count} ${word}`;
+}
+
+function renderFavorites(): void {
+  const body = document.getElementById("favoritesBody");
+  const subtitle = document.getElementById("favoritesSubtitle");
+  if (!body || !subtitle) return;
+
+  const list = [...favoriteIds]
+    .map((id) => products.find((product) => String(product.id) === id))
+    .filter((product): product is Product => Boolean(product));
+
+  subtitle.textContent = list.length ? favoriteCountLabel(list.length) : "Сохраняйте то, что понравилось";
+  body.innerHTML = list.length
+    ? list
+        .map((product) => {
+          const price = product.salePrice != null && (product.discountPercent || 0) > 0 ? product.salePrice : product.price;
+          return `<article class="favorite-item">
+            <a class="favorite-item__media" href="product.html?id=${encodeURIComponent(product.id)}">${favoriteMedia(product)}</a>
+            <div class="favorite-item__copy">
+              <a href="product.html?id=${encodeURIComponent(product.id)}">${product.name}</a>
+              <span>${[product.brand, product.category].filter(Boolean).join(" · ")}</span>
+              <b>${fmt(price, product.currency)}</b>
+            </div>
+            <button type="button" class="favorite-item__remove" data-favorite="${product.id}" aria-label="Удалить из избранного">✕</button>
+          </article>`;
+        })
+        .join("")
+    : `<div class="favorites__empty">
+        <span>${FAVORITE_ICON}</span>
+        <h4>В избранном пока пусто</h4>
+        <p>Нажмите на сердечко у товара — он сохранится здесь.</p>
+      </div>`;
+}
+
+function openFavorites(show: boolean): void {
+  document.getElementById("favoritesOverlay")?.classList.toggle("show", show);
+  document.getElementById("favoritesDrawer")?.classList.toggle("open", show);
+  document.getElementById("headerFavorites")?.setAttribute("aria-expanded", String(show));
+  document.body.classList.toggle("noscroll", show);
+  if (show) renderFavorites();
+}
+
+function mountFavorites(): void {
+  const overlay = document.createElement("button");
+  overlay.type = "button";
+  overlay.className = "favorites__overlay";
+  overlay.id = "favoritesOverlay";
+  overlay.setAttribute("aria-label", "Закрыть избранное");
+
+  const drawer = document.createElement("aside");
+  drawer.className = "favorites";
+  drawer.id = "favoritesDrawer";
+  drawer.setAttribute("aria-label", "Избранные товары");
+  drawer.innerHTML = `
+    <div class="favorites__head">
+      <div><h3>Избранное</h3><p id="favoritesSubtitle"></p></div>
+      <button type="button" class="favorites__close" aria-label="Закрыть">✕</button>
+    </div>
+    <div class="favorites__body" id="favoritesBody"></div>
+    <div class="favorites__foot">
+      <button type="button" class="btn favorites__catalog">Смотреть каталог</button>
+    </div>`;
+
+  document.body.append(overlay, drawer);
+  overlay.addEventListener("click", () => openFavorites(false));
+  drawer.querySelector(".favorites__close")?.addEventListener("click", () => openFavorites(false));
+  drawer.querySelector(".favorites__catalog")?.addEventListener("click", () => {
+    openFavorites(false);
+    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+  });
+  document.getElementById("headerFavorites")?.addEventListener("click", () => openFavorites(true));
+  renderFavorites();
+  syncFavorites();
+}
+
+document.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-favorite]");
+  if (!button) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const id = String(button.dataset.favorite);
+  const wasFavorite = favoriteIds.has(id);
+  if (wasFavorite) favoriteIds.delete(id);
+  else favoriteIds.add(id);
+  saveFavorites();
+  syncFavorites();
+  renderFavorites();
+  toast(wasFavorite ? "Удалено из избранного" : "Добавлено в избранное");
+});
+
 // --- Быстрый поиск из шапки -----------------------------------------------
 
 const homeSearch = document.getElementById("homeSearch") as HTMLDivElement;
@@ -431,6 +572,9 @@ function cardHTML(p: Product): string {
     ? `<span class="card__badge">${p.badge}</span>`
     : `<span class="card__badge" style="visibility:hidden">·</span>`;
   return `<article class="card ${p.available ? "" : "card--out"}" data-card="${p.id}">
+    <button type="button" class="card__favorite ${favoriteIds.has(String(p.id)) ? "active" : ""}"
+      data-favorite="${p.id}" aria-label="${favoriteIds.has(String(p.id)) ? "Удалить из избранного" : "Добавить в избранное"}"
+      aria-pressed="${favoriteIds.has(String(p.id))}">${FAVORITE_ICON}</button>
     <a class="card__link" href="product.html?id=${encodeURIComponent(p.id)}">
       ${badge}
       ${cardMedia(p)}
@@ -631,8 +775,14 @@ function observeCards(): void {
 
 (async function init() {
   products = await loadCatalog();
+  const productIds = new Set(products.map((product) => String(product.id)));
+  favoriteIds.forEach((id) => {
+    if (!productIds.has(id)) favoriteIds.delete(id);
+  });
+  saveFavorites();
 
   mountCartDrawer();
+  mountFavorites();
   mountWhatsappFloat();
 
   const heroCount = document.getElementById("heroCount");
@@ -640,7 +790,6 @@ function observeCards(): void {
     heroCount.dataset.count = String(products.length);
     animateCount(heroCount);
   }
-  document.getElementById("headerFavorites")?.addEventListener("click", () => toast("Избранное появится скоро"));
   document.getElementById("headerCart")?.addEventListener("click", () => openCart(true));
 
   renderSidebar();

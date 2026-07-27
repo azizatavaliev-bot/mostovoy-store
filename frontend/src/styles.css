@@ -96,10 +96,9 @@ button { font-family: inherit; }
 .home .header__inner { width: min(1512px, 90%); height: 88px; gap: 40px; }
 .home-logo { display: flex; align-items: center; gap: 15px; flex-shrink: 0; }
 .home-logo__mark {
-  display: grid; place-items: center; width: 53px; height: 53px; border-radius: 14px;
-  color: #fff; background: linear-gradient(145deg, #f41427, #e60017);
+  display: grid; place-items: center; width: 53px; height: 53px; border-radius: 50%;
+  background: url("/images/logo.webp") 49% 45.5% / 132% no-repeat, var(--red);
   box-shadow: 0 10px 24px rgba(239, 17, 37, .2);
-  font-size: 28px; font-weight: 900; letter-spacing: -2px;
 }
 .home-logo__copy { display: flex; flex-direction: column; line-height: 1.08; }
 .home-logo__copy b { font-size: 24px; font-weight: 900; letter-spacing: -.7px; }
@@ -573,7 +572,7 @@ body.search-open { overflow: hidden; }
   .home .header__inner { width: 92%; height: 74px; gap: 12px; }
   .home .nav { gap: 4px; }
   .home-header__actions { margin-left: auto; }
-  .home-logo__mark { width: 44px; height: 44px; border-radius: 12px; font-size: 23px; }
+  .home-logo__mark { width: 44px; height: 44px; }
   .home-logo__copy b { font-size: 19px; }
   .home-logo__copy small { font-size: 11px; }
   .hero { min-height: auto; }
@@ -631,7 +630,7 @@ body.search-open { overflow: hidden; }
   .home-header__actions { gap: 2px; }
   .home-header__icon { width: 34px; height: 34px; }
   .home-logo { gap: 9px; }
-  .home-logo__mark { width: 38px; height: 38px; border-radius: 10px; font-size: 20px; }
+  .home-logo__mark { width: 38px; height: 38px; }
   .home-logo__copy b { font-size: 16px; letter-spacing: -.4px; }
   .home-logo__copy small { margin-top: 3px; font-size: 9.5px; }
   .hero__inner { width: 92%; padding-top: 38px; }

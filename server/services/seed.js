@@ -31,7 +31,7 @@ function seedLegacyProducts(db, { dir } = {}) {
         price, currency, available, description, specifications,
         main_image_url, image_urls, status, confidence, research_status, origin)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, 'active', 1, 'skipped', 'legacy')
-     ON CONFLICT(normalized_key) DO NOTHING`
+     ON CONFLICT DO NOTHING`
   );
 
   let inserted = 0;

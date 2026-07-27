@@ -91,7 +91,7 @@ class DeepSeekClient {
     return Boolean(this.apiKey);
   }
 
-  async chatJson({ system, user, temperature = 0, maxTokens }) {
+  async chatJson({ system, user, temperature = 0, maxTokens, onUsage }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }
@@ -105,7 +105,7 @@ class DeepSeekClient {
       }
       await this.limiter.acquire();
       try {
-        return await this._once({ system, user, temperature, maxTokens });
+        return await this._once({ system, user, temperature, maxTokens, onUsage });
       } catch (e) {
         lastError = e;
         if (!(e instanceof DeepSeekError) || !e.retriable) throw e;
@@ -114,7 +114,7 @@ class DeepSeekClient {
     throw lastError;
   }
 
-  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900, model }) {
+  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900, model, onUsage }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }
@@ -133,7 +133,7 @@ class DeepSeekClient {
       }
       await this.limiter.acquire();
       try {
-        return await this._textOnce({ messages: chatMessages, temperature, maxTokens, model });
+        return await this._textOnce({ messages: chatMessages, temperature, maxTokens, model, onUsage });
       } catch (e) {
         lastError = e;
         if (!(e instanceof DeepSeekError) || !e.retriable) throw e;
@@ -142,7 +142,7 @@ class DeepSeekClient {
     throw lastError;
   }
 
-  async _once({ system, user, temperature, maxTokens }) {
+  async _once({ system, user, temperature, maxTokens, onUsage }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -190,11 +190,12 @@ class DeepSeekClient {
     const data = await res.json().catch(() => null);
     const content = data?.choices?.[0]?.message?.content;
     const parsed = parseJsonStrict(content);
+    onUsage?.(data?.usage || {}, data?.model || this.model);
     logger.debug("deepseek.ok", { model: this.model, usage: data?.usage });
     return parsed;
   }
 
-  async _textOnce({ messages, temperature, maxTokens, model }) {
+  async _textOnce({ messages, temperature, maxTokens, model, onUsage }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -233,6 +234,7 @@ class DeepSeekClient {
     const data = await res.json().catch(() => null);
     const content = String(data?.choices?.[0]?.message?.content || "").trim();
     if (!content) throw new DeepSeekError("Пустой ответ модели", { code: "empty_response", retriable: true });
+    onUsage?.(data?.usage || {}, data?.model || model || this.model);
     return content;
   }
 }

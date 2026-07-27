@@ -113,6 +113,7 @@ interface CrmAnalytics {
 
 interface BotSettings {
   approvalEnabled: boolean;
+  aggressiveLearning: boolean;
   model: string;
   models: string[];
   systemPrompt: string;
@@ -130,6 +131,7 @@ interface BotApproval {
   customerMessage: string;
   aiReply: string;
   editedReply?: string;
+  rejectReason?: string;
   summary?: string;
   model?: string;
   status: "pending" | "approved" | "rejected";
@@ -151,6 +153,23 @@ interface DeveloperStatus {
   settings: BotSettings;
   approvals: { total: number; pending: number; approved: number; rejected: number };
   errors24h: number;
+}
+
+interface AiUsageAnalytics {
+  overview: {
+    conversations: number;
+    messages: number;
+    aiReplies: number;
+    approved: number;
+    withoutEdits: number;
+    rejected: number;
+  };
+  periods: Record<"today" | "averageDay" | "month" | "year" | "all", {
+    tokens: number;
+    costUsd: number;
+  }>;
+  tasks: { task: string; model: string; calls: number; tokens: number; costUsd: number }[];
+  pricing: { inputUsdPerMillion: number; outputUsdPerMillion: number };
 }
 
 interface LabMessage {
@@ -201,6 +220,7 @@ const state = {
   approvals: [] as BotApproval[],
   approvalFilter: "pending" as "pending" | "all",
   developerStatus: null as DeveloperStatus | null,
+  aiUsage: null as AiUsageAnalytics | null,
   botEvents: [] as BotEvent[],
   labHistory: [] as LabMessage[],
   analytics: null as CrmAnalytics | null,
@@ -258,6 +278,14 @@ async function api<T = unknown>(method: string, path: string, body?: unknown): P
 function fmtMoney(n: number | null | undefined, currency: string): string {
   if (n == null) return "—";
   return Math.round(n).toLocaleString("ru-RU") + " " + currency;
+}
+
+function fmtUsd(n: number): string {
+  return `$${n < 0.01 ? n.toFixed(4) : n.toFixed(2)}`;
+}
+
+function fmtTokens(n: number): string {
+  return Math.round(n).toLocaleString("ru-RU");
 }
 
 function fmtRelative(iso: string | null | undefined): string {
@@ -986,7 +1014,26 @@ function renderCrmView(): string {
       </div>
       <div class="crm__status" id="crmStatus"></div>
     </div>
+    <div id="crmUsageSummary"></div>
     <div id="crmMount"><div class="crm__loading">Загружаем диалоги…</div></div>`;
+}
+
+function renderCrmUsageSummary(): void {
+  const mount = document.getElementById("crmUsageSummary");
+  const usage = state.aiUsage;
+  if (!mount || !usage) return;
+  const cards: [string, number | string][] = [
+    ["Диалогов", usage.overview.conversations],
+    ["Сообщений", usage.overview.messages],
+    ["AI ответов", usage.overview.aiReplies],
+    ["Принято", usage.overview.approved],
+    ["Без правок", usage.overview.withoutEdits],
+    ["Отклонено", usage.overview.rejected],
+    ["Расход AI", fmtUsd(usage.periods.all.costUsd)],
+  ];
+  mount.innerHTML = `<section class="crm-usage-summary">${cards.map(([label, value]) =>
+    `<article><strong>${typeof value === "number" ? value.toLocaleString("ru-RU") : value}</strong><span>${label}</span></article>`
+  ).join("")}</section>`;
 }
 
 function renderCrmStatus(): void {
@@ -1161,9 +1208,14 @@ async function refreshCrmConversations(selectFirst = false): Promise<void> {
 
 async function wireCrmView(): Promise<void> {
   try {
-    const status = await api<CrmStatus>("GET", "/crm/status");
+    const [status, usage] = await Promise.all([
+      api<CrmStatus>("GET", "/crm/status"),
+      api<AiUsageAnalytics>("GET", "/crm/developer/usage"),
+    ]);
     state.crmStatus = status;
+    state.aiUsage = usage;
     renderCrmStatus();
+    renderCrmUsageSummary();
     await refreshCrmConversations(true);
     crmPoll = setInterval(() => refreshCrmConversations(false).catch(() => {}), 10000);
   } catch (error) {
@@ -1310,6 +1362,7 @@ function renderApprovalsMount(): void {
       </header>
       <div class="bot-approval__message"><small>Сообщение клиента</small><p>${esc(item.customerMessage)}</p></div>
       ${item.summary ? `<div class="bot-approval__summary"><small>Гипервизор</small><p>${esc(item.summary)}</p></div>` : ""}
+      ${item.rejectReason ? `<div class="bot-approval__summary"><small>Причина отклонения</small><p>${esc(item.rejectReason)}</p></div>` : ""}
       <label>Черновик ответа
         <textarea rows="5" data-approval-text="${item.id}" ${item.status !== "pending" ? "disabled" : ""}>${esc(item.editedReply || item.aiReply)}</textarea>
       </label>
@@ -1350,9 +1403,15 @@ function wireApprovalCards(): void {
     }
   }));
   document.querySelectorAll<HTMLButtonElement>("[data-reject]").forEach((button) => button.addEventListener("click", async () => {
+    const reason = window.prompt("Почему ответ отклонён? Бот использует причину для обучения.");
+    if (reason === null) return;
+    if (!reason.trim()) {
+      toast("Укажите причину отклонения", false);
+      return;
+    }
     button.disabled = true;
     try {
-      await api("POST", `/crm/approvals/${button.dataset.reject}/reject`);
+      await api("POST", `/crm/approvals/${button.dataset.reject}/reject`, { reason: reason.trim() });
       toast("Черновик отклонён");
       await loadApprovals();
     } catch (error) {
@@ -1380,6 +1439,7 @@ function promptValue(id: string): string {
 function currentBotSettings(): Partial<BotSettings> {
   return {
     approvalEnabled: Boolean((document.getElementById("botApproval") as HTMLInputElement | null)?.checked),
+    aggressiveLearning: Boolean((document.getElementById("botAggressiveLearning") as HTMLInputElement | null)?.checked),
     model: (document.getElementById("botModel") as HTMLSelectElement | null)?.value,
     systemPrompt: promptValue("botSystemPrompt"),
     hypervisorPrompt: promptValue("botHypervisorPrompt"),
@@ -1403,6 +1463,44 @@ function renderLabMessages(): string {
     </article>`).join("") || `<div class="bot-empty">Напишите тестовый вопрос клиента — ответ останется только в лаборатории.</div>`;
 }
 
+function renderAiUsage(): string {
+  const usage = state.aiUsage;
+  if (!usage) return "";
+  const periods: [keyof AiUsageAnalytics["periods"], string][] = [
+    ["today", "Сегодня"],
+    ["averageDay", "Средний в день"],
+    ["month", "За месяц (30 дн.)"],
+    ["year", "За год"],
+    ["all", "За всё время"],
+  ];
+  const taskNames: Record<string, string> = {
+    sales_agent: "Продавец-консультант",
+    hypervisor: "Гипервизор",
+    laboratory: "Лаборатория",
+    aggressive_learning: "Агрессивное обучение",
+  };
+  return `
+    <section class="bot-panel ai-usage">
+      <header><div><p class="eyebrow">DeepSeek API</p><h2>Расход токенов по периодам</h2></div>
+        <small>Вход: ${fmtUsd(usage.pricing.inputUsdPerMillion)} / 1 млн · Выход: ${fmtUsd(usage.pricing.outputUsdPerMillion)} / 1 млн</small></header>
+      <div class="ai-usage__periods">${periods.map(([key, label]) => `
+        <article><strong>${fmtTokens(usage.periods[key].tokens)} <small>tok</small></strong>
+          <b>${fmtUsd(usage.periods[key].costUsd)}</b><span>${label}</span></article>`).join("")}</div>
+    </section>
+    <section class="bot-panel ai-usage ai-usage--tasks">
+      <header><div><p class="eyebrow">Пайплайн магазина</p><h2>Расход токенов по задачам ИИ</h2></div></header>
+      <div class="ai-usage__table">
+        <div class="ai-usage__row ai-usage__row--head"><span>Задача</span><span>Вызовов</span><span>Токенов</span><span>Стоимость</span></div>
+        ${usage.tasks.map((item) => `<div class="ai-usage__row">
+          <b>${esc(taskNames[item.task] || item.task)}<small>${esc(item.model)}</small></b>
+          <span>${item.calls.toLocaleString("ru-RU")}</span>
+          <span>${fmtTokens(item.tokens)}</span>
+          <strong>${fmtUsd(item.costUsd)}</strong>
+        </div>`).join("") || `<div class="bot-empty">Расходов пока нет. Первый реальный вызов DeepSeek появится здесь автоматически.</div>`}
+      </div>
+    </section>`;
+}
+
 function renderDeveloperMount(): void {
   const mount = document.getElementById("developerMount");
   const data = state.developerStatus;
@@ -1420,6 +1518,8 @@ function renderDeveloperMount(): void {
           <button type="button" class="btn btn--sm" id="saveBotSettings">Сохранить</button></header>
         <label class="bot-switch"><input type="checkbox" id="botApproval" ${s.approvalEnabled ? "checked" : ""}><span></span>
           Подтверждать ответы перед отправкой</label>
+        <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botAggressiveLearning" ${s.aggressiveLearning ? "checked" : ""}><span></span>
+          <div><b>Агрессивное обучение</b><small>После каждого отклонения сохраняет причину и точечно улучшает системный промпт.</small></div></label>
         <label>Модель<select id="botModel">${s.models.map((model) => `<option ${model === s.model ? "selected" : ""}>${esc(model)}</option>`).join("")}</select></label>
         ${[
           ["botSystemPrompt", "Системный промпт", s.systemPrompt],
@@ -1430,13 +1530,15 @@ function renderDeveloperMount(): void {
         ].map(([id, label, value]) => `<label>${label}<textarea id="${id}" rows="5">${esc(value)}</textarea></label>`).join("")}
       </section>
       <section class="bot-panel bot-lab">
-        <header><div><p class="eyebrow">Без отправки клиенту</p><h2>Лаборатория бота</h2></div>
+        <header><div><p class="eyebrow">Изолировано от CRM и клиентов</p><h2>Лаборатория бота</h2>
+          <small>Редактируйте промпты и проверяйте ответы — сообщения никуда не отправляются.</small></div>
           <button type="button" class="admin__link" id="clearBotLab">Очистить</button></header>
         <div class="bot-lab__messages" id="botLabMessages">${renderLabMessages()}</div>
         <form id="botLabForm"><textarea name="message" rows="3" placeholder="Сообщение тестового клиента…" required></textarea>
           <button class="btn btn--sm" type="submit">Запустить ↗</button></form>
       </section>
     </div>
+    ${renderAiUsage()}
     <section class="bot-panel bot-pipeline">
       <header><div><p class="eyebrow">Live log</p><h2>Пайплайн и ошибки</h2></div>
         <button type="button" class="admin__link" id="refreshBotEvents">Обновить</button></header>
@@ -1450,12 +1552,14 @@ function renderDeveloperMount(): void {
 }
 
 async function loadDeveloper(): Promise<void> {
-  const [status, events] = await Promise.all([
+  const [status, events, usage] = await Promise.all([
     api<DeveloperStatus>("GET", "/crm/developer/status"),
     api<{ events: BotEvent[] }>("GET", "/crm/developer/events?limit=150"),
+    api<AiUsageAnalytics>("GET", "/crm/developer/usage"),
   ]);
   state.developerStatus = status;
   state.botEvents = events.events;
+  state.aiUsage = usage;
   renderDeveloperMount();
 }
 
@@ -1519,8 +1623,19 @@ const TABS: { id: AdminView; label: string }[] = [
 
 function tabsHTML(): string {
   return `<nav class="admin__tabs">
+    <span class="admin__tabIndicator" aria-hidden="true"></span>
     ${TABS.map((t) => `<button type="button" class="admin__tab ${state.view === t.id ? "active" : ""}" data-tab="${t.id}">${t.label}</button>`).join("")}
   </nav>`;
+}
+
+function syncTabIndicator(): void {
+  const tabs = root.querySelector<HTMLElement>(".admin__tabs");
+  const indicator = tabs?.querySelector<HTMLElement>(".admin__tabIndicator");
+  const active = tabs?.querySelector<HTMLElement>(".admin__tab.active");
+  if (!tabs || !indicator || !active) return;
+  indicator.style.width = `${active.offsetWidth}px`;
+  indicator.style.transform = `translateX(${active.offsetLeft - tabs.clientLeft}px)`;
+  requestAnimationFrame(() => tabs.classList.add("is-ready"));
 }
 
 function renderView(): void {
@@ -1545,16 +1660,28 @@ function renderView(): void {
         : state.view === "history"
           ? renderHistoryView()
           : renderProductsView();
-  root.innerHTML = tabsHTML() + `<div class="admin__view">${body}</div>`;
+  const currentTabs = root.querySelector<HTMLElement>(".admin__tabs");
+  const currentView = root.querySelector<HTMLElement>(".admin__view");
+  if (currentTabs && currentView) {
+    currentView.innerHTML = body;
+    currentTabs.querySelectorAll<HTMLElement>("[data-tab]").forEach((tab) =>
+      tab.classList.toggle("active", tab.dataset.tab === state.view)
+    );
+  } else {
+    root.innerHTML = tabsHTML() + `<div class="admin__view">${body}</div>`;
+  }
 
-  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) =>
+  root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) => {
+    if (b.dataset.wired === "true") return;
+    b.dataset.wired = "true";
     b.addEventListener("click", () => {
       state.view = b.dataset.tab as AdminView;
       state.editingProductSlug = null;
       state.editingPostSlug = null;
       renderView();
-    })
-  );
+    });
+  });
+  syncTabIndicator();
 
   if (state.view === "crm") wireCrmView();
   else if (state.view === "approvals") wireApprovalsView();

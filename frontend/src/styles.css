@@ -1323,10 +1323,25 @@ body.noscroll { overflow: hidden; }
 }
 
 /* --- вкладки --- */
-.admin__tabs { display: inline-flex; background: var(--bg-soft); border-radius: 999px; padding: 5px; gap: 3px; margin-bottom: 32px; }
-.admin__tab { border: none; background: transparent; padding: 10px 22px; border-radius: 999px; font-weight: 600; font-size: 14px; cursor: pointer; color: var(--gray); transition: .2s var(--ease); font-family: inherit; }
+.admin__tabs {
+  position: relative; display: inline-flex; background: var(--bg-soft);
+  border-radius: 999px; padding: 5px; gap: 3px; margin-bottom: 32px;
+}
+.admin__tabIndicator {
+  position: absolute; top: 5px; bottom: 5px; left: 0; z-index: 0;
+  border-radius: 999px; background: #fff; box-shadow: var(--shadow-sm);
+  transform: translateX(5px); pointer-events: none;
+}
+.admin__tabs.is-ready .admin__tabIndicator {
+  transition: width .34s var(--ease), transform .34s var(--ease);
+}
+.admin__tab {
+  position: relative; z-index: 1; border: none; background: transparent;
+  padding: 10px 22px; border-radius: 999px; font-weight: 600; font-size: 14px;
+  cursor: pointer; color: var(--gray); transition: color .24s var(--ease); font-family: inherit;
+}
 .admin__tab:hover { color: var(--ink); }
-.admin__tab.active { background: #fff; color: var(--ink); box-shadow: var(--shadow-sm); }
+.admin__tab.active { background: transparent; color: #0b0b0d; box-shadow: none; }
 
 /* --- вход по логину/паролю --- */
 .admin__login-badge { display: block; width: 48px; height: 48px; flex: 0 0 48px; }
@@ -1691,7 +1706,8 @@ body.noscroll { overflow: hidden; }
 .admin-theme {
   display: grid; place-items: center; width: 42px; height: 42px; padding: 0;
   border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.68);
-  color: var(--ink); font: 800 18px/1 inherit; cursor: pointer;
+  color: var(--ink); font: 700 24px/1 -apple-system, BlinkMacSystemFont, "Segoe UI Symbol", sans-serif;
+  cursor: pointer;
 }
 .bot-approvals { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
 .bot-approval, .bot-panel, .bot-kpis article {
@@ -1732,6 +1748,28 @@ body.noscroll { overflow: hidden; }
 .bot-settings > header { margin-bottom: 0; }
 .bot-switch { display: flex !important; align-items: center; gap: 10px; padding: 12px; border-radius: 13px; background: var(--bg-soft); }
 .bot-switch input { accent-color: var(--red); }
+.bot-switch > div { display: grid; gap: 3px; }
+.bot-switch > div b { font-size: 12px; }
+.bot-switch > div small { color: var(--gray); font-size: 9px; line-height: 1.45; }
+.bot-switch--learning { border: 1px solid rgba(232,0,29,.18); background: var(--red-soft); }
+.crm-usage-summary { display: grid; grid-template-columns: repeat(7, minmax(105px, 1fr)); gap: 10px; margin: -10px 0 18px; }
+.crm-usage-summary article { padding: 16px 17px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
+.crm-usage-summary strong { display: block; color: var(--red); font-size: 20px; line-height: 1; }
+.crm-usage-summary span { display: block; margin-top: 8px; color: var(--gray); font-size: 10px; }
+.ai-usage { margin-top: 16px; }
+.ai-usage > header > small { color: var(--gray); font-size: 9px; }
+.ai-usage__periods { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.ai-usage__periods article { display: grid; gap: 6px; padding: 18px; border-radius: 18px; background: var(--bg-soft); }
+.ai-usage__periods strong { color: var(--red); font-size: 20px; }
+.ai-usage__periods strong small { font-size: 10px; }
+.ai-usage__periods b { font-size: 16px; }
+.ai-usage__periods span { color: var(--gray); font-size: 10px; }
+.ai-usage__table { display: grid; }
+.ai-usage__row { display: grid; grid-template-columns: 1.6fr .75fr .85fr .75fr; align-items: center; gap: 16px; padding: 13px 2px; border-top: 1px solid var(--line); font-size: 11px; }
+.ai-usage__row > :not(:first-child) { text-align: right; }
+.ai-usage__row b small { display: block; margin-top: 3px; color: var(--gray); font-size: 8px; font-weight: 500; }
+.ai-usage__row strong { color: #009b6d; }
+.ai-usage__row--head { border-top: 0; color: var(--gray); font-size: 9px; font-weight: 700; text-transform: uppercase; }
 .bot-lab { display: flex; min-height: 660px; flex-direction: column; }
 .bot-lab__messages { display: flex; flex: 1; max-height: 560px; overflow-y: auto; flex-direction: column; gap: 10px; padding: 8px 2px; }
 .bot-lab__message { max-width: 85%; padding: 12px 14px; border-radius: 16px; background: var(--bg-soft); }
@@ -1756,7 +1794,6 @@ body.noscroll { overflow: hidden; }
 :root[data-admin-theme="dark"] body { background: var(--bg); color: var(--ink); }
 :root[data-admin-theme="dark"] .header { background: rgba(13,13,16,.72); border-color: var(--line); }
 :root[data-admin-theme="dark"] .admin-theme,
-:root[data-admin-theme="dark"] .admin__tab.active,
 :root[data-admin-theme="dark"] .admin__login,
 :root[data-admin-theme="dark"] .calc,
 :root[data-admin-theme="dark"] .admin__panel,
@@ -1770,6 +1807,12 @@ body.noscroll { overflow: hidden; }
 :root[data-admin-theme="dark"] .bot-kpis article {
   background: var(--admin-surface); color: var(--ink); border-color: var(--line);
   box-shadow: 0 16px 42px rgba(0,0,0,.22);
+}
+:root[data-admin-theme="dark"] .crm-usage-summary article {
+  background: var(--admin-surface); color: var(--ink); border-color: var(--line);
+}
+:root[data-admin-theme="dark"] .admin__tabIndicator {
+  background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.3);
 }
 :root[data-admin-theme="dark"] input,
 :root[data-admin-theme="dark"] textarea,
@@ -1785,7 +1828,20 @@ body.noscroll { overflow: hidden; }
 :root[data-admin-theme="dark"] .bot-approval__message,
 :root[data-admin-theme="dark"] .bot-approval__summary,
 :root[data-admin-theme="dark"] .bot-switch,
+:root[data-admin-theme="dark"] .ai-usage__periods article,
 :root[data-admin-theme="dark"] .bot-lab__message--assistant { background: var(--admin-surface-raised); }
+
+@media (max-width: 1050px) {
+  .crm-usage-summary { grid-template-columns: repeat(4, 1fr); }
+  .ai-usage__periods { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 700px) {
+  .crm-usage-summary { display: flex; overflow-x: auto; padding-bottom: 5px; }
+  .crm-usage-summary article { min-width: 125px; }
+  .ai-usage__periods { grid-template-columns: 1fr 1fr; }
+  .ai-usage__row { grid-template-columns: 1.2fr .65fr .8fr; }
+  .ai-usage__row > :nth-child(2) { display: none; }
+}
 :root[data-admin-theme="dark"] .admin__prow:hover {
   border-color: #4b4b55; box-shadow: 0 12px 30px rgba(0,0,0,.24);
 }

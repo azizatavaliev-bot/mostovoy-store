@@ -349,4 +349,42 @@ module.exports = [
       WHERE slug = 'macbook-pro-16-m5-pro-1-tb-24-gb-ram';
     `,
   },
+  {
+    // Обучение на решениях менеджера и фактический расход DeepSeek по
+    // отдельным этапам пайплайна.
+    name: "011_bot_learning_and_usage",
+    sql: `
+      ALTER TABLE bot_approvals ADD COLUMN reject_reason TEXT;
+
+      CREATE TABLE bot_training_examples (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        approval_id       INTEGER NOT NULL UNIQUE REFERENCES bot_approvals(id) ON DELETE CASCADE,
+        conversation_id   INTEGER NOT NULL REFERENCES crm_conversations(id) ON DELETE CASCADE,
+        customer_message  TEXT NOT NULL,
+        ai_reply          TEXT NOT NULL,
+        final_reply       TEXT,
+        was_edited        INTEGER NOT NULL DEFAULT 0,
+        quality_label     TEXT NOT NULL CHECK (quality_label IN ('accepted', 'rejected')),
+        reject_reason     TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_bot_training_quality ON bot_training_examples(quality_label, created_at DESC);
+
+      CREATE TABLE ai_usage (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id    INTEGER REFERENCES crm_conversations(id) ON DELETE SET NULL,
+        task               TEXT NOT NULL,
+        model              TEXT NOT NULL,
+        prompt_tokens      INTEGER NOT NULL DEFAULT 0,
+        completion_tokens  INTEGER NOT NULL DEFAULT 0,
+        total_tokens       INTEGER NOT NULL DEFAULT 0,
+        input_cost_usd     REAL NOT NULL DEFAULT 0,
+        output_cost_usd    REAL NOT NULL DEFAULT 0,
+        total_cost_usd     REAL NOT NULL DEFAULT 0,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_ai_usage_created ON ai_usage(created_at DESC);
+      CREATE INDEX idx_ai_usage_task ON ai_usage(task, created_at DESC);
+    `,
+  },
 ];

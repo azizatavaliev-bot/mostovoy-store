@@ -11,6 +11,8 @@ const DEFAULT_CHARACTER_PROMPT = `Доброжелательный, уверен
 const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены и условия. Не обещай то, чего нет в каталоге. Если информации недостаточно — передай вопрос менеджеру.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и мягко подведи к оформлению заказа.`;
 const ALLOWED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-reasoner"];
+const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
+const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
 
 function toConversation(row) {
   return {
@@ -94,6 +96,7 @@ class CrmService {
     );
     return {
       approvalEnabled: rows.bot_approval_enabled !== "false",
+      aggressiveLearning: rows.bot_learning_mode === "aggressive",
       model: ALLOWED_MODELS.includes(rows.bot_model) ? rows.bot_model : config.deepseek.model,
       systemPrompt: rows.bot_system_prompt || rows.sales_prompt || DEFAULT_PROMPT,
       hypervisorPrompt: rows.bot_hypervisor_prompt || DEFAULT_HYPERVISOR_PROMPT,
@@ -108,6 +111,7 @@ class CrmService {
     const current = this.getSettings();
     const values = {
       bot_approval_enabled: String(payload.approvalEnabled ?? current.approvalEnabled),
+      bot_learning_mode: (payload.aggressiveLearning ?? current.aggressiveLearning) ? "aggressive" : "manual",
       bot_model: ALLOWED_MODELS.includes(payload.model) ? payload.model : current.model,
       bot_system_prompt: String(payload.systemPrompt ?? current.systemPrompt).trim().slice(0, 16000) || DEFAULT_PROMPT,
       bot_hypervisor_prompt: String(payload.hypervisorPrompt ?? current.hypervisorPrompt).trim().slice(0, 8000) || DEFAULT_HYPERVISOR_PROMPT,
@@ -123,12 +127,95 @@ class CrmService {
     this._logEvent(null, "info", "settings", "settings.saved", "Настройки бота сохранены", {
       model: values.bot_model,
       approvalEnabled: values.bot_approval_enabled === "true",
+      aggressiveLearning: values.bot_learning_mode === "aggressive",
     });
     return this.getSettings();
   }
 
   getBuyAnalytics(days = 30) {
     return getBuyClickAnalytics(this.db, days);
+  }
+
+  _recordUsage(task, conversationId, model, usage = {}) {
+    const promptTokens = Math.max(0, Number(usage.prompt_tokens || 0));
+    const completionTokens = Math.max(0, Number(usage.completion_tokens || 0));
+    const totalTokens = Math.max(0, Number(usage.total_tokens || promptTokens + completionTokens));
+    const inputCost = promptTokens / 1_000_000 * DEEPSEEK_INPUT_USD_PER_MILLION;
+    const outputCost = completionTokens / 1_000_000 * DEEPSEEK_OUTPUT_USD_PER_MILLION;
+    this.db.prepare(
+      `INSERT INTO ai_usage
+        (conversation_id, task, model, prompt_tokens, completion_tokens, total_tokens,
+         input_cost_usd, output_cost_usd, total_cost_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      conversationId == null ? null : Number(conversationId),
+      task,
+      String(model || this.getSettings().model),
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      inputCost,
+      outputCost,
+      inputCost + outputCost
+    );
+  }
+
+  _usageRecorder(task, conversationId, fallbackModel) {
+    return (usage, model) => this._recordUsage(task, conversationId, model || fallbackModel, usage);
+  }
+
+  getAiUsageAnalytics() {
+    const period = (modifier) => this.db.prepare(
+      `SELECT COALESCE(SUM(total_tokens), 0) AS tokens,
+              COALESCE(SUM(total_cost_usd), 0) AS cost
+       FROM ai_usage ${modifier ? "WHERE created_at >= datetime('now', ?)" : ""}`
+    ).get(...(modifier ? [modifier] : []));
+    const today = period("start of day");
+    const month = period("-30 days");
+    const year = period("-365 days");
+    const all = period();
+    const activeDays = this.db.prepare(
+      "SELECT COUNT(DISTINCT date(created_at)) AS count FROM ai_usage"
+    ).get();
+    const tasks = this.db.prepare(
+      `SELECT task, model, COUNT(*) AS calls, SUM(total_tokens) AS tokens,
+              SUM(total_cost_usd) AS cost
+       FROM ai_usage GROUP BY task, model ORDER BY cost DESC, tokens DESC`
+    ).all().map((row) => ({
+      task: row.task,
+      model: row.model,
+      calls: Number(row.calls || 0),
+      tokens: Number(row.tokens || 0),
+      costUsd: Number(row.cost || 0),
+    }));
+    const overview = this.db.prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM crm_conversations) AS conversations,
+        (SELECT COUNT(*) FROM crm_messages) AS messages,
+        (SELECT COUNT(*) FROM bot_approvals) AS aiReplies,
+        (SELECT COUNT(*) FROM bot_approvals WHERE status = 'approved') AS approved,
+        (SELECT COUNT(*) FROM bot_approvals WHERE status = 'approved' AND edited_reply IS NULL) AS withoutEdits,
+        (SELECT COUNT(*) FROM bot_approvals WHERE status = 'rejected') AS rejected`
+    ).get();
+    const normalize = (row) => ({ tokens: Number(row.tokens || 0), costUsd: Number(row.cost || 0) });
+    return {
+      overview: Object.fromEntries(Object.entries(overview).map(([key, value]) => [key, Number(value || 0)])),
+      periods: {
+        today: normalize(today),
+        averageDay: {
+          tokens: Math.round(Number(all.tokens || 0) / Math.max(1, Number(activeDays.count || 0))),
+          costUsd: Number(all.cost || 0) / Math.max(1, Number(activeDays.count || 0)),
+        },
+        month: normalize(month),
+        year: normalize(year),
+        all: normalize(all),
+      },
+      tasks,
+      pricing: {
+        inputUsdPerMillion: DEEPSEEK_INPUT_USD_PER_MILLION,
+        outputUsdPerMillion: DEEPSEEK_OUTPUT_USD_PER_MILLION,
+      },
+    };
   }
 
   _logEvent(conversationId, level, stage, event, message, details) {
@@ -208,6 +295,7 @@ class CrmService {
       customerMessage: row.customer_message,
       aiReply: row.ai_reply,
       editedReply: row.edited_reply,
+      rejectReason: row.reject_reason,
       summary: row.conversation_summary,
       model: row.model,
       status: row.status,
@@ -227,6 +315,11 @@ class CrmService {
       `UPDATE bot_approvals SET status = 'approved', edited_reply = ?, decided_at = datetime('now')
        WHERE id = ?`
     ).run(finalText === row.ai_reply ? null : finalText, row.id);
+    this._saveTrainingExample(row, {
+      qualityLabel: "accepted",
+      finalReply: finalText,
+      wasEdited: finalText !== row.ai_reply,
+    });
     this._logEvent(row.conversation_id, "info", "approval", "approval.approved", "Ответ подтверждён и отправлен", {
       approvalId: Number(row.id),
       edited: finalText !== row.ai_reply,
@@ -234,17 +327,100 @@ class CrmService {
     return this.listApprovals("all").find((item) => item.id === Number(row.id));
   }
 
-  rejectReply(id) {
+  async rejectReply(id, reason) {
     const row = this.db.prepare("SELECT * FROM bot_approvals WHERE id = ?").get(Number(id));
     if (!row) throw new Error("Черновик не найден");
     if (row.status !== "pending") throw new Error("Черновик уже обработан");
+    const rejectReason = String(reason || "").trim().slice(0, 2000);
+    if (!rejectReason) throw new Error("Укажите причину отклонения");
     this.db.prepare(
-      "UPDATE bot_approvals SET status = 'rejected', decided_at = datetime('now') WHERE id = ?"
-    ).run(row.id);
+      `UPDATE bot_approvals SET status = 'rejected', reject_reason = ?,
+       decided_at = datetime('now') WHERE id = ?`
+    ).run(rejectReason, row.id);
+    this._saveTrainingExample(row, {
+      qualityLabel: "rejected",
+      rejectReason,
+    });
     this._logEvent(row.conversation_id, "warn", "approval", "approval.rejected", "Ответ отклонён менеджером", {
       approvalId: Number(row.id),
+      reason: rejectReason,
     });
-    return true;
+    if (this.getSettings().aggressiveLearning) {
+      try {
+        await this._calibratePromptFromReject(row, rejectReason);
+      } catch (error) {
+        this._logEvent(row.conversation_id, "error", "learning", "learning.failed", error.message, {
+          approvalId: Number(row.id),
+        });
+      }
+    }
+    return this.listApprovals("all").find((item) => item.id === Number(row.id));
+  }
+
+  _saveTrainingExample(row, { qualityLabel, finalReply = null, wasEdited = false, rejectReason = null }) {
+    this.db.prepare(
+      `INSERT OR IGNORE INTO bot_training_examples
+        (approval_id, conversation_id, customer_message, ai_reply, final_reply,
+         was_edited, quality_label, reject_reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      row.id,
+      row.conversation_id,
+      row.customer_message,
+      row.ai_reply,
+      finalReply,
+      wasEdited ? 1 : 0,
+      qualityLabel,
+      rejectReason
+    );
+  }
+
+  async _calibratePromptFromReject(row, reason) {
+    if (!this.deepseek?.enabled || typeof this.deepseek.chatJson !== "function") return;
+    const settings = this.getSettings();
+    const result = await this.deepseek.chatJson({
+      system: `Ты калибруешь системный промпт продавца магазина техники.
+Верни JSON с полями prompt_patch и reasoning.
+prompt_patch — не больше двух коротких предложений, только универсальное правило.
+Если замечание относится лишь к единичному случаю, верни пустой prompt_patch.`,
+      user: JSON.stringify({
+        customer_message: row.customer_message,
+        rejected_reply: row.ai_reply,
+        reject_reason: reason,
+        current_system_prompt: settings.systemPrompt,
+      }),
+      temperature: 0.2,
+      maxTokens: 350,
+      onUsage: this._usageRecorder("aggressive_learning", row.conversation_id, settings.model),
+    });
+    const patch = String(result?.prompt_patch || "").trim().slice(0, 1000);
+    if (!patch || settings.systemPrompt.includes(patch)) return;
+    const nextPrompt = `${settings.systemPrompt}\n\n${patch}`.slice(0, 16000);
+    const upsert = this.db.prepare(
+      `INSERT INTO crm_settings (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    );
+    let history = [];
+    try {
+      const saved = this.db.prepare("SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_history'").get();
+      history = saved?.value ? JSON.parse(saved.value) : [];
+    } catch {
+      history = [];
+    }
+    history.push({
+      at: new Date().toISOString(),
+      approvalId: Number(row.id),
+      reason,
+      patch,
+      reasoning: String(result?.reasoning || "").slice(0, 2000),
+      previousPrompt: settings.systemPrompt,
+    });
+    upsert.run("bot_system_prompt", nextPrompt);
+    upsert.run("bot_system_prompt_history", JSON.stringify(history.slice(-200)));
+    this._logEvent(row.conversation_id, "info", "learning", "prompt.auto_calibrated", "Системный промпт обновлён", {
+      approvalId: Number(row.id),
+      patch,
+    });
   }
 
   async testBot({ message, history = [], model, prompts = {} } = {}) {
@@ -258,6 +434,7 @@ class CrmService {
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
+      onUsage: this._usageRecorder("laboratory", null, selectedModel),
     });
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
@@ -393,7 +570,12 @@ class CrmService {
       incomingMessageId,
     });
     try {
-      const reply = await this.deepseek.chatText({ system: prompt, messages: history, model: settings.model });
+      const reply = await this.deepseek.chatText({
+        system: prompt,
+        messages: history,
+        model: settings.model,
+        onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
+      });
       let summary = null;
       const incomingCount = history.filter((message) => message.role === "user").length;
       if (settings.approvalEnabled && incomingCount > 1) {
@@ -403,6 +585,7 @@ class CrmService {
           model: settings.model,
           maxTokens: 240,
           temperature: 0.15,
+          onUsage: this._usageRecorder("hypervisor", conversationId, settings.model),
         }).catch((error) => {
           this._logEvent(conversationId, "warn", "hypervisor", "hypervisor.failed", error.message);
           return null;

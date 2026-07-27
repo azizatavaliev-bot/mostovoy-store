@@ -37,10 +37,9 @@ function createCrmAdminRoutes(router, crm) {
       res.status(/не найден/.test(error.message) ? 404 : 400).json({ error: error.message });
     }
   });
-  router.post("/crm/approvals/:id/reject", express.json(), (req, res) => {
+  router.post("/crm/approvals/:id/reject", express.json(), async (req, res) => {
     try {
-      crm.rejectReply(Number(req.params.id));
-      res.json({ ok: true });
+      res.json({ approval: await crm.rejectReply(Number(req.params.id), req.body?.reason) });
     } catch (error) {
       res.status(/не найден/.test(error.message) ? 404 : 400).json({ error: error.message });
     }
@@ -49,6 +48,7 @@ function createCrmAdminRoutes(router, crm) {
   router.get("/crm/developer/events", (req, res) => {
     res.json({ events: crm.listEvents({ level: req.query.level, limit: req.query.limit }) });
   });
+  router.get("/crm/developer/usage", (req, res) => res.json(crm.getAiUsageAnalytics()));
   router.post("/crm/developer/lab", express.json(), async (req, res) => {
     try {
       res.json(await crm.testBot(req.body || {}));

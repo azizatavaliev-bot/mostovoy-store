@@ -315,13 +315,18 @@ body.search-open { overflow: hidden; }
     filter .38s var(--ease);
 }
 .hero__product-word > span[data-hero-copy="macbook"],
-.hero__availability > span[data-hero-copy="macbook"] {
+.hero__product-word > span[data-hero-copy="ipad"],
+.hero__availability > span[data-hero-copy="macbook"],
+.hero__availability > span[data-hero-copy="ipad"] {
   opacity: 0; transform: translate3d(0, .55em, 0) rotateX(-35deg); filter: blur(5px);
 }
-.hero[data-product="macbook"] [data-hero-copy="iphone"] {
+.hero[data-product="macbook"] [data-hero-copy="iphone"],
+.hero[data-product="ipad"] [data-hero-copy="iphone"],
+.hero[data-product="ipad"] [data-hero-copy="macbook"] {
   opacity: 0; transform: translate3d(0, -.48em, 0) rotateX(35deg); filter: blur(5px);
 }
-.hero[data-product="macbook"] [data-hero-copy="macbook"] {
+.hero[data-product="macbook"] [data-hero-copy="macbook"],
+.hero[data-product="ipad"] [data-hero-copy="ipad"] {
   opacity: 1; transform: none; filter: none;
 }
 .accent { color: #ef0c22; }
@@ -369,6 +374,11 @@ body.search-open { overflow: hidden; }
   transform: translate3d(95px, 26px, 0) scale(.88) rotate(3deg);
   filter: drop-shadow(0 34px 32px rgba(54,16,20,.08)) blur(3px);
 }
+.hero__device--ipad {
+  width: min(650px, 46vw); right: 3%; bottom: 6%; opacity: 0;
+  transform: translate3d(95px, 20px, 0) scale(.9) rotate(3deg);
+  filter: drop-shadow(0 30px 28px rgba(54,16,20,.08)) blur(3px);
+}
 .hero[data-product="macbook"] .hero__device--iphone {
   opacity: 0; transform: translate3d(-90px, 22px, 0) scale(.9) rotate(-4deg);
   filter: drop-shadow(0 20px 20px rgba(54,16,20,.06)) blur(3px);
@@ -376,6 +386,15 @@ body.search-open { overflow: hidden; }
 .hero[data-product="macbook"] .hero__device--macbook {
   opacity: 1; transform: none;
   filter: drop-shadow(0 34px 32px rgba(54,16,20,.12));
+}
+.hero[data-product="ipad"] .hero__device--iphone,
+.hero[data-product="ipad"] .hero__device--macbook {
+  opacity: 0; transform: translate3d(-90px, 20px, 0) scale(.9) rotate(-4deg);
+  filter: drop-shadow(0 20px 20px rgba(54,16,20,.06)) blur(3px);
+}
+.hero[data-product="ipad"] .hero__device--ipad {
+  opacity: 1; transform: none;
+  filter: drop-shadow(0 30px 28px rgba(54,16,20,.12));
 }
 .hero__benefits {
   position: absolute; z-index: 6; left: 50%; bottom: 0; transform: translateX(-50%);
@@ -725,10 +744,19 @@ body.search-open { overflow: hidden; }
     width: min(520px, 91vw); right: 50%; bottom: 4px;
     transform: translateX(50%) translate3d(70px, 22px, 0) scale(.9) rotate(3deg);
   }
+  .hero__device--ipad {
+    width: min(470px, 84vw); right: 50%; bottom: 2px;
+    transform: translateX(50%) translate3d(70px, 20px, 0) scale(.9) rotate(3deg);
+  }
   .hero[data-product="macbook"] .hero__device--iphone {
     transform: translateX(50%) translate3d(-70px, 18px, 0) scale(.9) rotate(-4deg);
   }
   .hero[data-product="macbook"] .hero__device--macbook { transform: translateX(50%); }
+  .hero[data-product="ipad"] .hero__device--iphone,
+  .hero[data-product="ipad"] .hero__device--macbook {
+    transform: translateX(50%) translate3d(-70px, 18px, 0) scale(.9) rotate(-4deg);
+  }
+  .hero[data-product="ipad"] .hero__device--ipad { transform: translateX(50%); }
   .hero__benefits {
     position: relative; left: auto; bottom: auto; transform: none; width: 92%;
     min-height: 0; grid-template-columns: repeat(2, 1fr); gap: 0;
@@ -818,6 +846,7 @@ body.search-open { overflow: hidden; }
   .hero__orbit { width: 420px; bottom: -155px; border-width: 3px; }
   .hero__device { width: min(300px, 82vw); bottom: 0; }
   .hero__device--macbook { width: min(320px, 86vw); bottom: -58px; }
+  .hero__device--ipad { width: min(310px, 84vw); bottom: -46px; }
   .hero__benefits { grid-template-columns: 1fr; padding: 14px 20px; margin-top: -8px; }
   .hero__benefit, .hero__benefit:first-child, .hero__benefit:last-child {
     min-height: 84px; padding: 12px 4px; border-right: 0; border-bottom: 1px solid var(--line);

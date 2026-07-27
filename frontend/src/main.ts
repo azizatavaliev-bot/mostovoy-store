@@ -894,11 +894,12 @@ function mountHeroRotation(): void {
   const hero = document.querySelector<HTMLElement>(".hero");
   if (!hero) return;
 
-  let showMacbook = false;
+  const products = ["iphone", "macbook", "ipad"] as const;
+  let productIndex = 0;
   window.setInterval(() => {
     if (document.hidden) return;
-    showMacbook = !showMacbook;
-    const product = showMacbook ? "macbook" : "iphone";
+    productIndex = (productIndex + 1) % products.length;
+    const product = products[productIndex];
     hero.dataset.product = product;
     hero.querySelectorAll<HTMLElement>("[data-hero-copy]").forEach((copy) => {
       copy.setAttribute("aria-hidden", String(copy.dataset.heroCopy !== product));

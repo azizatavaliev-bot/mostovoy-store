@@ -1301,6 +1301,159 @@ body.noscroll { overflow: hidden; }
   .admin__uploadbtn { justify-content: center; padding: 12px; }
 }
 
+/* --- CRM: единый inbox Telegram + WhatsApp --- */
+.crm__head { margin-bottom: 18px; }
+.crm__status { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.crm__status span {
+  display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px;
+  border: 1px solid var(--line); border-radius: 999px; background: #fff;
+  color: var(--gray); font-size: 11px; font-weight: 700;
+}
+.crm__status i { width: 7px; height: 7px; border-radius: 50%; background: #aaa; }
+.crm__status .is-on i { background: #20b46a; box-shadow: 0 0 0 4px rgba(32,180,106,.12); }
+.crm__status .is-off { color: #a36c00; background: #fff9e8; border-color: #f3dfaa; }
+.crm__status .is-off i { background: #e7a600; }
+.crm__loading { padding: 80px 20px; text-align: center; color: var(--gray); }
+.crm {
+  display: grid; grid-template-columns: minmax(230px, 290px) minmax(420px, 1fr) minmax(230px, 290px);
+  height: min(720px, calc(100vh - 230px)); min-height: 590px;
+  overflow: hidden; border: 1px solid var(--line); border-radius: 26px;
+  background: rgba(255,255,255,.92); box-shadow: 0 24px 70px rgba(22,22,28,.08);
+}
+.crm__inbox, .crm__customer { min-width: 0; background: #fbfbfc; }
+.crm__inbox { display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+.crm__inboxTop { display: flex; align-items: center; justify-content: space-between; padding: 23px 20px 14px; }
+.crm__inboxTop b { font-size: 15px; }
+.crm__inboxTop span {
+  display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 7px;
+  border-radius: 999px; background: var(--red); color: #fff; font-size: 11px; font-weight: 800;
+}
+.crm__search { position: relative; display: flex; align-items: center; margin: 0 14px 12px; }
+.crm__search span { position: absolute; left: 13px; z-index: 1; color: var(--gray-2); font-size: 21px; }
+.crm__search input {
+  width: 100%; height: 42px; padding: 0 13px 0 37px; border: 1px solid transparent;
+  border-radius: 13px; background: #f0f0f3; color: var(--ink); font: 500 12px/1 inherit;
+}
+.crm__search input:focus { outline: none; border-color: #efb7bd; background: #fff; box-shadow: 0 0 0 3px rgba(232,0,29,.06); }
+.crm__threads { flex: 1; overflow-y: auto; padding: 0 9px 12px; scrollbar-width: thin; }
+.crm__thread {
+  position: relative; display: grid; grid-template-columns: 42px minmax(0,1fr); gap: 10px;
+  width: 100%; padding: 12px 10px; border: 1px solid transparent; border-radius: 15px;
+  background: transparent; color: var(--ink); text-align: left; cursor: pointer; font-family: inherit;
+  transition: background .18s, border-color .18s, transform .18s;
+}
+.crm__thread:hover { background: #fff; border-color: var(--line); transform: translateY(-1px); }
+.crm__thread.active { background: #fff; border-color: #f0c3c8; box-shadow: 0 7px 20px rgba(32,32,40,.05); }
+.crm__avatar {
+  display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px;
+  border-radius: 14px; background: linear-gradient(145deg, #1d1d22, #4b4b55);
+  color: #fff; font-size: 14px; font-weight: 800; box-shadow: inset 0 0 0 1px rgba(255,255,255,.12);
+}
+.crm__threadBody { min-width: 0; align-self: center; }
+.crm__threadLine { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.crm__threadLine b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.crm__threadLine time { flex-shrink: 0; color: var(--gray-2); font-size: 8.5px; }
+.crm__threadMeta { justify-content: flex-start; margin-top: 5px; }
+.crm__threadMeta small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--gray); font-size: 10px; }
+.crm__source {
+  display: inline-flex; align-items: center; width: max-content; padding: 4px 7px;
+  border-radius: 999px; background: #ececf0; color: #666; font-style: normal;
+  font-size: 8px; font-weight: 800; line-height: 1; text-transform: uppercase; letter-spacing: .2px;
+}
+.crm__source--telegram { color: #177fc0; background: #e4f4fd; }
+.crm__source--whatsapp, .crm__source--amocrm { color: #11844c; background: #e4f8ed; }
+.crm__unread {
+  position: absolute; right: 8px; bottom: 8px; min-width: 18px; height: 18px; padding: 0 5px;
+  display: grid; place-items: center; border-radius: 999px; background: var(--red); color: #fff; font-size: 9px;
+}
+.crm__empty { padding: 32px 16px; color: var(--gray-2); text-align: center; font-size: 12px; line-height: 1.7; }
+.crm__chat { min-width: 0; display: flex; flex-direction: column; background: #fff; }
+.crm__chatHead {
+  display: flex; align-items: center; gap: 12px; min-height: 74px; padding: 13px 20px;
+  border-bottom: 1px solid var(--line); background: rgba(255,255,255,.92);
+}
+.crm__avatar--large { width: 46px; height: 46px; flex-basis: 46px; border-radius: 15px; background: linear-gradient(145deg, #dd1020, #a80010); }
+.crm__chatHead > div { min-width: 0; }
+.crm__chatHead b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.crm__chatHead small { display: block; margin-top: 3px; color: var(--gray); font-size: 10.5px; }
+.crm__aiSwitch { display: flex; align-items: center; gap: 7px; margin-left: auto; cursor: pointer; }
+.crm__aiSwitch input { position: absolute; opacity: 0; }
+.crm__aiSwitch span { position: relative; width: 38px; height: 22px; border-radius: 999px; background: #dcdce1; transition: .2s; }
+.crm__aiSwitch span::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.18); transition: .2s;
+}
+.crm__aiSwitch input:checked + span { background: var(--red); }
+.crm__aiSwitch input:checked + span::after { transform: translateX(16px); }
+.crm__aiSwitch b { color: var(--gray); font-size: 10px; letter-spacing: .5px; }
+.crm__messages {
+  flex: 1; display: flex; flex-direction: column; gap: 10px; overflow-y: auto;
+  padding: 24px 25px; background:
+    radial-gradient(circle at 80% 12%, rgba(232,0,29,.035), transparent 27%),
+    linear-gradient(#fbfbfc, #f7f7f9);
+  scrollbar-width: thin;
+}
+.crm__message {
+  max-width: min(78%, 520px); padding: 11px 14px 8px; border-radius: 17px 17px 17px 5px;
+  background: #fff; border: 1px solid #e5e5e9; box-shadow: 0 4px 14px rgba(25,25,32,.035);
+}
+.crm__message--outgoing {
+  align-self: flex-end; border-color: #e51022; border-radius: 17px 17px 5px 17px;
+  background: linear-gradient(145deg, #ee1729, #cd0d1c); color: #fff;
+}
+.crm__message p { margin: 0; font-size: 12.5px; line-height: 1.55; }
+.crm__message footer { margin-top: 5px; color: var(--gray-2); font-size: 8.5px; text-align: right; }
+.crm__message--outgoing footer { color: rgba(255,255,255,.68); }
+.crm__composer {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end;
+  padding: 14px 17px; border-top: 1px solid var(--line); background: #fff;
+}
+.crm__composer textarea {
+  min-height: 42px; max-height: 120px; resize: vertical; padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: 13px; background: #f7f7f9;
+  color: var(--ink); font: 500 12px/1.5 inherit;
+}
+.crm__composer textarea:focus { outline: none; border-color: #e89da5; background: #fff; }
+.crm__composer .btn { min-height: 42px; }
+.crm__welcome { margin: auto; max-width: 280px; padding: 30px; text-align: center; }
+.crm__welcome .logo__badge { display: block; width: 58px; height: 58px; margin: 0 auto 18px; }
+.crm__welcome h2 { margin: 0 0 8px; font-size: 22px; }
+.crm__welcome p { color: var(--gray); font-size: 12px; line-height: 1.65; }
+.crm__customer { overflow-y: auto; border-left: 1px solid var(--line); padding: 24px 20px; scrollbar-width: thin; }
+.crm__customerHero { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.crm__avatar--xl { width: 66px; height: 66px; flex-basis: 66px; border-radius: 21px; background: linear-gradient(145deg, #ee1729, #a90010); font-size: 20px; }
+.crm__customerHero h3 { margin: 12px 0 7px; font-size: 16px; }
+.crm__facts { display: grid; gap: 0; margin: 24px 0; }
+.crm__facts div { padding: 11px 0; border-bottom: 1px solid var(--line); }
+.crm__facts dt { color: var(--gray-2); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+.crm__facts dd { margin: 4px 0 0; overflow-wrap: anywhere; color: var(--ink); font-size: 11.5px; font-weight: 600; }
+.crm__notes { display: grid; gap: 7px; color: var(--gray); font-size: 10px; font-weight: 700; }
+.crm__notes textarea, .crm__settings textarea {
+  width: 100%; resize: vertical; padding: 11px; border: 1px solid var(--line);
+  border-radius: 12px; background: #fff; color: var(--ink); font: 500 11px/1.5 inherit;
+}
+.crm__notes textarea:focus, .crm__settings textarea:focus { outline: none; border-color: #e89da5; }
+.crm__saveNotes { width: 100%; justify-content: center; margin-top: 9px; padding: 10px 12px; font-size: 10px; }
+.crm__customerBlank { padding: 24px 0; color: var(--gray); font-size: 12px; line-height: 1.6; }
+.crm__settings { margin-top: 23px; padding-top: 17px; border-top: 1px solid var(--line); }
+.crm__settings summary { cursor: pointer; color: var(--ink); font-size: 11px; font-weight: 800; }
+.crm__settings label { display: grid; gap: 7px; margin: 13px 0 8px; color: var(--gray); font-size: 9px; font-weight: 700; }
+.crm__settings p { margin-top: 13px; color: var(--gray-2); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.crm__settings code { color: var(--ink); font-size: 8px; }
+
+@media (max-width: 1050px) {
+  .crm { grid-template-columns: 250px minmax(400px, 1fr); }
+  .crm__customer { display: none; }
+}
+@media (max-width: 720px) {
+  .crm__status { justify-content: flex-start; }
+  .crm { display: block; height: auto; min-height: 0; overflow: visible; border-radius: 20px; }
+  .crm__inbox { height: 340px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .crm__chat { min-height: 570px; }
+  .crm__message { max-width: 88%; }
+  .crm__composer { position: sticky; bottom: 0; }
+}
+
 /* ========================================================================
    Блок «Где мы находимся»
    ======================================================================== */

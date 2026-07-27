@@ -51,6 +51,43 @@ interface PriceChange {
   source: "telegram" | "admin";
 }
 
+interface CrmConversation {
+  id: number;
+  source: "telegram" | "whatsapp" | "amocrm";
+  externalChatId: string;
+  externalLeadId?: string;
+  customerName: string;
+  customerUsername?: string;
+  customerPhone?: string;
+  aiEnabled: boolean;
+  unreadCount: number;
+  notes: string;
+  status: "open" | "closed";
+  lastMessageAt: string;
+  lastMessage: string;
+}
+
+interface CrmMessage {
+  id: number;
+  direction: "incoming" | "outgoing";
+  sender: "customer" | "assistant" | "manager";
+  text: string;
+  status: string;
+  createdAt: string;
+}
+
+interface CrmDetail {
+  conversation: CrmConversation;
+  messages: CrmMessage[];
+}
+
+interface CrmStatus {
+  telegram: boolean;
+  amocrm: boolean;
+  ai: boolean;
+  amocrmWebhook: string;
+}
+
 interface ProductForm {
   name: string;
   brand: string;
@@ -69,7 +106,7 @@ interface ProductForm {
   discountLabel: string;
 }
 
-type AdminView = "products" | "news" | "history";
+type AdminView = "products" | "news" | "history" | "crm";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
 
 const root = document.getElementById("admin") as HTMLElement;
@@ -84,6 +121,11 @@ const state = {
   categorySuggestions: [] as string[],
   posts: [] as Post[],
   history: [] as PriceChange[],
+  crmConversations: [] as CrmConversation[],
+  crmDetail: null as CrmDetail | null,
+  crmStatus: null as CrmStatus | null,
+  crmPrompt: "",
+  crmSearch: "",
   editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
   search: "",
@@ -129,7 +171,9 @@ function fmtMoney(n: number | null | undefined, currency: string): string {
 
 function fmtRelative(iso: string | null | undefined): string {
   if (!iso) return "—";
-  const then = new Date(iso.replace(" ", "T") + "Z").getTime();
+  const normalized = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
+  const then = new Date(normalized).getTime();
+  if (!Number.isFinite(then)) return "—";
   const diffMin = Math.round((Date.now() - then) / 60000);
   if (diffMin < 1) return "только что";
   if (diffMin < 60) return `${diffMin} мин назад`;
@@ -830,9 +874,229 @@ async function loadHistory(): Promise<void> {
   }
 }
 
+// --- CRM inbox -------------------------------------------------------------
+
+let crmPoll: ReturnType<typeof setInterval> | undefined;
+
+function crmSourceLabel(source: string): string {
+  return source === "telegram" ? "Telegram" : source === "whatsapp" ? "WhatsApp" : "amoCRM";
+}
+
+function crmInitial(name: string): string {
+  return (name.trim()[0] || "?").toUpperCase();
+}
+
+function renderCrmView(): string {
+  return `
+    <div class="admin__head crm__head">
+      <div>
+        <p class="eyebrow">Единый inbox</p>
+        <h1 class="section__title">CRM диалоги</h1>
+      </div>
+      <div class="crm__status" id="crmStatus"></div>
+    </div>
+    <div id="crmMount"><div class="crm__loading">Загружаем диалоги…</div></div>`;
+}
+
+function renderCrmStatus(): void {
+  const el = document.getElementById("crmStatus");
+  if (!el || !state.crmStatus) return;
+  const item = (label: string, ok: boolean) =>
+    `<span class="${ok ? "is-on" : "is-off"}"><i></i>${label}${ok ? "" : " — настройте"}</span>`;
+  el.innerHTML =
+    item("Telegram", state.crmStatus.telegram) +
+    item("WhatsApp · amoCRM", state.crmStatus.amocrm) +
+    item("AI", state.crmStatus.ai);
+}
+
+function renderCrmMount(): void {
+  const mount = document.getElementById("crmMount");
+  if (!mount) return;
+  const q = state.crmSearch.trim().toLowerCase();
+  const conversations = state.crmConversations.filter((c) =>
+    `${c.customerName} ${c.customerUsername || ""} ${c.customerPhone || ""} ${c.lastMessage}`.toLowerCase().includes(q)
+  );
+  const detail = state.crmDetail;
+  const selected = detail?.conversation;
+
+  mount.innerHTML = `
+    <div class="crm">
+      <aside class="crm__inbox">
+        <div class="crm__inboxTop">
+          <b>Все диалоги</b><span>${state.crmConversations.length}</span>
+        </div>
+        <label class="crm__search">
+          <span>⌕</span>
+          <input type="search" id="crmSearch" placeholder="Имя или сообщение" value="${esc(state.crmSearch)}" />
+        </label>
+        <div class="crm__threads">
+          ${conversations.map((c) => `
+            <button type="button" class="crm__thread ${selected?.id === c.id ? "active" : ""}" data-crm-id="${c.id}">
+              <span class="crm__avatar">${esc(crmInitial(c.customerName))}</span>
+              <span class="crm__threadBody">
+                <span class="crm__threadLine"><b>${esc(c.customerName)}</b><time>${esc(fmtRelative(c.lastMessageAt))}</time></span>
+                <span class="crm__threadLine crm__threadMeta">
+                  <em class="crm__source crm__source--${esc(c.source)}">${crmSourceLabel(c.source)}</em>
+                  <small>${esc(c.lastMessage || "Новый диалог")}</small>
+                </span>
+              </span>
+              ${c.unreadCount ? `<strong class="crm__unread">${c.unreadCount}</strong>` : ""}
+            </button>`).join("") || `<div class="crm__empty">Диалогов пока нет.<br />Напишите боту, чтобы проверить CRM.</div>`}
+        </div>
+      </aside>
+
+      <section class="crm__chat">
+        ${detail ? `
+          <header class="crm__chatHead">
+            <span class="crm__avatar crm__avatar--large">${esc(crmInitial(selected!.customerName))}</span>
+            <div><b>${esc(selected!.customerName)}</b><small>${crmSourceLabel(selected!.source)} · ${selected!.aiEnabled ? "AI отвечает" : "ручной режим"}</small></div>
+            <label class="crm__aiSwitch" title="Автоответы AI">
+              <input type="checkbox" id="crmAiToggle" ${selected!.aiEnabled ? "checked" : ""} />
+              <span></span><b>AI</b>
+            </label>
+          </header>
+          <div class="crm__messages" id="crmMessages">
+            ${detail.messages.map((m) => `
+              <article class="crm__message crm__message--${m.direction}">
+                <p>${esc(m.text).replace(/\n/g, "<br />")}</p>
+                <footer>${m.sender === "assistant" ? "AI" : m.sender === "manager" ? "Менеджер" : esc(selected!.customerName)} · ${esc(fmtRelative(m.createdAt))}</footer>
+              </article>`).join("") || `<div class="crm__empty">Сообщений пока нет</div>`}
+          </div>
+          <form class="crm__composer" id="crmComposer">
+            <textarea name="text" rows="1" maxlength="4000" placeholder="Написать клиенту…" required></textarea>
+            <button type="submit" class="btn btn--sm">Отправить <span>↗</span></button>
+          </form>` : `
+          <div class="crm__welcome">
+            <span class="logo__badge" aria-hidden="true"></span>
+            <h2>Выберите диалог</h2>
+            <p>Здесь появится переписка клиента с ботом или WhatsApp.</p>
+          </div>`}
+      </section>
+
+      <aside class="crm__customer">
+        ${detail ? `
+          <div class="crm__customerHero">
+            <span class="crm__avatar crm__avatar--xl">${esc(crmInitial(selected!.customerName))}</span>
+            <h3>${esc(selected!.customerName)}</h3>
+            <span class="crm__source crm__source--${esc(selected!.source)}">${crmSourceLabel(selected!.source)}</span>
+          </div>
+          <dl class="crm__facts">
+            <div><dt>Контакт</dt><dd>${esc(selected!.customerPhone || selected!.customerUsername || "Не указан")}</dd></div>
+            <div><dt>ID диалога</dt><dd>${esc(selected!.externalChatId)}</dd></div>
+            ${selected!.externalLeadId ? `<div><dt>Сделка amoCRM</dt><dd>#${esc(selected!.externalLeadId)}</dd></div>` : ""}
+            <div><dt>Последняя активность</dt><dd>${esc(fmtRelative(selected!.lastMessageAt))}</dd></div>
+          </dl>
+          <label class="crm__notes">Заметка менеджера
+            <textarea id="crmNotes" rows="5" placeholder="Что важно помнить о клиенте">${esc(selected!.notes)}</textarea>
+          </label>
+          <button type="button" class="btn btn--ghost crm__saveNotes" id="crmSaveNotes">Сохранить заметку</button>` : `
+          <div class="crm__customerBlank">
+            <p class="eyebrow">Карточка клиента</p>
+            <p>Контакты, источник и заметки откроются вместе с диалогом.</p>
+          </div>`}
+        <details class="crm__settings">
+          <summary>Настройки AI</summary>
+          <label>Инструкция продавцу
+            <textarea id="crmPrompt" rows="8">${esc(state.crmPrompt)}</textarea>
+          </label>
+          <button type="button" class="admin__link" id="crmSavePrompt">Сохранить инструкцию</button>
+          ${state.crmStatus ? `<p>Webhook amoCRM:<br /><code>${esc(state.crmStatus.amocrmWebhook)}</code></p>` : ""}
+        </details>
+      </aside>
+    </div>`;
+
+  wireCrmMount();
+  const messages = document.getElementById("crmMessages");
+  if (messages) messages.scrollTop = messages.scrollHeight;
+}
+
+function wireCrmMount(): void {
+  document.querySelectorAll<HTMLElement>("[data-crm-id]").forEach((button) =>
+    button.addEventListener("click", () => loadCrmConversation(Number(button.dataset.crmId)))
+  );
+  document.getElementById("crmSearch")?.addEventListener("input", (event) => {
+    state.crmSearch = (event.target as HTMLInputElement).value;
+    renderCrmMount();
+    const field = document.getElementById("crmSearch") as HTMLInputElement | null;
+    field?.focus();
+    field?.setSelectionRange(field.value.length, field.value.length);
+  });
+  document.getElementById("crmAiToggle")?.addEventListener("change", async (event) => {
+    if (!state.crmDetail) return;
+    const aiEnabled = (event.target as HTMLInputElement).checked;
+    state.crmDetail = await api<CrmDetail>("PATCH", `/crm/conversations/${state.crmDetail.conversation.id}`, { aiEnabled });
+    state.crmConversations = state.crmConversations.map((c) => c.id === state.crmDetail!.conversation.id ? state.crmDetail!.conversation : c);
+    renderCrmMount();
+  });
+  document.getElementById("crmSaveNotes")?.addEventListener("click", async () => {
+    if (!state.crmDetail) return;
+    const notes = (document.getElementById("crmNotes") as HTMLTextAreaElement).value;
+    state.crmDetail = await api<CrmDetail>("PATCH", `/crm/conversations/${state.crmDetail.conversation.id}`, { notes });
+    toast("Заметка сохранена");
+  });
+  document.getElementById("crmComposer")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.crmDetail) return;
+    const form = event.target as HTMLFormElement;
+    const field = form.elements.namedItem("text") as HTMLTextAreaElement;
+    const text = field.value.trim();
+    if (!text) return;
+    const button = form.querySelector("button") as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      state.crmDetail = await api<CrmDetail>("POST", `/crm/conversations/${state.crmDetail.conversation.id}/messages`, { text });
+      renderCrmMount();
+    } catch (error) {
+      toast((error as Error).message, false);
+      button.disabled = false;
+    }
+  });
+  document.getElementById("crmSavePrompt")?.addEventListener("click", async () => {
+    const salesPrompt = (document.getElementById("crmPrompt") as HTMLTextAreaElement).value;
+    const saved = await api<{ salesPrompt: string }>("PUT", "/crm/settings", { salesPrompt });
+    state.crmPrompt = saved.salesPrompt;
+    toast("Инструкция AI сохранена");
+  });
+}
+
+async function loadCrmConversation(id: number): Promise<void> {
+  state.crmDetail = await api<CrmDetail>("GET", `/crm/conversations/${id}`);
+  state.crmConversations = state.crmConversations.map((c) =>
+    c.id === id ? { ...c, unreadCount: 0 } : c
+  );
+  renderCrmMount();
+}
+
+async function refreshCrmConversations(selectFirst = false): Promise<void> {
+  const { conversations } = await api<{ conversations: CrmConversation[] }>("GET", "/crm/conversations");
+  state.crmConversations = conversations;
+  if (selectFirst && !state.crmDetail && conversations[0]) {
+    await loadCrmConversation(conversations[0].id);
+  } else {
+    renderCrmMount();
+  }
+}
+
+async function wireCrmView(): Promise<void> {
+  try {
+    const [status, settings] = await Promise.all([
+      api<CrmStatus>("GET", "/crm/status"),
+      api<{ salesPrompt: string }>("GET", "/crm/settings"),
+    ]);
+    state.crmStatus = status;
+    state.crmPrompt = settings.salesPrompt;
+    renderCrmStatus();
+    await refreshCrmConversations(true);
+    crmPoll = setInterval(() => refreshCrmConversations(false).catch(() => {}), 10000);
+  } catch (error) {
+    toast((error as Error).message, false);
+  }
+}
+
 // --- Общий каркас: вкладки + рендер ------------------------------------
 
 const TABS: { id: AdminView; label: string }[] = [
+  { id: "crm", label: "CRM" },
   { id: "products", label: "Товары" },
   { id: "news", label: "Посты" },
   { id: "history", label: "Обновления" },
@@ -845,10 +1109,21 @@ function tabsHTML(): string {
 }
 
 function renderView(): void {
+  if (crmPoll) {
+    clearInterval(crmPoll);
+    crmPoll = undefined;
+  }
   if (!state.authenticated) return renderLogin();
   btnLogout.hidden = false;
 
-  const body = state.view === "news" ? renderNewsView() : state.view === "history" ? renderHistoryView() : renderProductsView();
+  const body =
+    state.view === "crm"
+      ? renderCrmView()
+      : state.view === "news"
+        ? renderNewsView()
+        : state.view === "history"
+          ? renderHistoryView()
+          : renderProductsView();
   root.innerHTML = tabsHTML() + `<div class="admin__view">${body}</div>`;
 
   root.querySelectorAll<HTMLElement>("[data-tab]").forEach((b) =>
@@ -860,7 +1135,8 @@ function renderView(): void {
     })
   );
 
-  if (state.view === "news") wireNewsView();
+  if (state.view === "crm") wireCrmView();
+  else if (state.view === "news") wireNewsView();
   else if (state.view === "history") loadHistory();
   else wireProductsView();
 }

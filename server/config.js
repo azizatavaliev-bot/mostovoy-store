@@ -43,6 +43,13 @@ const config = {
     apiBase: process.env.TELEGRAM_API_BASE || "https://api.telegram.org",
   },
 
+  amocrm: {
+    baseUrl: (process.env.AMOCRM_BASE_URL || "").replace(/\/+$/, ""),
+    accessToken: process.env.AMOCRM_ACCESS_TOKEN || "",
+    amojoBaseUrl: (process.env.AMOJO_BASE_URL || "https://amojo.amocrm.ru").replace(/\/+$/, ""),
+    webhookSecret: process.env.AMOCRM_WEBHOOK_SECRET || "",
+  },
+
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || "",
     baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, ""),
@@ -137,6 +144,7 @@ config.features = {
   contact: Boolean(config.contact.telegram),
   adminToken: Boolean(config.admin.token),
   adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
+  amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
 };
 config.features.admin = config.features.adminToken || config.features.adminLogin;
 

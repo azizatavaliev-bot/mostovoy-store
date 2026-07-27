@@ -18,7 +18,7 @@ function postText(post) {
   return post?.text ?? post?.caption ?? "";
 }
 
-function createTelegramRouter({ db, queue }) {
+function createTelegramRouter({ db, queue, crm }) {
   const router = express.Router();
 
   router.post("/webhook", (req, res) => {
@@ -42,6 +42,16 @@ function createTelegramRouter({ db, queue }) {
         return res.json({ ok: true, duplicate: true });
       }
       db.prepare("INSERT INTO telegram_updates (update_id) VALUES (?)").run(update.update_id);
+    }
+
+    // Личные сообщения покупателей идут в единый CRM inbox. Сохраняем и
+    // отвечаем после быстрого 200, чтобы Telegram не повторял webhook.
+    if (update.message?.chat?.type === "private") {
+      res.json({ ok: true, queued: true, kind: "customer_message" });
+      Promise.resolve(crm?.receiveTelegram(update.message)).catch((error) =>
+        logger.error("telegram.crm_failed", { error: error.message })
+      );
+      return;
     }
 
     const post = update.channel_post || update.edited_channel_post;

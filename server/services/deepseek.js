@@ -114,6 +114,34 @@ class DeepSeekClient {
     throw lastError;
   }
 
+  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900 }) {
+    if (!this.enabled) {
+      throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
+    }
+    const chatMessages = [
+      { role: "system", content: system },
+      ...messages
+        .filter((m) => m && (m.role === "user" || m.role === "assistant") && String(m.content || "").trim())
+        .map((m) => ({ role: m.role, content: String(m.content) })),
+      ...(user ? [{ role: "user", content: user }] : []),
+    ];
+    let lastError;
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      if (attempt > 0) {
+        const backoff = Math.min(8000, 400 * 2 ** (attempt - 1));
+        await sleep(backoff);
+      }
+      await this.limiter.acquire();
+      try {
+        return await this._textOnce({ messages: chatMessages, temperature, maxTokens });
+      } catch (e) {
+        lastError = e;
+        if (!(e instanceof DeepSeekError) || !e.retriable) throw e;
+      }
+    }
+    throw lastError;
+  }
+
   async _once({ system, user, temperature, maxTokens }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
@@ -164,6 +192,48 @@ class DeepSeekClient {
     const parsed = parseJsonStrict(content);
     logger.debug("deepseek.ok", { model: this.model, usage: data?.usage });
     return parsed;
+  }
+
+  async _textOnce({ messages, temperature, maxTokens }) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
+    let res;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        signal: ac.signal,
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature,
+          max_tokens: maxTokens,
+          stream: false,
+        }),
+      });
+    } catch (e) {
+      throw new DeepSeekError(
+        e.name === "AbortError" ? "Таймаут запроса к DeepSeek" : `Сеть: ${e.message}`,
+        { code: e.name === "AbortError" ? "timeout" : "network", retriable: true }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new DeepSeekError(`DeepSeek ответил ${res.status}: ${body.slice(0, 300)}`, {
+        code: `http_${res.status}`,
+        status: res.status,
+        retriable: res.status === 429 || res.status >= 500,
+      });
+    }
+    const data = await res.json().catch(() => null);
+    const content = String(data?.choices?.[0]?.message?.content || "").trim();
+    if (!content) throw new DeepSeekError("Пустой ответ модели", { code: "empty_response", retriable: true });
+    return content;
   }
 }
 

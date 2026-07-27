@@ -13,8 +13,11 @@ const { SyncQueue } = require("./queue");
 const { createTelegramRouter } = require("./routes/telegram");
 const { createCatalogRouter } = require("./routes/catalog");
 const { createAdminRouter } = require("./routes/admin");
+const { createAmoCrmRouter } = require("./routes/amocrm");
+const { AmoCrmClient } = require("./services/amocrm");
+const { CrmService } = require("./services/crm");
 
-function createApp({ db, deepseek, research, queue } = {}) {
+function createApp({ db, deepseek, research, queue, crm, amocrm } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
   const researchService =
     research ||
@@ -25,14 +28,17 @@ function createApp({ db, deepseek, research, queue } = {}) {
     });
   const syncService = new SyncService({ db, deepseek: deepseekClient, research: researchService });
   const syncQueue = queue || new SyncQueue({ db, syncService });
+  const amoCrmClient = amocrm || new AmoCrmClient();
+  const crmService = crm || new CrmService({ db, deepseek: deepseekClient, amocrm: amoCrmClient });
 
   const app = express();
   app.disable("x-powered-by");
   // Тела апдейтов Telegram маленькие — лимит защищает от мусора.
   app.use(express.json({ limit: "512kb" }));
 
-  app.use("/api/telegram", createTelegramRouter({ db, queue: syncQueue }));
-  app.use("/api/admin", createAdminRouter({ db }));
+  app.use("/api/telegram", createTelegramRouter({ db, queue: syncQueue, crm: crmService }));
+  app.use("/api/amocrm", createAmoCrmRouter({ crm: crmService }));
+  app.use("/api/admin", createAdminRouter({ db, crm: crmService }));
   app.use("/api", createCatalogRouter({ db }));
 
   // Фото, загруженные через админку. Живут вне репозитория (см. .gitignore).
@@ -61,7 +67,14 @@ function createApp({ db, deepseek, research, queue } = {}) {
     res.status(500).json({ ok: false, error: "internal_error" });
   });
 
-  app.locals.services = { deepseek: deepseekClient, research: researchService, sync: syncService, queue: syncQueue };
+  app.locals.services = {
+    deepseek: deepseekClient,
+    research: researchService,
+    sync: syncService,
+    queue: syncQueue,
+    crm: crmService,
+    amocrm: amoCrmClient,
+  };
   return app;
 }
 

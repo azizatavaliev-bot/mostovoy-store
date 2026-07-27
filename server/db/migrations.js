@@ -198,4 +198,51 @@ module.exports = [
       CREATE INDEX idx_price_history_changed ON price_history(changed_at);
     `,
   },
+  {
+    // Единый inbox магазина: личные сообщения Telegram и WhatsApp из amoCRM.
+    // Секреты интеграций остаются в переменных окружения, здесь только диалоги.
+    name: "006_crm",
+    sql: `
+      CREATE TABLE crm_conversations (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        external_key         TEXT NOT NULL UNIQUE,
+        source               TEXT NOT NULL,
+        external_chat_id     TEXT NOT NULL,
+        external_lead_id     TEXT,
+        external_contact_id  TEXT,
+        customer_name        TEXT,
+        customer_username    TEXT,
+        customer_phone       TEXT,
+        ai_enabled           INTEGER NOT NULL DEFAULT 1,
+        unread_count         INTEGER NOT NULL DEFAULT 0,
+        notes                TEXT,
+        status               TEXT NOT NULL DEFAULT 'open',
+        last_message_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at           TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_crm_conversations_last ON crm_conversations(last_message_at DESC);
+      CREATE INDEX idx_crm_conversations_source ON crm_conversations(source);
+
+      CREATE TABLE crm_messages (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id      INTEGER NOT NULL REFERENCES crm_conversations(id) ON DELETE CASCADE,
+        external_message_id  TEXT,
+        direction            TEXT NOT NULL,
+        sender               TEXT NOT NULL,
+        text                 TEXT NOT NULL,
+        status               TEXT NOT NULL DEFAULT 'stored',
+        raw_payload          TEXT,
+        created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE (conversation_id, external_message_id, direction)
+      );
+      CREATE INDEX idx_crm_messages_conversation ON crm_messages(conversation_id, created_at, id);
+
+      CREATE TABLE crm_settings (
+        key         TEXT PRIMARY KEY,
+        value       TEXT NOT NULL,
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
 ];

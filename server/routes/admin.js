@@ -20,6 +20,7 @@ const { slugForProduct } = require("../services/products");
 const { verifyImageUrl } = require("../services/images");
 const { verifyPassword, createSession, verifySession, LoginThrottle } = require("../lib/auth");
 const { imageSize } = require("../services/images");
+const { createCrmAdminRoutes } = require("./crm-admin");
 
 const CURRENCIES = ["USD", "KGS", "RUB"];
 const SESSION_COOKIE = "mostovoy_admin_session";
@@ -278,7 +279,7 @@ function toAdminJson(row) {
   };
 }
 
-function createAdminRouter({ db }) {
+function createAdminRouter({ db, crm }) {
   const router = express.Router();
   // Свой лимитер на роутер, а не на модуль: иначе несколько createApp() в
   // одном процессе (как в тестах) делят один и тот же счётчик попыток по IP.
@@ -363,6 +364,7 @@ function createAdminRouter({ db }) {
   router.use(requireAdmin);
 
   createPostsRoutes(router, db);
+  if (crm) createCrmAdminRoutes(router, crm);
 
   router.post("/upload", (req, res) => {
     upload.single("file")(req, res, (err) => {

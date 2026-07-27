@@ -1564,6 +1564,103 @@ body.noscroll { overflow: hidden; }
   .analytics__leaderValue { min-width: 72px; }
 }
 
+/* --- Ответы бота, лаборатория и тёмная тема админки --- */
+.admin-theme {
+  display: grid; place-items: center; width: 42px; height: 42px; padding: 0;
+  border: 1px solid var(--line); border-radius: 50%; background: rgba(255,255,255,.68);
+  color: var(--ink); font: 800 18px/1 inherit; cursor: pointer;
+}
+.bot-approvals { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+.bot-approval, .bot-panel, .bot-kpis article {
+  border: 1px solid var(--line); border-radius: 22px; background: #fff;
+  box-shadow: 0 12px 36px rgba(24,24,30,.04);
+}
+.bot-approval { padding: 22px; }
+.bot-approval > header, .bot-approval > header > div, .bot-approval > footer, .bot-panel > header {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.bot-approval > header > div { justify-content: flex-start; }
+.bot-approval header b, .bot-approval header small { display: block; }
+.bot-approval header small { margin-top: 4px; color: var(--gray-2); font-size: 9px; }
+.bot-status { padding: 6px 9px; border-radius: 99px; background: #fff4de; color: #9c6200; font-size: 9px; font-weight: 800; }
+.bot-approval--approved .bot-status { background: #e8f7ee; color: #147640; }
+.bot-approval--rejected .bot-status { background: var(--red-soft); color: var(--red); }
+.bot-approval__message, .bot-approval__summary { margin: 17px 0; padding: 14px; border-radius: 15px; background: var(--bg-soft); }
+.bot-approval__summary { border-left: 3px solid var(--red); }
+.bot-approval small, .bot-approval label, .bot-settings label { color: var(--gray); font-size: 10px; font-weight: 700; }
+.bot-approval p { margin: 6px 0 0; color: var(--ink); font-size: 12px; line-height: 1.65; }
+.bot-approval label, .bot-settings label { display: grid; gap: 7px; }
+.bot-approval textarea, .bot-settings textarea, .bot-settings select, .bot-lab textarea {
+  width: 100%; padding: 12px 13px; border: 1px solid var(--line); border-radius: 13px;
+  background: var(--bg-soft); color: var(--ink); font: 500 12px/1.55 inherit; resize: vertical;
+}
+.bot-approval > footer { justify-content: flex-end; margin-top: 15px; flex-wrap: wrap; }
+.bot-approval > footer > small { margin-right: auto; }
+.bot-empty { padding: 48px 18px; color: var(--gray-2); text-align: center; font-size: 12px; }
+.bot-kpis { display: grid; grid-template-columns: repeat(3,1fr); gap: 14px; margin-bottom: 16px; }
+.bot-kpis article { padding: 20px; }
+.bot-kpis span { display: block; color: var(--gray); font-size: 10px; font-weight: 700; }
+.bot-kpis strong { display: block; margin-top: 10px; font-size: 24px; }
+.bot-developer { display: grid; grid-template-columns: minmax(360px,.85fr) minmax(420px,1.15fr); gap: 16px; }
+.bot-panel { min-width: 0; padding: 22px; }
+.bot-panel header { margin-bottom: 18px; }
+.bot-panel h2 { margin: 3px 0 0; font-size: 19px; }
+.bot-settings { display: grid; gap: 15px; }
+.bot-settings > header { margin-bottom: 0; }
+.bot-switch { display: flex !important; align-items: center; gap: 10px; padding: 12px; border-radius: 13px; background: var(--bg-soft); }
+.bot-switch input { accent-color: var(--red); }
+.bot-lab { display: flex; min-height: 660px; flex-direction: column; }
+.bot-lab__messages { display: flex; flex: 1; max-height: 560px; overflow-y: auto; flex-direction: column; gap: 10px; padding: 8px 2px; }
+.bot-lab__message { max-width: 85%; padding: 12px 14px; border-radius: 16px; background: var(--bg-soft); }
+.bot-lab__message--user { align-self: flex-end; background: #16161a; color: #fff; border-bottom-right-radius: 5px; }
+.bot-lab__message--assistant { align-self: flex-start; border-bottom-left-radius: 5px; }
+.bot-lab__message p { margin: 0; font-size: 12px; line-height: 1.6; }
+.bot-lab__message small { display: block; margin-top: 7px; color: var(--gray-2); font-size: 8px; }
+.bot-lab form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; padding-top: 14px; border-top: 1px solid var(--line); }
+.bot-pipeline { margin-top: 16px; }
+.bot-events { max-height: 430px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bot-event { display: grid; grid-template-columns: 88px 90px minmax(150px,.7fr) minmax(220px,1fr); gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 10px; }
+.bot-event time { color: var(--gray-2); }
+.bot-event code { color: #6d4ac7; }
+.bot-event--error { color: var(--red); background: rgba(232,0,29,.035); }
+.bot-event--warn code { color: #b46d00; }
+
+:root[data-admin-theme="dark"] {
+  --ink: #f4f4f5; --gray: #a0a0a8; --gray-2: #74747d;
+  --line: #303038; --bg: #0d0d10; --bg-soft: #19191e; --red-soft: #32151a;
+}
+:root[data-admin-theme="dark"] body { background: var(--bg); color: var(--ink); }
+:root[data-admin-theme="dark"] .header { background: rgba(13,13,16,.72); border-color: var(--line); }
+:root[data-admin-theme="dark"] .admin-theme,
+:root[data-admin-theme="dark"] .admin__tab.active,
+:root[data-admin-theme="dark"] .admin__login,
+:root[data-admin-theme="dark"] .admin__panel,
+:root[data-admin-theme="dark"] .admin__tableWrap,
+:root[data-admin-theme="dark"] .crm,
+:root[data-admin-theme="dark"] .crm__composer,
+:root[data-admin-theme="dark"] .analytics__panel,
+:root[data-admin-theme="dark"] .analytics__kpis article,
+:root[data-admin-theme="dark"] .bot-approval,
+:root[data-admin-theme="dark"] .bot-panel,
+:root[data-admin-theme="dark"] .bot-kpis article { background: #141418; color: var(--ink); }
+:root[data-admin-theme="dark"] input,
+:root[data-admin-theme="dark"] textarea,
+:root[data-admin-theme="dark"] select,
+:root[data-admin-theme="dark"] .admin__uploadbtn { background: #1c1c21 !important; color: var(--ink) !important; border-color: var(--line) !important; }
+:root[data-admin-theme="dark"] .bot-lab__message--user { background: #e6001d; }
+
+@media (max-width: 900px) {
+  .bot-approvals, .bot-developer { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .bot-kpis { grid-template-columns: 1fr; }
+  .bot-approval > footer { align-items: stretch; }
+  .bot-approval > footer .btn { width: 100%; justify-content: center; }
+  .bot-lab { min-height: 560px; }
+  .bot-event { grid-template-columns: 70px 80px 1fr; }
+  .bot-event span { grid-column: 1 / -1; }
+}
+
 /* ========================================================================
    Блок «Где мы находимся»
    ======================================================================== */

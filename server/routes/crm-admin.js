@@ -27,6 +27,35 @@ function createCrmAdminRoutes(router, crm) {
   router.put("/crm/settings", express.json(), (req, res) => {
     res.json(crm.saveSettings(req.body || {}));
   });
+  router.get("/crm/approvals", (req, res) => {
+    res.json({ approvals: crm.listApprovals(String(req.query.status || "pending")) });
+  });
+  router.post("/crm/approvals/:id/approve", express.json(), async (req, res) => {
+    try {
+      res.json({ approval: await crm.approveReply(Number(req.params.id), req.body?.text) });
+    } catch (error) {
+      res.status(/не найден/.test(error.message) ? 404 : 400).json({ error: error.message });
+    }
+  });
+  router.post("/crm/approvals/:id/reject", express.json(), (req, res) => {
+    try {
+      crm.rejectReply(Number(req.params.id));
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(/не найден/.test(error.message) ? 404 : 400).json({ error: error.message });
+    }
+  });
+  router.get("/crm/developer/status", (req, res) => res.json(crm.getDeveloperStatus()));
+  router.get("/crm/developer/events", (req, res) => {
+    res.json({ events: crm.listEvents({ level: req.query.level, limit: req.query.limit }) });
+  });
+  router.post("/crm/developer/lab", express.json(), async (req, res) => {
+    try {
+      res.json(await crm.testBot(req.body || {}));
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
   router.get("/crm/analytics", (req, res) => {
     res.json(crm.getBuyAnalytics(Number(req.query.days)));
   });

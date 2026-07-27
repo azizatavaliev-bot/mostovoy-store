@@ -111,6 +111,55 @@ interface CrmAnalytics {
   }[];
 }
 
+interface BotSettings {
+  approvalEnabled: boolean;
+  model: string;
+  models: string[];
+  systemPrompt: string;
+  hypervisorPrompt: string;
+  characterPrompt: string;
+  rulesPrompt: string;
+  taskPrompt: string;
+}
+
+interface BotApproval {
+  id: number;
+  conversationId: number;
+  customerName: string;
+  source: "telegram" | "whatsapp" | "amocrm";
+  customerMessage: string;
+  aiReply: string;
+  editedReply?: string;
+  summary?: string;
+  model?: string;
+  status: "pending" | "approved" | "rejected";
+  createdAt: string;
+}
+
+interface BotEvent {
+  id: number;
+  conversationId?: number;
+  level: "info" | "warn" | "error";
+  stage: string;
+  event: string;
+  message?: string;
+  createdAt: string;
+}
+
+interface DeveloperStatus {
+  enabled: boolean;
+  settings: BotSettings;
+  approvals: { total: number; pending: number; approved: number; rejected: number };
+  errors24h: number;
+}
+
+interface LabMessage {
+  role: "user" | "assistant";
+  content: string;
+  latencyMs?: number;
+  model?: string;
+}
+
 interface ProductForm {
   name: string;
   brand: string;
@@ -129,11 +178,12 @@ interface ProductForm {
   discountLabel: string;
 }
 
-type AdminView = "products" | "news" | "history" | "crm" | "analytics";
+type AdminView = "products" | "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
 
 const root = document.getElementById("admin") as HTMLElement;
 const btnLogout = document.getElementById("btnLogout") as HTMLButtonElement;
+const btnTheme = document.getElementById("btnTheme") as HTMLButtonElement;
 
 const state = {
   authenticated: false,
@@ -147,8 +197,12 @@ const state = {
   crmConversations: [] as CrmConversation[],
   crmDetail: null as CrmDetail | null,
   crmStatus: null as CrmStatus | null,
-  crmPrompt: "",
   crmSearch: "",
+  approvals: [] as BotApproval[],
+  approvalFilter: "pending" as "pending" | "all",
+  developerStatus: null as DeveloperStatus | null,
+  botEvents: [] as BotEvent[],
+  labHistory: [] as LabMessage[],
   analytics: null as CrmAnalytics | null,
   analyticsDays: 30,
   editingProductSlug: null as string | null,
@@ -157,6 +211,18 @@ const state = {
   sortBy: "updated_desc" as ProductSort,
   loginError: null as string | null,
 };
+
+function applyAdminTheme(theme: "light" | "dark"): void {
+  document.documentElement.dataset.adminTheme = theme;
+  localStorage.setItem("mostovoy_admin_theme", theme);
+  btnTheme.textContent = theme === "dark" ? "☀" : "☾";
+  btnTheme.setAttribute("aria-label", theme === "dark" ? "Включить светлую тему" : "Включить тёмную тему");
+}
+
+applyAdminTheme(localStorage.getItem("mostovoy_admin_theme") === "dark" ? "dark" : "light");
+btnTheme.addEventListener("click", () => {
+  applyAdminTheme(document.documentElement.dataset.adminTheme === "dark" ? "light" : "dark");
+});
 
 class ApiError extends Error {
   data: unknown;
@@ -1019,14 +1085,11 @@ function renderCrmMount(): void {
             <p class="eyebrow">Карточка клиента</p>
             <p>Контакты, источник и заметки откроются вместе с диалогом.</p>
           </div>`}
-        <details class="crm__settings">
-          <summary>Настройки AI</summary>
-          <label>Инструкция продавцу
-            <textarea id="crmPrompt" rows="8">${esc(state.crmPrompt)}</textarea>
-          </label>
-          <button type="button" class="admin__link" id="crmSavePrompt">Сохранить инструкцию</button>
+        <div class="crm__settings">
+          <b>Управление ботом</b>
+          <p>Подтверждение ответов, промпты, модель и диагностика находятся во вкладках «Ответы бота» и «Разработчикам».</p>
           ${state.crmStatus ? `<p>Webhook amoCRM:<br /><code>${esc(state.crmStatus.amocrmWebhook)}</code></p>` : ""}
-        </details>
+        </div>
       </aside>
     </div>`;
 
@@ -1076,12 +1139,6 @@ function wireCrmMount(): void {
       button.disabled = false;
     }
   });
-  document.getElementById("crmSavePrompt")?.addEventListener("click", async () => {
-    const salesPrompt = (document.getElementById("crmPrompt") as HTMLTextAreaElement).value;
-    const saved = await api<{ salesPrompt: string }>("PUT", "/crm/settings", { salesPrompt });
-    state.crmPrompt = saved.salesPrompt;
-    toast("Инструкция AI сохранена");
-  });
 }
 
 async function loadCrmConversation(id: number): Promise<void> {
@@ -1104,12 +1161,8 @@ async function refreshCrmConversations(selectFirst = false): Promise<void> {
 
 async function wireCrmView(): Promise<void> {
   try {
-    const [status, settings] = await Promise.all([
-      api<CrmStatus>("GET", "/crm/status"),
-      api<{ salesPrompt: string }>("GET", "/crm/settings"),
-    ]);
+    const status = await api<CrmStatus>("GET", "/crm/status");
     state.crmStatus = status;
-    state.crmPrompt = settings.salesPrompt;
     renderCrmStatus();
     await refreshCrmConversations(true);
     crmPoll = setInterval(() => refreshCrmConversations(false).catch(() => {}), 10000);
@@ -1227,14 +1280,241 @@ function wireAnalyticsView(): void {
   loadAnalytics();
 }
 
+// --- Подтверждение ответов бота ---------------------------------------
+
+function renderApprovalsView(): string {
+  return `
+    <div class="admin__head">
+      <div><p class="eyebrow">Human in the loop</p><h1 class="section__title">Ответы бота</h1>
+        <p class="analytics__lead">Проверьте черновик, при необходимости отредактируйте и отправьте клиенту.</p></div>
+      <label class="analytics__period">Показывать
+        <select id="approvalFilter">
+          <option value="pending" ${state.approvalFilter === "pending" ? "selected" : ""}>Ждут решения</option>
+          <option value="all" ${state.approvalFilter === "all" ? "selected" : ""}>Все ответы</option>
+        </select>
+      </label>
+    </div>
+    <div class="bot-approvals" id="approvalsMount"><div class="crm__loading">Загружаем черновики…</div></div>`;
+}
+
+function renderApprovalsMount(): void {
+  const mount = document.getElementById("approvalsMount");
+  if (!mount) return;
+  mount.innerHTML = state.approvals.map((item) => `
+    <article class="bot-approval bot-approval--${item.status}">
+      <header>
+        <div><span class="crm__avatar">${esc(crmInitial(item.customerName))}</span>
+          <div><b>${esc(item.customerName)}</b><small>${crmSourceLabel(item.source)} · ${esc(fmtRelative(item.createdAt))}</small></div>
+        </div>
+        <span class="bot-status">${item.status === "pending" ? "Ждёт решения" : item.status === "approved" ? "Отправлен" : "Отклонён"}</span>
+      </header>
+      <div class="bot-approval__message"><small>Сообщение клиента</small><p>${esc(item.customerMessage)}</p></div>
+      ${item.summary ? `<div class="bot-approval__summary"><small>Гипервизор</small><p>${esc(item.summary)}</p></div>` : ""}
+      <label>Черновик ответа
+        <textarea rows="5" data-approval-text="${item.id}" ${item.status !== "pending" ? "disabled" : ""}>${esc(item.editedReply || item.aiReply)}</textarea>
+      </label>
+      <footer>
+        <small>${esc(item.model || "модель не указана")}</small>
+        <button type="button" class="btn btn--ghost btn--sm" data-open-dialog="${item.conversationId}">Открыть диалог</button>
+        ${item.status === "pending" ? `
+          <button type="button" class="btn btn--ghost btn--sm" data-reject="${item.id}">Отклонить</button>
+          <button type="button" class="btn btn--sm" data-approve="${item.id}">Подтвердить и отправить</button>` : ""}
+      </footer>
+    </article>`).join("") || `<div class="bot-empty">Новых ответов на подтверждение нет.</div>`;
+}
+
+async function loadApprovals(): Promise<void> {
+  const result = await api<{ approvals: BotApproval[] }>("GET", `/crm/approvals?status=${state.approvalFilter}`);
+  state.approvals = result.approvals;
+  renderApprovalsMount();
+  wireApprovalCards();
+}
+
+function wireApprovalCards(): void {
+  document.querySelectorAll<HTMLElement>("[data-open-dialog]").forEach((button) => button.addEventListener("click", async () => {
+    state.view = "crm";
+    await loadCrmConversation(Number(button.dataset.openDialog));
+    renderView();
+  }));
+  document.querySelectorAll<HTMLButtonElement>("[data-approve]").forEach((button) => button.addEventListener("click", async () => {
+    const id = Number(button.dataset.approve);
+    const text = (document.querySelector(`[data-approval-text="${id}"]`) as HTMLTextAreaElement).value;
+    button.disabled = true;
+    try {
+      await api("POST", `/crm/approvals/${id}/approve`, { text });
+      toast("Ответ отправлен клиенту");
+      await loadApprovals();
+    } catch (error) {
+      toast((error as Error).message, false);
+      button.disabled = false;
+    }
+  }));
+  document.querySelectorAll<HTMLButtonElement>("[data-reject]").forEach((button) => button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await api("POST", `/crm/approvals/${button.dataset.reject}/reject`);
+      toast("Черновик отклонён");
+      await loadApprovals();
+    } catch (error) {
+      toast((error as Error).message, false);
+      button.disabled = false;
+    }
+  }));
+}
+
+function wireApprovalsView(): void {
+  document.getElementById("approvalFilter")?.addEventListener("change", async (event) => {
+    state.approvalFilter = (event.target as HTMLSelectElement).value as "pending" | "all";
+    await loadApprovals();
+  });
+  loadApprovals().catch((error) => toast(error.message, false));
+  crmPoll = setInterval(() => loadApprovals().catch(() => {}), 10000);
+}
+
+// --- Разработчикам: настройки, лаборатория и пайплайн -----------------
+
+function promptValue(id: string): string {
+  return (document.getElementById(id) as HTMLTextAreaElement | null)?.value || "";
+}
+
+function currentBotSettings(): Partial<BotSettings> {
+  return {
+    approvalEnabled: Boolean((document.getElementById("botApproval") as HTMLInputElement | null)?.checked),
+    model: (document.getElementById("botModel") as HTMLSelectElement | null)?.value,
+    systemPrompt: promptValue("botSystemPrompt"),
+    hypervisorPrompt: promptValue("botHypervisorPrompt"),
+    characterPrompt: promptValue("botCharacterPrompt"),
+    rulesPrompt: promptValue("botRulesPrompt"),
+    taskPrompt: promptValue("botTaskPrompt"),
+  };
+}
+
+function renderDeveloperView(): string {
+  return `<div class="admin__head"><div><p class="eyebrow">Bot control center</p>
+    <h1 class="section__title">Разработчикам</h1><p class="analytics__lead">Настройки модели, лаборатория и журнал прохождения сообщений.</p></div></div>
+    <div id="developerMount"><div class="crm__loading">Проверяем системы бота…</div></div>`;
+}
+
+function renderLabMessages(): string {
+  return state.labHistory.map((message) => `
+    <article class="bot-lab__message bot-lab__message--${message.role}">
+      <p>${esc(message.content).replace(/\n/g, "<br />")}</p>
+      ${message.role === "assistant" ? `<small>${esc(message.model || "")} · ${message.latencyMs || 0} мс</small>` : ""}
+    </article>`).join("") || `<div class="bot-empty">Напишите тестовый вопрос клиента — ответ останется только в лаборатории.</div>`;
+}
+
+function renderDeveloperMount(): void {
+  const mount = document.getElementById("developerMount");
+  const data = state.developerStatus;
+  if (!mount || !data) return;
+  const s = data.settings;
+  mount.innerHTML = `
+    <section class="bot-kpis">
+      <article><span>ИИ</span><strong>${data.enabled ? "ONLINE" : "OFFLINE"}</strong></article>
+      <article><span>Ждут подтверждения</span><strong>${data.approvals.pending}</strong></article>
+      <article><span>Ошибок за 24 часа</span><strong>${data.errors24h}</strong></article>
+    </section>
+    <div class="bot-developer">
+      <section class="bot-panel bot-settings">
+        <header><div><p class="eyebrow">Конфигурация</p><h2>Настройки бота</h2></div>
+          <button type="button" class="btn btn--sm" id="saveBotSettings">Сохранить</button></header>
+        <label class="bot-switch"><input type="checkbox" id="botApproval" ${s.approvalEnabled ? "checked" : ""}><span></span>
+          Подтверждать ответы перед отправкой</label>
+        <label>Модель<select id="botModel">${s.models.map((model) => `<option ${model === s.model ? "selected" : ""}>${esc(model)}</option>`).join("")}</select></label>
+        ${[
+          ["botSystemPrompt", "Системный промпт", s.systemPrompt],
+          ["botHypervisorPrompt", "Промпт гипервизора", s.hypervisorPrompt],
+          ["botCharacterPrompt", "Промпт характера", s.characterPrompt],
+          ["botRulesPrompt", "Промпт правил", s.rulesPrompt],
+          ["botTaskPrompt", "Промпт задачи", s.taskPrompt],
+        ].map(([id, label, value]) => `<label>${label}<textarea id="${id}" rows="5">${esc(value)}</textarea></label>`).join("")}
+      </section>
+      <section class="bot-panel bot-lab">
+        <header><div><p class="eyebrow">Без отправки клиенту</p><h2>Лаборатория бота</h2></div>
+          <button type="button" class="admin__link" id="clearBotLab">Очистить</button></header>
+        <div class="bot-lab__messages" id="botLabMessages">${renderLabMessages()}</div>
+        <form id="botLabForm"><textarea name="message" rows="3" placeholder="Сообщение тестового клиента…" required></textarea>
+          <button class="btn btn--sm" type="submit">Запустить ↗</button></form>
+      </section>
+    </div>
+    <section class="bot-panel bot-pipeline">
+      <header><div><p class="eyebrow">Live log</p><h2>Пайплайн и ошибки</h2></div>
+        <button type="button" class="admin__link" id="refreshBotEvents">Обновить</button></header>
+      <div class="bot-events">${state.botEvents.map((event) => `
+        <article class="bot-event bot-event--${event.level}">
+          <time>${esc(fmtRelative(event.createdAt))}</time><b>${esc(event.stage)}</b>
+          <code>${esc(event.event)}</code><span>${esc(event.message || "")}</span>
+        </article>`).join("") || `<div class="bot-empty">Событий пока нет.</div>`}</div>
+    </section>`;
+  wireDeveloperMount();
+}
+
+async function loadDeveloper(): Promise<void> {
+  const [status, events] = await Promise.all([
+    api<DeveloperStatus>("GET", "/crm/developer/status"),
+    api<{ events: BotEvent[] }>("GET", "/crm/developer/events?limit=150"),
+  ]);
+  state.developerStatus = status;
+  state.botEvents = events.events;
+  renderDeveloperMount();
+}
+
+function wireDeveloperMount(): void {
+  document.getElementById("saveBotSettings")?.addEventListener("click", async () => {
+    const saved = await api<BotSettings>("PUT", "/crm/settings", currentBotSettings());
+    if (state.developerStatus) state.developerStatus.settings = saved;
+    toast("Настройки бота сохранены");
+  });
+  document.getElementById("clearBotLab")?.addEventListener("click", () => {
+    state.labHistory = [];
+    const messages = document.getElementById("botLabMessages");
+    if (messages) messages.innerHTML = renderLabMessages();
+  });
+  document.getElementById("refreshBotEvents")?.addEventListener("click", () => loadDeveloper().catch((error) => toast(error.message, false)));
+  document.getElementById("botLabForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.target as HTMLFormElement;
+    const field = form.elements.namedItem("message") as HTMLTextAreaElement;
+    const message = field.value.trim();
+    if (!message) return;
+    const button = form.querySelector("button") as HTMLButtonElement;
+    button.disabled = true;
+    const history = state.labHistory.map(({ role, content }) => ({ role, content }));
+    state.labHistory.push({ role: "user", content: message });
+    field.value = "";
+    const messages = document.getElementById("botLabMessages");
+    if (messages) messages.innerHTML = renderLabMessages();
+    try {
+      const result = await api<{ reply: string; model: string; latencyMs: number }>("POST", "/crm/developer/lab", {
+        message, history, model: currentBotSettings().model, prompts: currentBotSettings(),
+      });
+      state.labHistory.push({ role: "assistant", content: result.reply, model: result.model, latencyMs: result.latencyMs });
+      if (messages) {
+        messages.innerHTML = renderLabMessages();
+        messages.scrollTop = messages.scrollHeight;
+      }
+    } catch (error) {
+      toast((error as Error).message, false);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+function wireDeveloperView(): void {
+  loadDeveloper().catch((error) => toast(error.message, false));
+}
+
 // --- Общий каркас: вкладки + рендер ------------------------------------
 
 const TABS: { id: AdminView; label: string }[] = [
   { id: "crm", label: "CRM" },
+  { id: "approvals", label: "Ответы бота" },
   { id: "analytics", label: "Аналитика" },
   { id: "products", label: "Товары" },
   { id: "news", label: "Посты" },
   { id: "history", label: "Обновления" },
+  { id: "developer", label: "Разработчикам" },
 ];
 
 function tabsHTML(): string {
@@ -1254,6 +1534,10 @@ function renderView(): void {
   const body =
     state.view === "crm"
       ? renderCrmView()
+      : state.view === "approvals"
+        ? renderApprovalsView()
+      : state.view === "developer"
+        ? renderDeveloperView()
       : state.view === "analytics"
         ? renderAnalyticsView()
       : state.view === "news"
@@ -1273,6 +1557,8 @@ function renderView(): void {
   );
 
   if (state.view === "crm") wireCrmView();
+  else if (state.view === "approvals") wireApprovalsView();
+  else if (state.view === "developer") wireDeveloperView();
   else if (state.view === "analytics") wireAnalyticsView();
   else if (state.view === "news") wireNewsView();
   else if (state.view === "history") loadHistory();

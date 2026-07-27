@@ -114,7 +114,7 @@ class DeepSeekClient {
     throw lastError;
   }
 
-  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900 }) {
+  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900, model }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }
@@ -133,7 +133,7 @@ class DeepSeekClient {
       }
       await this.limiter.acquire();
       try {
-        return await this._textOnce({ messages: chatMessages, temperature, maxTokens });
+        return await this._textOnce({ messages: chatMessages, temperature, maxTokens, model });
       } catch (e) {
         lastError = e;
         if (!(e instanceof DeepSeekError) || !e.retriable) throw e;
@@ -194,7 +194,7 @@ class DeepSeekClient {
     return parsed;
   }
 
-  async _textOnce({ messages, temperature, maxTokens }) {
+  async _textOnce({ messages, temperature, maxTokens, model }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -207,7 +207,7 @@ class DeepSeekClient {
         },
         signal: ac.signal,
         body: JSON.stringify({
-          model: this.model,
+          model: model || this.model,
           messages,
           temperature,
           max_tokens: maxTokens,

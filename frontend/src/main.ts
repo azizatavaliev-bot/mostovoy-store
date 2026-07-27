@@ -613,6 +613,7 @@ function cardHTML(p: Product): string {
   const effectivePrice = hasDiscount ? (p.salePrice as number) : p.price;
   const monthly = installment(effectivePrice, 12).monthly;
   const colorName = p.swatches?.length ? p.swatches[cardColor.get(p.id) || 0][0] : p.color;
+  const specification = [colorName || p.category, p.storage, p.variant].filter(Boolean).join(" · ");
   const badge = hasDiscount
     ? `<span class="card__badge card__badge--sale">${p.discountLabel || `-${p.discountPercent}%`}</span>`
     : p.badge
@@ -629,7 +630,7 @@ function cardHTML(p: Product): string {
     ${swatchesHTML(p)}
     <a class="card__link card__link--text" href="product.html?id=${encodeURIComponent(p.id)}">
       <h3 class="card__name">${p.name}</h3>
-      <p class="card__spec">${colorName || p.category || ""}${p.available ? "" : " · нет в наличии"}</p>
+      <p class="card__spec">${specification}${p.available ? "" : " · нет в наличии"}</p>
       <div class="card__price">
         ${hasDiscount ? `<span class="card__old">${fmt(p.price, p.currency)}</span> ` : ""}${fmt(effectivePrice, p.currency)}
         <span class="card__from">/ от ${fmt(monthly, p.currency)} в мес.</span>

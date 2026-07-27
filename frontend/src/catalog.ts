@@ -58,6 +58,13 @@ export function convertPrice(amount: number | null | undefined, from: string, to
   return (amount / src) * dst;
 }
 
+// Витрина показывает аккуратные цены, всегда округляя вверх:
+// доллары — до 10, сомы и рубли — до 100. В базе остаётся исходное значение.
+export function roundDisplayPrice(amount: number, currency: string): number {
+  const step = currency === "USD" ? 10 : 100;
+  return Math.ceil(amount / step) * step;
+}
+
 // Форматирование цены в выбранной валюте.
 export function fmt(amount: number | null | undefined, sourceCurrency?: string | null): string {
   if (amount == null) return "—";
@@ -65,7 +72,7 @@ export function fmt(amount: number | null | undefined, sourceCurrency?: string |
   const from = sourceCurrency || "RUB";
   const value = convertPrice(amount, from, to);
   const cur = CURRENCIES[to];
-  return Math.round(value as number).toLocaleString("ru-RU") + " " + cur.suffix;
+  return roundDisplayPrice(value as number, to).toLocaleString("ru-RU") + " " + cur.suffix;
 }
 
 // Цена в исходной валюте — для сообщений в Telegram (там нужна реальная цена).
@@ -501,7 +508,7 @@ export function renderCart(): void {
   const total = document.querySelector(".cart__total b");
   if (total) {
     const cur = CURRENCIES[getDisplayCurrency()];
-    total.textContent = Math.round(cartTotal()).toLocaleString("ru-RU") + " " + cur.suffix;
+    total.textContent = roundDisplayPrice(cartTotal(), cur.code).toLocaleString("ru-RU") + " " + cur.suffix;
   }
 }
 

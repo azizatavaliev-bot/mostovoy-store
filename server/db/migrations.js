@@ -291,4 +291,62 @@ module.exports = [
       CREATE INDEX idx_buy_clicks_group ON buy_clicks(click_group);
     `,
   },
+  {
+    // Human-in-the-loop для ответов бота и наблюдаемость его CRM-пайплайна.
+    // Ответ сначала сохраняется черновиком, менеджер принимает/редактирует/
+    // отклоняет его в админке, и только после принятия он уходит клиенту.
+    name: "009_bot_control",
+    sql: `
+      CREATE TABLE bot_approvals (
+        id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id      INTEGER NOT NULL REFERENCES crm_conversations(id) ON DELETE CASCADE,
+        incoming_message_id  INTEGER REFERENCES crm_messages(id) ON DELETE SET NULL,
+        customer_message     TEXT NOT NULL,
+        ai_reply             TEXT NOT NULL,
+        edited_reply         TEXT,
+        conversation_summary TEXT,
+        model                TEXT,
+        status               TEXT NOT NULL DEFAULT 'pending',
+        created_at           TEXT NOT NULL DEFAULT (datetime('now')),
+        decided_at           TEXT
+      );
+      CREATE UNIQUE INDEX idx_bot_approvals_message ON bot_approvals(incoming_message_id);
+      CREATE INDEX idx_bot_approvals_status ON bot_approvals(status, created_at DESC);
+
+      CREATE TABLE bot_events (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id  INTEGER REFERENCES crm_conversations(id) ON DELETE SET NULL,
+        level            TEXT NOT NULL DEFAULT 'info',
+        stage            TEXT NOT NULL,
+        event            TEXT NOT NULL,
+        message          TEXT,
+        details          TEXT,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_bot_events_created ON bot_events(created_at DESC);
+      CREATE INDEX idx_bot_events_level ON bot_events(level, created_at DESC);
+    `,
+  },
+  {
+    // Точечные исправления каталога, которые должны переживать рестарт:
+    // одинаковая фотография линейки MacBook Pro для Silver и корректный
+    // Ray-Ban Gen 2. Общую безцветную позицию MacBook скрываем — это дубль
+    // более точных SKU MGEA4/MGE44.
+    name: "010_catalog_asset_fixes",
+    sql: `
+      UPDATE products
+      SET main_image_url = '/uploads/2561a2970e4752658c238501518ba456.jpg',
+          updated_at = datetime('now')
+      WHERE slug = 'macbook-pro-16-m5-pro-1-tb-silver-24-gb-ram-mge44';
+
+      UPDATE products
+      SET main_image_url = 'https://images2.ray-ban.com//prod-onecp-record-files/pieyewear/797a843b-283b-433a-9fe2-b37000960f0d/0RW4006__601S1M__P21__shad__qt.png?impolicy=RB_Product_clone&width=700&bgc=%23f2f2f2',
+          updated_at = datetime('now')
+      WHERE slug = 'meta-ray-ban-wayfarer-gen-2-matte-black-transition-graph-gray-razmery-50-53';
+
+      UPDATE products
+      SET status = 'hidden', available = 0, updated_at = datetime('now')
+      WHERE slug = 'macbook-pro-16-m5-pro-1-tb-24-gb-ram';
+    `,
+  },
 ];

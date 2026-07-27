@@ -1751,25 +1751,86 @@ body.noscroll { overflow: hidden; }
 :root[data-admin-theme="dark"] {
   --ink: #f4f4f5; --gray: #a0a0a8; --gray-2: #74747d;
   --line: #303038; --bg: #0d0d10; --bg-soft: #19191e; --red-soft: #32151a;
+  --admin-surface: #141418; --admin-surface-raised: #1a1a1f; --admin-field: #202027;
 }
 :root[data-admin-theme="dark"] body { background: var(--bg); color: var(--ink); }
 :root[data-admin-theme="dark"] .header { background: rgba(13,13,16,.72); border-color: var(--line); }
 :root[data-admin-theme="dark"] .admin-theme,
 :root[data-admin-theme="dark"] .admin__tab.active,
 :root[data-admin-theme="dark"] .admin__login,
+:root[data-admin-theme="dark"] .calc,
 :root[data-admin-theme="dark"] .admin__panel,
 :root[data-admin-theme="dark"] .admin__tableWrap,
+:root[data-admin-theme="dark"] .admin__prow,
 :root[data-admin-theme="dark"] .crm,
-:root[data-admin-theme="dark"] .crm__composer,
 :root[data-admin-theme="dark"] .analytics__panel,
 :root[data-admin-theme="dark"] .analytics__kpis article,
 :root[data-admin-theme="dark"] .bot-approval,
 :root[data-admin-theme="dark"] .bot-panel,
-:root[data-admin-theme="dark"] .bot-kpis article { background: #141418; color: var(--ink); }
+:root[data-admin-theme="dark"] .bot-kpis article {
+  background: var(--admin-surface); color: var(--ink); border-color: var(--line);
+  box-shadow: 0 16px 42px rgba(0,0,0,.22);
+}
 :root[data-admin-theme="dark"] input,
 :root[data-admin-theme="dark"] textarea,
 :root[data-admin-theme="dark"] select,
-:root[data-admin-theme="dark"] .admin__uploadbtn { background: #1c1c21 !important; color: var(--ink) !important; border-color: var(--line) !important; }
+:root[data-admin-theme="dark"] .admin__uploadbtn {
+  background: var(--admin-field) !important; color: var(--ink) !important; border-color: var(--line) !important;
+}
+:root[data-admin-theme="dark"] input::placeholder,
+:root[data-admin-theme="dark"] textarea::placeholder { color: #777781; }
+:root[data-admin-theme="dark"] .admin__prow-media,
+:root[data-admin-theme="dark"] .admin__thumb img,
+:root[data-admin-theme="dark"] .admin__discount,
+:root[data-admin-theme="dark"] .bot-approval__message,
+:root[data-admin-theme="dark"] .bot-approval__summary,
+:root[data-admin-theme="dark"] .bot-switch,
+:root[data-admin-theme="dark"] .bot-lab__message--assistant { background: var(--admin-surface-raised); }
+:root[data-admin-theme="dark"] .admin__prow:hover {
+  border-color: #4b4b55; box-shadow: 0 12px 30px rgba(0,0,0,.24);
+}
+:root[data-admin-theme="dark"] .admin__table tr:hover td { background: rgba(255,255,255,.025); }
+
+:root[data-admin-theme="dark"] .crm__status span,
+:root[data-admin-theme="dark"] .crm__inbox,
+:root[data-admin-theme="dark"] .crm__customer,
+:root[data-admin-theme="dark"] .crm__chat,
+:root[data-admin-theme="dark"] .crm__chatHead,
+:root[data-admin-theme="dark"] .crm__composer {
+  background: var(--admin-surface); color: var(--ink); border-color: var(--line);
+}
+:root[data-admin-theme="dark"] .crm__messages {
+  background:
+    radial-gradient(circle at 80% 12%, rgba(232,0,29,.08), transparent 28%),
+    linear-gradient(#111115, #0f0f13);
+}
+:root[data-admin-theme="dark"] .crm__thread:hover,
+:root[data-admin-theme="dark"] .crm__thread.active,
+:root[data-admin-theme="dark"] .crm__message {
+  background: var(--admin-surface-raised); color: var(--ink); border-color: var(--line);
+  box-shadow: 0 8px 22px rgba(0,0,0,.2);
+}
+:root[data-admin-theme="dark"] .crm__thread.active { border-color: #7d2931; }
+:root[data-admin-theme="dark"] .crm__message--outgoing {
+  background: linear-gradient(145deg, #ee1729, #bd0012); color: #fff; border-color: #e51022;
+}
+:root[data-admin-theme="dark"] .crm__source { background: #292930; color: #c4c4cb; }
+:root[data-admin-theme="dark"] .crm__source--telegram { color: #6ec6ff; background: #142b3a; }
+:root[data-admin-theme="dark"] .crm__source--whatsapp,
+:root[data-admin-theme="dark"] .crm__source--amocrm { color: #63daa1; background: #143026; }
+:root[data-admin-theme="dark"] .crm__status .is-off {
+  color: #f1bd58; background: #302711; border-color: #5d491d;
+}
+:root[data-admin-theme="dark"] .crm__aiSwitch span::after { background: #f4f4f5; }
+
+:root[data-admin-theme="dark"] .analytics__track,
+:root[data-admin-theme="dark"] .analytics__sources > div > i { background: #292930; }
+:root[data-admin-theme="dark"] .analytics__sources > div > i b { background: #d8d8dd; }
+:root[data-admin-theme="dark"] .analytics__kpis .analytics__kpiHero {
+  border-color: #d80d1e; background: linear-gradient(145deg, #ef172a, #a90010); color: #fff;
+}
+:root[data-admin-theme="dark"] .bot-status { background: #302711; color: #f1bd58; }
+:root[data-admin-theme="dark"] .bot-approval--approved .bot-status { background: #143026; color: #63daa1; }
 :root[data-admin-theme="dark"] .bot-lab__message--user { background: #e6001d; }
 
 @media (max-width: 900px) {

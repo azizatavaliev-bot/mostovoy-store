@@ -736,7 +736,11 @@ body.search-open { overflow: hidden; }
   .home .header { background: rgba(255,255,255,.82); }
   .home-header__actions { gap: 3px; }
   .home-header__icon { width: 36px; height: 36px; flex: 0 0 36px; }
-  .home .header__cta { min-width: 36px; width: 36px; height: 36px; flex: 0 0 36px; padding: 0; }
+  .home .header__cta {
+    min-width: 36px; width: 36px; height: 36px; flex: 0 0 36px;
+    justify-content: center; gap: 0; padding: 0;
+  }
+  .home .header__cta #headerCartLabel { display: none; }
   .home .header__cta svg { width: 17px; height: 17px; }
   .home-header__currency { width: 42px; min-width: 42px; padding-inline: 6px; }
   .home-header__currency > svg { width: 11px; height: 11px; }

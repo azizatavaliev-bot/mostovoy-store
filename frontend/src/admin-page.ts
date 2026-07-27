@@ -8,6 +8,7 @@ import "./styles.css";
 
 type Swatch = [string, string];
 type ProductStatus = "active" | "needs_research" | "hidden" | "sync_error";
+type CurrencyCode = "USD" | "KGS" | "RUB";
 
 interface AdminProduct {
   slug: string;
@@ -230,6 +231,10 @@ const state = {
   editingPostSlug: null as string | null,
   search: "",
   sortBy: "updated_desc" as ProductSort,
+  displayCurrency: (["USD", "KGS", "RUB"].includes(localStorage.getItem("mostovoy_currency") || "")
+    ? localStorage.getItem("mostovoy_currency")
+    : "USD") as CurrencyCode,
+  rates: { USD: 1, KGS: 87.5, RUB: 79 } as Record<CurrencyCode, number>,
   loginError: null as string | null,
 };
 
@@ -282,6 +287,53 @@ async function api<T = unknown>(method: string, path: string, body?: unknown): P
 function fmtMoney(n: number | null | undefined, currency: string): string {
   if (n == null) return "—";
   return Math.round(n).toLocaleString("ru-RU") + " " + currency;
+}
+
+const DISPLAY_CURRENCIES: Record<CurrencyCode, { label: string; suffix: string }> = {
+  USD: { label: "USD · $", suffix: "$" },
+  KGS: { label: "KGS · с", suffix: "с" },
+  RUB: { label: "RUB · ₽", suffix: "₽" },
+};
+
+function convertDisplayPrice(amount: number, from: string): number {
+  const sourceRate = state.rates[from as CurrencyCode] || 1;
+  return (amount / sourceRate) * state.rates[state.displayCurrency];
+}
+
+function fmtDisplayMoney(n: number | null | undefined, currency: string): string {
+  if (n == null) return "—";
+  const converted = convertDisplayPrice(n, currency);
+  const step = state.displayCurrency === "USD" ? 10 : 100;
+  const rounded = Math.ceil(converted / step) * step;
+  return `${rounded.toLocaleString("ru-RU")} ${DISPLAY_CURRENCIES[state.displayCurrency].suffix}`;
+}
+
+function currencySwitchHTML(id: string): string {
+  return `<label class="admin__currencySwitch" for="${id}">
+    <span>Показывать цены</span>
+    <select id="${id}" aria-label="Валюта отображения">
+      ${Object.entries(DISPLAY_CURRENCIES)
+        .map(([code, currency]) => `<option value="${code}" ${state.displayCurrency === code ? "selected" : ""}>${currency.label}</option>`)
+        .join("")}
+    </select>
+  </label>`;
+}
+
+function setAdminDisplayCurrency(code: CurrencyCode): void {
+  state.displayCurrency = code;
+  localStorage.setItem("mostovoy_currency", code);
+  document.dispatchEvent(new CustomEvent("currency:change", { detail: { code } }));
+}
+
+async function loadDisplayRates(): Promise<void> {
+  try {
+    const response = await fetch("/api/catalog", { headers: { accept: "application/json" } });
+    if (!response.ok) return;
+    const data = (await response.json()) as { rates?: Partial<Record<CurrencyCode, number>> };
+    if (data.rates) state.rates = { ...state.rates, ...data.rates };
+  } catch {
+    // Если каталог временно недоступен, админка продолжает работать на резервных курсах.
+  }
 }
 
 function fmtUsd(n: number): string {
@@ -641,6 +693,7 @@ function renderProductsView(): string {
           <option value="price_desc" ${state.sortBy === "price_desc" ? "selected" : ""}>Цена: по убыванию</option>
           <option value="status" ${state.sortBy === "status" ? "selected" : ""}>По статусу</option>
         </select>
+        ${currencySwitchHTML("productDisplayCurrency")}
         <label class="admin__checkbox">
           <input type="checkbox" id="showHidden" /> показывать скрытые
         </label>
@@ -659,8 +712,8 @@ function productRowHTML(p: AdminProduct): string {
   ].filter(Boolean).join(" · ");
 
   const priceHTML = p.salePrice
-    ? `<b class="admin__price--sale">${fmtMoney(p.salePrice, p.currency)}</b> <s>${fmtMoney(p.price, p.currency)}</s> <span class="admin__discountTag">−${p.discountPercent}%</span>`
-    : `<b>${fmtMoney(p.price, p.currency)}</b>`;
+    ? `<b class="admin__price--sale">${fmtDisplayMoney(p.salePrice, p.currency)}</b> <s>${fmtDisplayMoney(p.price, p.currency)}</s> <span class="admin__discountTag">−${p.discountPercent}%</span>`
+    : `<b>${fmtDisplayMoney(p.price, p.currency)}</b>`;
 
   return `<article class="admin__prow" data-slug="${p.slug}">
     <div class="admin__prow-media">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" onerror="this.remove()">` : `<span class="admin__ph">${esc((p.name || "?")[0])}</span>`}</div>
@@ -693,9 +746,9 @@ function sortProducts(list: AdminProduct[]): AdminProduct[] {
     case "brand":
       return arr.sort((a, b) => (a.brand || "").localeCompare(b.brand || "", "ru") || a.name.localeCompare(b.name, "ru"));
     case "price_asc":
-      return arr.sort((a, b) => (a.salePrice ?? a.price) - (b.salePrice ?? b.price));
+      return arr.sort((a, b) => convertDisplayPrice(a.salePrice ?? a.price, a.currency) - convertDisplayPrice(b.salePrice ?? b.price, b.currency));
     case "price_desc":
-      return arr.sort((a, b) => (b.salePrice ?? b.price) - (a.salePrice ?? a.price));
+      return arr.sort((a, b) => convertDisplayPrice(b.salePrice ?? b.price, b.currency) - convertDisplayPrice(a.salePrice ?? a.price, a.currency));
     case "status":
       return arr.sort((a, b) => a.status.localeCompare(b.status));
     default:
@@ -806,6 +859,10 @@ function wireProductsView(): void {
   });
   document.getElementById("productSort")!.addEventListener("change", (e) => {
     state.sortBy = (e.target as HTMLSelectElement).value as ProductSort;
+    renderProductsList();
+  });
+  document.getElementById("productDisplayCurrency")!.addEventListener("change", (e) => {
+    setAdminDisplayCurrency((e.target as HTMLSelectElement).value as CurrencyCode);
     renderProductsList();
   });
   document.getElementById("showHidden")!.addEventListener("change", renderProductsList);
@@ -951,6 +1008,7 @@ function renderHistoryView(): string {
         <p class="eyebrow">Обновления</p>
         <h1 class="section__title">Изменения цен</h1>
       </div>
+      ${currencySwitchHTML("historyDisplayCurrency")}
     </div>
     <div class="admin__tableWrap">
       <table class="admin__table" id="historyTable"></table>
@@ -968,8 +1026,8 @@ function renderHistoryTable(): void {
           (c) => `<tr>
             <td class="admin__muted">${fmtRelative(c.changedAt)}</td>
             <td>${c.productSlug ? `<a href="#" data-goto="${c.productSlug}">${esc(c.productName)}</a>` : esc(c.productName)}</td>
-            <td>${c.oldPrice == null ? "<span class=\"admin__muted\">новый товар</span>" : fmtMoney(c.oldPrice, c.currency)}</td>
-            <td><b>${fmtMoney(c.newPrice, c.currency)}</b></td>
+            <td>${c.oldPrice == null ? "<span class=\"admin__muted\">новый товар</span>" : fmtDisplayMoney(c.oldPrice, c.currency)}</td>
+            <td><b>${fmtDisplayMoney(c.newPrice, c.currency)}</b></td>
             <td><span class="admin__status admin__status--${c.source === "telegram" ? "active" : "needs_research"}">${c.source === "telegram" ? "Telegram" : "Админка"}</span></td>
           </tr>`
         )
@@ -995,6 +1053,14 @@ async function loadHistory(): Promise<void> {
   } catch (err) {
     toast((err as Error).message, false);
   }
+}
+
+function wireHistoryView(): void {
+  document.getElementById("historyDisplayCurrency")!.addEventListener("change", (e) => {
+    setAdminDisplayCurrency((e.target as HTMLSelectElement).value as CurrencyCode);
+    renderHistoryTable();
+  });
+  loadHistory();
 }
 
 // --- CRM inbox -------------------------------------------------------------
@@ -1692,7 +1758,7 @@ function renderView(): void {
   else if (state.view === "developer") wireDeveloperView();
   else if (state.view === "analytics") wireAnalyticsView();
   else if (state.view === "news") wireNewsView();
-  else if (state.view === "history") loadHistory();
+  else if (state.view === "history") wireHistoryView();
   else wireProductsView();
 }
 
@@ -1703,6 +1769,6 @@ btnLogout.addEventListener("click", async () => {
 });
 
 (async function init() {
-  await checkSession();
+  await Promise.all([checkSession(), loadDisplayRates()]);
   renderView();
 })();

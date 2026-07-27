@@ -1269,6 +1269,15 @@ body.noscroll { overflow: hidden; }
 .admin__login-back:hover { color: var(--ink); }
 
 .admin__head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+.admin__currencySwitch {
+  display: inline-flex; align-items: center; gap: 10px; padding: 5px 6px 5px 14px;
+  border: 1px solid var(--line); border-radius: 999px; background: #fff;
+  color: var(--gray); font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.admin__currencySwitch select {
+  min-height: 34px; padding: 7px 30px 7px 11px; border: 0; border-radius: 999px;
+  background: var(--bg-soft); color: var(--ink); font: 700 12px/1 inherit; cursor: pointer;
+}
 
 .admin__form input[type="text"],
 .admin__form input[type="number"],
@@ -1434,6 +1443,7 @@ body.noscroll { overflow: hidden; }
   .admin__tabs { width: 100%; overflow-x: auto; }
   .admin__listControls { width: 100%; }
   .admin__listControls input[type="search"] { flex: 1; min-width: 0; }
+  .admin__currencySwitch { justify-content: space-between; }
   .admin__form { padding: 20px; }
   .admin__imgrow { flex-direction: column; }
   .admin__uploadbtn { justify-content: center; padding: 12px; }
@@ -1811,6 +1821,7 @@ body.noscroll { overflow: hidden; }
 :root[data-admin-theme="dark"] .admin__panel,
 :root[data-admin-theme="dark"] .admin__tableWrap,
 :root[data-admin-theme="dark"] .admin__prow,
+:root[data-admin-theme="dark"] .admin__currencySwitch,
 :root[data-admin-theme="dark"] .crm,
 :root[data-admin-theme="dark"] .analytics__panel,
 :root[data-admin-theme="dark"] .analytics__kpis article,

@@ -311,7 +311,11 @@ function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () =>
   // Заказ — в WhatsApp с готовым текстом, вопрос — в Telegram.
   // Цена в сообщении — с учётом выбранной памяти (priceState.value).
   document.getElementById("btnBuy")!.addEventListener("click", () => {
-    handleOrderClick(productMessage({ ...p, price: priceState.value }, selected));
+    handleOrderClick(
+      productMessage({ ...p, price: priceState.value }, selected),
+      [{ productId: p.id, quantity: 1 }],
+      "product"
+    );
   });
 
   document.getElementById("btnContact")!.addEventListener("click", () => {

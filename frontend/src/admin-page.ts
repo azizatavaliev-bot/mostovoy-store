@@ -88,38 +88,27 @@ interface CrmStatus {
   amocrmWebhook: string;
 }
 
-interface CrmSale {
-  id: number;
-  conversationId: number | null;
-  customerName: string | null;
-  productSlug: string | null;
-  productName: string;
-  quantity: number;
-  unitPrice: number;
-  currency: string;
-  totalAmount: number;
-  note: string;
-  soldAt: string;
-}
-
 interface CrmAnalytics {
   periodDays: number;
   summary: {
-    salesCount: number;
+    clicks: number;
     units: number;
-    revenue: { currency: string; amount: number }[];
+    visitors: number;
   };
   topProducts: {
     productSlug: string | null;
     productName: string;
-    currency: string;
+    clicks: number;
     units: number;
-    salesCount: number;
-    revenue: number;
   }[];
-  trend: { day: string; units: number; salesCount: number }[];
-  sources: { source: string; units: number }[];
-  recent: CrmSale[];
+  trend: { day: string; clicks: number }[];
+  sources: { source: "product" | "cart"; clicks: number }[];
+  recent: {
+    id: string;
+    source: "product" | "cart";
+    clickedAt: string;
+    items: { productSlug: string | null; productName: string; quantity: number }[];
+  }[];
 }
 
 interface ProductForm {
@@ -1022,24 +1011,6 @@ function renderCrmMount(): void {
             ${selected!.externalLeadId ? `<div><dt>Сделка amoCRM</dt><dd>#${esc(selected!.externalLeadId)}</dd></div>` : ""}
             <div><dt>Последняя активность</dt><dd>${esc(fmtRelative(selected!.lastMessageAt))}</dd></div>
           </dl>
-          <form class="crm__sale" id="crmSaleForm">
-            <div class="crm__saleTitle"><span>✓</span><b>Зафиксировать продажу</b></div>
-            <label>Товар
-              <select name="productSlug" required>
-                <option value="">Выберите товар</option>
-                ${state.products
-                  .filter((p) => p.status === "active")
-                  .sort((a, b) => a.name.localeCompare(b.name, "ru"))
-                  .map((p) => `<option value="${esc(p.slug)}">${esc(p.name)} · ${esc(fmtMoney(p.salePrice ?? p.price, p.currency))}</option>`)
-                  .join("")}
-              </select>
-            </label>
-            <div class="crm__saleRow">
-              <label>Количество<input name="quantity" type="number" min="1" max="100" value="1" required /></label>
-              <label>Цена продажи<input name="unitPrice" type="number" min="0" step="0.01" placeholder="из каталога" /></label>
-            </div>
-            <button type="submit" class="btn btn--sm">Добавить в аналитику</button>
-          </form>
           <label class="crm__notes">Заметка менеджера
             <textarea id="crmNotes" rows="5" placeholder="Что важно помнить о клиенте">${esc(selected!.notes)}</textarea>
           </label>
@@ -1088,28 +1059,6 @@ function wireCrmMount(): void {
     state.crmDetail = await api<CrmDetail>("PATCH", `/crm/conversations/${state.crmDetail.conversation.id}`, { notes });
     toast("Заметка сохранена");
   });
-  document.getElementById("crmSaleForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (!state.crmDetail) return;
-    const form = event.target as HTMLFormElement;
-    const fd = new FormData(form);
-    const button = form.querySelector("button") as HTMLButtonElement;
-    button.disabled = true;
-    try {
-      await api("POST", "/crm/sales", {
-        conversationId: state.crmDetail.conversation.id,
-        productSlug: fd.get("productSlug"),
-        quantity: Number(fd.get("quantity")),
-        unitPrice: fd.get("unitPrice") || undefined,
-      });
-      form.reset();
-      toast("Продажа добавлена в аналитику");
-    } catch (error) {
-      toast((error as Error).message, false);
-    } finally {
-      button.disabled = false;
-    }
-  });
   document.getElementById("crmComposer")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.crmDetail) return;
@@ -1155,14 +1104,12 @@ async function refreshCrmConversations(selectFirst = false): Promise<void> {
 
 async function wireCrmView(): Promise<void> {
   try {
-    const [status, settings, productsData] = await Promise.all([
+    const [status, settings] = await Promise.all([
       api<CrmStatus>("GET", "/crm/status"),
       api<{ salesPrompt: string }>("GET", "/crm/settings"),
-      api<{ products: AdminProduct[] }>("GET", "/products"),
     ]);
     state.crmStatus = status;
     state.crmPrompt = settings.salesPrompt;
-    state.products = productsData.products;
     renderCrmStatus();
     await refreshCrmConversations(true);
     crmPoll = setInterval(() => refreshCrmConversations(false).catch(() => {}), 10000);
@@ -1171,22 +1118,15 @@ async function wireCrmView(): Promise<void> {
   }
 }
 
-// --- CRM-аналитика подтверждённых продаж ----------------------------------
-
-function analyticsRevenue(): string {
-  const revenue = state.analytics?.summary.revenue || [];
-  return revenue.length
-    ? revenue.map((item) => fmtMoney(item.amount, item.currency)).join(" · ")
-    : "0";
-}
+// --- CRM-аналитика переходов в WhatsApp -----------------------------------
 
 function renderAnalyticsView(): string {
   return `
     <div class="admin__head analytics__head">
       <div>
-        <p class="eyebrow">Подтверждённые продажи</p>
-        <h1 class="section__title">Что покупают</h1>
-        <p class="analytics__lead">Только продажи, которые менеджер отметил в диалоге CRM.</p>
+        <p class="eyebrow">Переходы в WhatsApp</p>
+        <h1 class="section__title">Что хотят купить</h1>
+        <p class="analytics__lead">Считаем товары в момент нажатия «Купить в WhatsApp» на сайте.</p>
       </div>
       <label class="analytics__period">Период
         <select id="analyticsDays">
@@ -1203,15 +1143,17 @@ function renderAnalyticsMount(): void {
   const mount = document.getElementById("analyticsMount");
   const data = state.analytics;
   if (!mount || !data) return;
-  const maxUnits = Math.max(1, ...data.trend.map((item) => item.units));
-  const maxProductUnits = Math.max(1, ...data.topProducts.map((item) => item.units));
-  const sourceTotal = Math.max(1, data.sources.reduce((sum, item) => sum + item.units, 0));
+  const maxClicks = Math.max(1, ...data.trend.map((item) => item.clicks));
+  const maxProductClicks = Math.max(1, ...data.topProducts.map((item) => item.clicks));
+  const sourceTotal = Math.max(1, data.sources.reduce((sum, item) => sum + item.clicks, 0));
+  const sourceLabel = (source: "product" | "cart") =>
+    source === "product" ? "Карточка товара" : "Корзина";
 
   mount.innerHTML = `
     <section class="analytics__kpis">
-      <article><span>Продаж</span><strong>${data.summary.salesCount}</strong><small>оформленных сделок</small></article>
-      <article class="analytics__kpiHero"><span>Товаров продано</span><strong>${data.summary.units}</strong><small>штук за период</small></article>
-      <article><span>Выручка</span><strong class="analytics__money">${esc(analyticsRevenue())}</strong><small>по валютам, без смешивания</small></article>
+      <article><span>Нажатий «Купить»</span><strong>${data.summary.clicks}</strong><small>переходов в WhatsApp</small></article>
+      <article class="analytics__kpiHero"><span>Товаров в запросах</span><strong>${data.summary.units}</strong><small>с учётом количества в корзине</small></article>
+      <article><span>Посетителей</span><strong>${data.summary.visitors}</strong><small>уникальных покупателей</small></article>
     </section>
 
     <div class="analytics__grid">
@@ -1223,53 +1165,48 @@ function renderAnalyticsMount(): void {
               <b class="analytics__rank">${String(index + 1).padStart(2, "0")}</b>
               <div class="analytics__leaderMain">
                 <strong>${esc(product.productName)}</strong>
-                <div class="analytics__track"><i style="width:${Math.max(6, product.units / maxProductUnits * 100)}%"></i></div>
+                <div class="analytics__track"><i style="width:${Math.max(6, product.clicks / maxProductClicks * 100)}%"></i></div>
               </div>
-              <div class="analytics__leaderValue"><b>${product.units} шт.</b><small>${esc(fmtMoney(product.revenue, product.currency))}</small></div>
-            </article>`).join("") || `<div class="analytics__empty">Пока нет подтверждённых продаж. Отметьте первую в диалоге CRM.</div>`}
+              <div class="analytics__leaderValue"><b>${product.clicks} нажатий</b><small>${product.units} шт. в запросах</small></div>
+            </article>`).join("") || `<div class="analytics__empty">Пока нет переходов в WhatsApp. Статистика появится после первого нажатия «Купить».</div>`}
         </div>
       </section>
 
       <section class="analytics__panel analytics__trend">
-        <header><div><p class="eyebrow">Динамика</p><h2>Продажи по дням</h2></div></header>
+        <header><div><p class="eyebrow">Динамика</p><h2>Нажатия по дням</h2></div></header>
         <div class="analytics__bars">
           ${data.trend.map((item) => `
-            <div class="analytics__bar" title="${esc(item.day)} — ${item.units} шт.">
-              <b>${item.units}</b><i style="height:${Math.max(8, item.units / maxUnits * 100)}%"></i>
+            <div class="analytics__bar" title="${esc(item.day)} — ${item.clicks} нажатий">
+              <b>${item.clicks}</b><i style="height:${Math.max(8, item.clicks / maxClicks * 100)}%"></i>
               <span>${new Date(`${item.day}T00:00:00`).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span>
-            </div>`).join("") || `<div class="analytics__empty">Динамика появится после первой продажи.</div>`}
+            </div>`).join("") || `<div class="analytics__empty">Динамика появится после первого нажатия.</div>`}
         </div>
         <div class="analytics__sources">
-          <p>Откуда приходят покупатели</p>
+          <p>Где нажимают «Купить»</p>
           ${data.sources.map((item) => `
-            <div><span>${esc(crmSourceLabel(item.source))}</span><i><b style="width:${item.units / sourceTotal * 100}%"></b></i><strong>${item.units}</strong></div>
+            <div><span>${sourceLabel(item.source)}</span><i><b style="width:${item.clicks / sourceTotal * 100}%"></b></i><strong>${item.clicks}</strong></div>
           `).join("") || `<small>Источников пока нет</small>`}
         </div>
       </section>
     </div>
 
     <section class="analytics__panel analytics__recent">
-      <header><div><p class="eyebrow">Журнал</p><h2>Последние продажи</h2></div></header>
+      <header><div><p class="eyebrow">Журнал</p><h2>Последние переходы</h2></div></header>
       <div class="analytics__sales">
-        ${data.recent.map((sale) => `
+        ${data.recent.map((click) => {
+          const totalQuantity = click.items.reduce((sum, item) => sum + item.quantity, 0);
+          const names = click.items.map((item) => item.productName).join(", ");
+          const details = click.items.map((item) => `${item.productName} × ${item.quantity}`).join(" · ");
+          return `
           <article>
-            <time>${esc(fmtRelative(sale.soldAt))}</time>
-            <div><b>${esc(sale.productName)}</b><small>${esc(sale.customerName || "Без привязки к диалогу")}</small></div>
-            <span>${sale.quantity} × ${esc(fmtMoney(sale.unitPrice, sale.currency))}</span>
-            <strong>${esc(fmtMoney(sale.totalAmount, sale.currency))}</strong>
-            <button type="button" data-sale-delete="${sale.id}" aria-label="Удалить ошибочную запись">×</button>
-          </article>`).join("") || `<div class="analytics__empty">Продаж за выбранный период пока нет.</div>`}
+            <time>${esc(fmtRelative(click.clickedAt))}</time>
+            <div><b>${esc(names)}</b><small>${esc(details)}</small></div>
+            <span>${sourceLabel(click.source)}</span>
+            <strong>${totalQuantity} шт.</strong>
+          </article>`;
+        }).join("") || `<div class="analytics__empty">Переходов за выбранный период пока нет.</div>`}
       </div>
     </section>`;
-
-  mount.querySelectorAll<HTMLElement>("[data-sale-delete]").forEach((button) =>
-    button.addEventListener("click", async () => {
-      if (!confirm("Удалить эту запись о продаже?")) return;
-      await api("DELETE", `/crm/sales/${button.dataset.saleDelete}`);
-      toast("Запись удалена");
-      await loadAnalytics();
-    })
-  );
 }
 
 async function loadAnalytics(): Promise<void> {

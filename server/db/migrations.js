@@ -269,4 +269,26 @@ module.exports = [
       CREATE INDEX idx_crm_sales_conversation ON crm_sales(conversation_id);
     `,
   },
+  {
+    // Реальный интерес покупателей: нажатия кнопки, которая открывает
+    // WhatsApp. Одна группа — один переход, в корзине у неё несколько товаров.
+    name: "008_buy_clicks",
+    sql: `
+      CREATE TABLE buy_clicks (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        click_group   TEXT NOT NULL,
+        product_id    INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        product_slug  TEXT,
+        product_name  TEXT NOT NULL,
+        quantity      INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+        source        TEXT NOT NULL,
+        page_path     TEXT,
+        visitor_id    TEXT,
+        clicked_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_buy_clicks_clicked ON buy_clicks(clicked_at DESC);
+      CREATE INDEX idx_buy_clicks_product ON buy_clicks(product_id, product_slug);
+      CREATE INDEX idx_buy_clicks_group ON buy_clicks(click_group);
+    `,
+  },
 ];

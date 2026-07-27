@@ -295,7 +295,41 @@ export function toast(message: string): void {
 }
 
 // «Купить» / «Оформить заказ» — WhatsApp с готовым текстом.
-export function handleOrderClick(text: string): void {
+interface BuyClickItem {
+  productId: string;
+  quantity?: number;
+}
+
+function buyVisitorId(): string {
+  const key = "mostovoy_analytics_visitor";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+function trackBuyClick(items: BuyClickItem[], source: "product" | "cart"): void {
+  if (!items.length) return;
+  const body = JSON.stringify({
+    items,
+    source,
+    pagePath: `${location.pathname}${location.search}`,
+    visitorId: buyVisitorId(),
+  });
+  const blob = new Blob([body], { type: "application/json" });
+  if (navigator.sendBeacon?.("/api/analytics/buy-click", blob)) return;
+  fetch("/api/analytics/buy-click", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
+}
+
+export function handleOrderClick(text: string, items: BuyClickItem[], source: "product" | "cart"): void {
+  trackBuyClick(items, source);
   openWhatsApp(text);
   toast("Открываем WhatsApp с вашим заказом");
 }
@@ -409,8 +443,13 @@ export function mountCartDrawer(): void {
   drawer.querySelector(".cart__close")!.addEventListener("click", () => openCart(false));
   drawer.querySelector(".cart__clear")!.addEventListener("click", () => cartClear());
   drawer.querySelector(".cart__buy")!.addEventListener("click", () => {
-    if (!cartItems().length) return toast("Корзина пуста");
-    handleOrderClick(cartMessage());
+    const items = cartItems();
+    if (!items.length) return toast("Корзина пуста");
+    handleOrderClick(
+      cartMessage(),
+      items.map((item) => ({ productId: item.product.id, quantity: item.qty })),
+      "cart"
+    );
   });
 
   drawer.querySelector(".cart__body")!.addEventListener("click", (e) => {

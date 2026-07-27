@@ -2,6 +2,7 @@
 const express = require("express");
 const config = require("../config");
 const { buildContactLink, buildWhatsappLink, GENERIC_MESSAGE } = require("../lib/contact");
+const { recordBuyClick } = require("../services/buy-analytics");
 
 // Статусы, которые показываем на сайте. hidden и sync_error — не показываем.
 const VISIBLE_STATUSES = ["active", "needs_research"];
@@ -99,6 +100,15 @@ function createCatalogRouter({ db }) {
       rates: config.rates,
       updatedAt: new Date().toISOString(),
     });
+  });
+
+  router.post("/analytics/buy-click", (req, res) => {
+    try {
+      const result = recordBuyClick(db, req.body || {});
+      res.status(202).json({ ok: true, recorded: result.recorded });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
   });
 
   router.get("/products/:slug", (req, res) => {

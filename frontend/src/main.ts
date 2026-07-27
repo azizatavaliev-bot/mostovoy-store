@@ -903,7 +903,7 @@ function mountHeroRotation(): void {
     hero.querySelectorAll<HTMLElement>("[data-hero-copy]").forEach((copy) => {
       copy.setAttribute("aria-hidden", String(copy.dataset.heroCopy !== product));
     });
-  }, 5200);
+  }, 1000);
 }
 
 mountHeroRotation();

@@ -23,6 +23,18 @@
         <a href="#location">Контакты</a>
       </nav>
       <div class="home-header__actions">
+        <div class="home-currency">
+          <button type="button" class="home-header__icon home-header__currency" id="headerCurrency"
+            aria-label="Выбрать валюту" aria-expanded="false" aria-controls="currencyMenu">
+            <span id="currencySymbol">$</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"></path></svg>
+          </button>
+          <div class="home-currency__menu" id="currencyMenu" hidden>
+            <button type="button" data-currency="USD"><b>$</b><span>Доллар</span><small>USD</small></button>
+            <button type="button" data-currency="KGS"><b>с</b><span>Сом</span><small>KGS</small></button>
+            <button type="button" data-currency="RUB"><b>₽</b><span>Рубль</span><small>RUB</small></button>
+          </div>
+        </div>
         <button type="button" class="home-header__icon" id="headerSearch" aria-label="Поиск товаров" aria-expanded="false" aria-controls="homeSearch">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-4-4"></path></svg>
         </button>

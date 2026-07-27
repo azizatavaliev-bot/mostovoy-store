@@ -114,6 +114,34 @@ button { font-family: inherit; }
 }
 .home-header__icon svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .home-header__icon.active svg { fill: var(--red); stroke: var(--red); }
+.home-currency { position: relative; }
+.home-header__currency {
+  width: auto; min-width: 54px; grid-template-columns: auto 13px; gap: 3px;
+  padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: #fff;
+  font-size: 15px; font-weight: 800;
+}
+.home-header__currency > svg { width: 13px; height: 13px; stroke-width: 2; }
+.home-header__currency[aria-expanded="true"] { border-color: #ffc4ca; color: var(--red); background: var(--red-soft); }
+.home-currency__menu[hidden] { display: none; }
+.home-currency__menu {
+  position: absolute; z-index: 75; top: calc(100% + 12px); right: 0; width: 210px; padding: 7px;
+  border: 1px solid var(--line); border-radius: 18px; background: #fff;
+  box-shadow: 0 20px 54px rgba(18,18,24,.16);
+}
+.home-currency__menu::before {
+  content: ""; position: absolute; top: -5px; right: 23px; width: 10px; height: 10px;
+  background: #fff; border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg);
+}
+.home-currency__menu button {
+  position: relative; width: 100%; display: grid; grid-template-columns: 32px 1fr auto; align-items: center;
+  gap: 8px; padding: 10px; border: 0; border-radius: 12px; background: transparent;
+  color: var(--ink); text-align: left; cursor: pointer; transition: .18s var(--ease);
+}
+.home-currency__menu button:hover { background: var(--bg-soft); }
+.home-currency__menu button.active { background: var(--red-soft); color: var(--red); }
+.home-currency__menu b { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); }
+.home-currency__menu span { font-size: 13px; font-weight: 700; }
+.home-currency__menu small { color: var(--gray-2); font-size: 10px; font-weight: 700; letter-spacing: .5px; }
 .home-header__badge {
   position: absolute; top: -2px; right: -3px; min-width: 17px; height: 17px; padding: 0 4px;
   display: grid; place-items: center; border: 2px solid #fff; border-radius: 999px;
@@ -629,6 +657,10 @@ body.search-open { overflow: hidden; }
   .home-search__result > svg { grid-column: 3; grid-row: 1 / span 2; }
   .home-header__actions { gap: 2px; }
   .home-header__icon { width: 34px; height: 34px; }
+  .home-header__currency { width: auto; min-width: 43px; padding-inline: 7px; }
+  .home-header__currency > svg { width: 11px; height: 11px; }
+  .home-currency__menu { position: fixed; top: 65px; right: 4%; width: 210px; }
+  .home-currency__menu::before { right: 134px; }
   .home-logo { gap: 9px; }
   .home-logo__mark { width: 38px; height: 38px; }
   .home-logo__copy b { font-size: 16px; letter-spacing: -.4px; }

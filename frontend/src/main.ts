@@ -12,6 +12,7 @@ import {
   mountWhatsappFloat,
   onCurrencyChange,
   openCart,
+  setDisplayCurrency,
   toast,
 } from "./catalog";
 import { enhanceSelects, installment, mediaHTML, refreshCustomSelect } from "./render";
@@ -34,6 +35,51 @@ const gridEmpty = document.getElementById("gridEmpty") as HTMLParagraphElement;
 const searchInput = document.getElementById("search") as HTMLInputElement;
 const sortSel = document.getElementById("sort") as HTMLSelectElement;
 let products: Product[] = [];
+
+// --- Валюта в шапке --------------------------------------------------------
+
+const headerCurrency = document.getElementById("headerCurrency") as HTMLButtonElement;
+const currencyMenu = document.getElementById("currencyMenu") as HTMLDivElement;
+const currencySymbol = document.getElementById("currencySymbol") as HTMLSpanElement;
+const CURRENCY_SYMBOLS = { USD: "$", KGS: "с", RUB: "₽" } as const;
+
+function openCurrencyMenu(show: boolean): void {
+  currencyMenu.hidden = !show;
+  headerCurrency.setAttribute("aria-expanded", String(show));
+}
+
+function syncCurrencyMenu(): void {
+  const active = getDisplayCurrency();
+  currencySymbol.textContent = CURRENCY_SYMBOLS[active];
+  headerCurrency.setAttribute("aria-label", `Валюта цен: ${active}`);
+  currencyMenu.querySelectorAll<HTMLElement>("[data-currency]").forEach((button) => {
+    const selected = button.dataset.currency === active;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+headerCurrency.addEventListener("click", (event) => {
+  event.stopPropagation();
+  openCurrencyMenu(currencyMenu.hasAttribute("hidden"));
+});
+currencyMenu.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-currency]");
+  if (!button) return;
+  setDisplayCurrency(button.dataset.currency || "USD");
+  openCurrencyMenu(false);
+});
+document.addEventListener("click", (event) => {
+  if (!(event.target as HTMLElement).closest(".home-currency")) openCurrencyMenu(false);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !currencyMenu.hasAttribute("hidden")) {
+    openCurrencyMenu(false);
+    headerCurrency.focus();
+  }
+});
+document.addEventListener("currency:change", syncCurrencyMenu);
+syncCurrencyMenu();
 
 // --- Избранное -------------------------------------------------------------
 

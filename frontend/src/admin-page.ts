@@ -203,6 +203,7 @@ type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_des
 const root = document.getElementById("admin") as HTMLElement;
 const btnLogout = document.getElementById("btnLogout") as HTMLButtonElement;
 const btnTheme = document.getElementById("btnTheme") as HTMLButtonElement;
+const btnToTop = document.getElementById("btnToTop") as HTMLButtonElement;
 
 const state = {
   authenticated: false,
@@ -242,6 +243,9 @@ function applyAdminTheme(theme: "light" | "dark"): void {
 applyAdminTheme(localStorage.getItem("mostovoy_admin_theme") === "dark" ? "dark" : "light");
 btnTheme.addEventListener("click", () => {
   applyAdminTheme(document.documentElement.dataset.adminTheme === "dark" ? "light" : "dark");
+});
+btnToTop.addEventListener("click", () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
 class ApiError extends Error {

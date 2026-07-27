@@ -387,4 +387,45 @@ module.exports = [
       CREATE INDEX idx_ai_usage_task ON ai_usage(task, created_at DESC);
     `,
   },
+  {
+    // Старые позиции из первоначального каталога раньше показывали буквенный
+    // плейсхолдер. Локальные файлы взяты из официального Apple Compare.
+    name: "012_legacy_iphone_images",
+    sql: `
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-se.jpg',
+          updated_at = datetime('now')
+      WHERE slug = 'se';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-13.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '13';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-14.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '14';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-15.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '15';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-15-pro.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '15-pro';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-16.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '16';
+
+      UPDATE products
+      SET main_image_url = '/images/products/apple/iphone-16-plus.jpg',
+          updated_at = datetime('now')
+      WHERE slug = '16-plus';
+    `,
+  },
 ];

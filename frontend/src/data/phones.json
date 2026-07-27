@@ -69,6 +69,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Ультрамарин, бирюзовый, розовый, белый, чёрный",
+    "img": "/images/products/apple/iphone-16-plus.jpg",
     "desc": "Большой экран 6,7″ и рекордная автономность до 33 часов видео. Чип A18, двойная камера 48 Мп и кнопка Camera Control. Пять ярких цветов."
   },
   {
@@ -93,6 +94,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Ультрамарин, бирюзовый, розовый, белый, чёрный",
+    "img": "/images/products/apple/iphone-16.jpg",
     "desc": "Новый iPhone 16 с чипом A18, двойной камерой 48 Мп и кнопкой Camera Control. Идеальный баланс размера, скорости и цены."
   },
   {
@@ -141,6 +143,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Титановый чёрный, белый, синий, натуральный",
+    "img": "/images/products/apple/iphone-15-pro.jpg",
     "desc": "Компактный Pro в титане с чипом A17 Pro и ProMotion 120 Гц. Кнопка «Действие» вместо переключателя и порт USB-C."
   },
   {
@@ -165,6 +168,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Розовый, жёлтый, зелёный, синий, чёрный",
+    "img": "/images/products/apple/iphone-15.jpg",
     "desc": "Самый популярный iPhone. Dynamic Island, камера 48 Мп и порт USB-C. Чип A16 Bionic. Лучшее сочетание цены и возможностей."
   },
   {
@@ -189,6 +193,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Фиолетовый, синий, полуночный, красный",
+    "img": "/images/products/apple/iphone-14.jpg",
     "desc": "Надёжный iPhone 14 с двойной камерой 12 Мп и чипом A15 Bionic. Экстренный вызов SOS и распознавание аварий. Порт Lightning."
   },
   {
@@ -213,6 +218,7 @@
     "water": "IP68",
     "front": "12 Мп TrueDepth",
     "colors": "Розовый, синий, полуночный, красный",
+    "img": "/images/products/apple/iphone-13.jpg",
     "desc": "Проверенная классика по выгодной цене. Камера 12 Мп с оптической стабилизацией, чип A15 Bionic и яркий OLED-экран."
   },
   {
@@ -237,6 +243,7 @@
     "water": "IP67",
     "front": "7 Мп FaceTime HD",
     "colors": "Полуночный, сияющая звезда, красный",
+    "img": "/images/products/apple/iphone-se.jpg",
     "desc": "Компактный iPhone с кнопкой Home и Touch ID. Чип A15 Bionic делает его быстрым, а цена — самой доступной в линейке."
   },
   {

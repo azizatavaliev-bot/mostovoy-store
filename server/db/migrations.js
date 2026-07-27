@@ -245,4 +245,28 @@ module.exports = [
       );
     `,
   },
+  {
+    // Подтверждённые продажи из CRM. Название, цена и валюта сохраняются
+    // снимком, чтобы историческая аналитика не менялась после правки товара.
+    name: "007_crm_sales",
+    sql: `
+      CREATE TABLE crm_sales (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id  INTEGER REFERENCES crm_conversations(id) ON DELETE SET NULL,
+        product_id       INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        product_slug     TEXT,
+        product_name     TEXT NOT NULL,
+        quantity         INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+        unit_price       REAL NOT NULL CHECK (unit_price >= 0),
+        currency         TEXT NOT NULL,
+        total_amount     REAL NOT NULL CHECK (total_amount >= 0),
+        note             TEXT,
+        sold_at          TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_crm_sales_sold_at ON crm_sales(sold_at DESC);
+      CREATE INDEX idx_crm_sales_product ON crm_sales(product_id, product_slug);
+      CREATE INDEX idx_crm_sales_conversation ON crm_sales(conversation_id);
+    `,
+  },
 ];

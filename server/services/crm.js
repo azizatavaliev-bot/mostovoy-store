@@ -96,6 +96,128 @@ class CrmService {
     return this.getSettings();
   }
 
+  recordSale({ conversationId, productSlug, quantity = 1, unitPrice, note } = {}) {
+    const qty = Number(quantity);
+    if (!Number.isInteger(qty) || qty < 1 || qty > 100) throw new Error("Количество должно быть от 1 до 100");
+    const product = this.db.prepare(
+      "SELECT id, slug, official_name, price, currency, discount_percent FROM products WHERE slug = ?"
+    ).get(String(productSlug || ""));
+    if (!product) throw new Error("Товар не найден");
+    if (conversationId != null) {
+      const conversation = this.db.prepare("SELECT id FROM crm_conversations WHERE id = ?").get(Number(conversationId));
+      if (!conversation) throw new Error("Диалог не найден");
+    }
+    const regularPrice = Number(product.price);
+    const discountedPrice = product.discount_percent
+      ? Math.round(regularPrice * (1 - Number(product.discount_percent) / 100) * 100) / 100
+      : regularPrice;
+    const price = unitPrice == null || unitPrice === "" ? discountedPrice : Number(unitPrice);
+    if (!Number.isFinite(price) || price < 0) throw new Error("Укажите корректную цену продажи");
+    const result = this.db.prepare(
+      `INSERT INTO crm_sales
+        (conversation_id, product_id, product_slug, product_name, quantity, unit_price, currency, total_amount, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      conversationId == null ? null : Number(conversationId),
+      product.id,
+      product.slug,
+      product.official_name,
+      qty,
+      price,
+      product.currency,
+      Math.round(price * qty * 100) / 100,
+      String(note || "").trim().slice(0, 1000) || null
+    );
+    return this.getSale(Number(result.lastInsertRowid));
+  }
+
+  getSale(id) {
+    const row = this.db.prepare(
+      `SELECT s.*, c.customer_name
+       FROM crm_sales s LEFT JOIN crm_conversations c ON c.id = s.conversation_id
+       WHERE s.id = ?`
+    ).get(id);
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      conversationId: row.conversation_id == null ? null : Number(row.conversation_id),
+      customerName: row.customer_name || null,
+      productSlug: row.product_slug,
+      productName: row.product_name,
+      quantity: Number(row.quantity),
+      unitPrice: Number(row.unit_price),
+      currency: row.currency,
+      totalAmount: Number(row.total_amount),
+      note: row.note || "",
+      soldAt: row.sold_at,
+    };
+  }
+
+  deleteSale(id) {
+    const result = this.db.prepare("DELETE FROM crm_sales WHERE id = ?").run(Number(id));
+    return Boolean(result.changes);
+  }
+
+  getSalesAnalytics(days = 30) {
+    const periodDays = [7, 30, 90, 365].includes(Number(days)) ? Number(days) : 30;
+    const since = `-${periodDays - 1} days`;
+    const summary = this.db.prepare(
+      `SELECT COUNT(*) AS sales_count, COALESCE(SUM(quantity), 0) AS units
+       FROM crm_sales WHERE sold_at >= datetime('now', ?)`
+    ).get(since);
+    const revenue = this.db.prepare(
+      `SELECT currency, ROUND(SUM(total_amount), 2) AS amount
+       FROM crm_sales WHERE sold_at >= datetime('now', ?)
+       GROUP BY currency ORDER BY amount DESC`
+    ).all(since).map((row) => ({ currency: row.currency, amount: Number(row.amount) }));
+    const topProducts = this.db.prepare(
+      `SELECT product_slug, product_name, currency, SUM(quantity) AS units,
+              COUNT(*) AS sales_count, ROUND(SUM(total_amount), 2) AS revenue
+       FROM crm_sales WHERE sold_at >= datetime('now', ?)
+       GROUP BY product_slug, product_name, currency
+       ORDER BY units DESC, revenue DESC, product_name ASC LIMIT 12`
+    ).all(since).map((row) => ({
+      productSlug: row.product_slug,
+      productName: row.product_name,
+      currency: row.currency,
+      units: Number(row.units),
+      salesCount: Number(row.sales_count),
+      revenue: Number(row.revenue),
+    }));
+    const trend = this.db.prepare(
+      `SELECT date(sold_at) AS day, SUM(quantity) AS units, COUNT(*) AS sales_count
+       FROM crm_sales WHERE sold_at >= datetime('now', ?)
+       GROUP BY date(sold_at) ORDER BY day ASC`
+    ).all(since).map((row) => ({
+      day: row.day,
+      units: Number(row.units),
+      salesCount: Number(row.sales_count),
+    }));
+    const sources = this.db.prepare(
+      `SELECT COALESCE(c.source, 'manual') AS source, SUM(s.quantity) AS units
+       FROM crm_sales s LEFT JOIN crm_conversations c ON c.id = s.conversation_id
+       WHERE s.sold_at >= datetime('now', ?)
+       GROUP BY COALESCE(c.source, 'manual') ORDER BY units DESC`
+    ).all(since).map((row) => ({ source: row.source, units: Number(row.units) }));
+    const recent = this.db.prepare(
+      `SELECT s.id FROM crm_sales s
+       WHERE s.sold_at >= datetime('now', ?)
+       ORDER BY s.sold_at DESC, s.id DESC LIMIT 20`
+    ).all(since).map((row) => this.getSale(Number(row.id)));
+    return {
+      periodDays,
+      summary: {
+        salesCount: Number(summary.sales_count),
+        units: Number(summary.units),
+        revenue,
+      },
+      topProducts,
+      trend,
+      sources,
+      recent,
+    };
+  }
+
   _upsertConversation(data) {
     this.db.prepare(
       `INSERT INTO crm_conversations

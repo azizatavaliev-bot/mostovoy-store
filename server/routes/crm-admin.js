@@ -27,6 +27,20 @@ function createCrmAdminRoutes(router, crm) {
   router.put("/crm/settings", express.json(), (req, res) => {
     res.json(crm.saveSettings(req.body || {}));
   });
+  router.get("/crm/analytics", (req, res) => {
+    res.json(crm.getSalesAnalytics(Number(req.query.days)));
+  });
+  router.post("/crm/sales", express.json(), (req, res) => {
+    try {
+      res.status(201).json({ sale: crm.recordSale(req.body || {}) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+  router.delete("/crm/sales/:id", (req, res) => {
+    if (!crm.deleteSale(Number(req.params.id))) return res.status(404).json({ error: "not_found" });
+    res.status(204).end();
+  });
 }
 
 module.exports = { createCrmAdminRoutes };

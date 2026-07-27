@@ -88,6 +88,40 @@ interface CrmStatus {
   amocrmWebhook: string;
 }
 
+interface CrmSale {
+  id: number;
+  conversationId: number | null;
+  customerName: string | null;
+  productSlug: string | null;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+  currency: string;
+  totalAmount: number;
+  note: string;
+  soldAt: string;
+}
+
+interface CrmAnalytics {
+  periodDays: number;
+  summary: {
+    salesCount: number;
+    units: number;
+    revenue: { currency: string; amount: number }[];
+  };
+  topProducts: {
+    productSlug: string | null;
+    productName: string;
+    currency: string;
+    units: number;
+    salesCount: number;
+    revenue: number;
+  }[];
+  trend: { day: string; units: number; salesCount: number }[];
+  sources: { source: string; units: number }[];
+  recent: CrmSale[];
+}
+
 interface ProductForm {
   name: string;
   brand: string;
@@ -106,7 +140,7 @@ interface ProductForm {
   discountLabel: string;
 }
 
-type AdminView = "products" | "news" | "history" | "crm";
+type AdminView = "products" | "news" | "history" | "crm" | "analytics";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
 
 const root = document.getElementById("admin") as HTMLElement;
@@ -126,6 +160,8 @@ const state = {
   crmStatus: null as CrmStatus | null,
   crmPrompt: "",
   crmSearch: "",
+  analytics: null as CrmAnalytics | null,
+  analyticsDays: 30,
   editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
   search: "",
@@ -986,6 +1022,24 @@ function renderCrmMount(): void {
             ${selected!.externalLeadId ? `<div><dt>Сделка amoCRM</dt><dd>#${esc(selected!.externalLeadId)}</dd></div>` : ""}
             <div><dt>Последняя активность</dt><dd>${esc(fmtRelative(selected!.lastMessageAt))}</dd></div>
           </dl>
+          <form class="crm__sale" id="crmSaleForm">
+            <div class="crm__saleTitle"><span>✓</span><b>Зафиксировать продажу</b></div>
+            <label>Товар
+              <select name="productSlug" required>
+                <option value="">Выберите товар</option>
+                ${state.products
+                  .filter((p) => p.status === "active")
+                  .sort((a, b) => a.name.localeCompare(b.name, "ru"))
+                  .map((p) => `<option value="${esc(p.slug)}">${esc(p.name)} · ${esc(fmtMoney(p.salePrice ?? p.price, p.currency))}</option>`)
+                  .join("")}
+              </select>
+            </label>
+            <div class="crm__saleRow">
+              <label>Количество<input name="quantity" type="number" min="1" max="100" value="1" required /></label>
+              <label>Цена продажи<input name="unitPrice" type="number" min="0" step="0.01" placeholder="из каталога" /></label>
+            </div>
+            <button type="submit" class="btn btn--sm">Добавить в аналитику</button>
+          </form>
           <label class="crm__notes">Заметка менеджера
             <textarea id="crmNotes" rows="5" placeholder="Что важно помнить о клиенте">${esc(selected!.notes)}</textarea>
           </label>
@@ -1034,6 +1088,28 @@ function wireCrmMount(): void {
     state.crmDetail = await api<CrmDetail>("PATCH", `/crm/conversations/${state.crmDetail.conversation.id}`, { notes });
     toast("Заметка сохранена");
   });
+  document.getElementById("crmSaleForm")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.crmDetail) return;
+    const form = event.target as HTMLFormElement;
+    const fd = new FormData(form);
+    const button = form.querySelector("button") as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      await api("POST", "/crm/sales", {
+        conversationId: state.crmDetail.conversation.id,
+        productSlug: fd.get("productSlug"),
+        quantity: Number(fd.get("quantity")),
+        unitPrice: fd.get("unitPrice") || undefined,
+      });
+      form.reset();
+      toast("Продажа добавлена в аналитику");
+    } catch (error) {
+      toast((error as Error).message, false);
+    } finally {
+      button.disabled = false;
+    }
+  });
   document.getElementById("crmComposer")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.crmDetail) return;
@@ -1079,12 +1155,14 @@ async function refreshCrmConversations(selectFirst = false): Promise<void> {
 
 async function wireCrmView(): Promise<void> {
   try {
-    const [status, settings] = await Promise.all([
+    const [status, settings, productsData] = await Promise.all([
       api<CrmStatus>("GET", "/crm/status"),
       api<{ salesPrompt: string }>("GET", "/crm/settings"),
+      api<{ products: AdminProduct[] }>("GET", "/products"),
     ]);
     state.crmStatus = status;
     state.crmPrompt = settings.salesPrompt;
+    state.products = productsData.products;
     renderCrmStatus();
     await refreshCrmConversations(true);
     crmPoll = setInterval(() => refreshCrmConversations(false).catch(() => {}), 10000);
@@ -1093,10 +1171,130 @@ async function wireCrmView(): Promise<void> {
   }
 }
 
+// --- CRM-аналитика подтверждённых продаж ----------------------------------
+
+function analyticsRevenue(): string {
+  const revenue = state.analytics?.summary.revenue || [];
+  return revenue.length
+    ? revenue.map((item) => fmtMoney(item.amount, item.currency)).join(" · ")
+    : "0";
+}
+
+function renderAnalyticsView(): string {
+  return `
+    <div class="admin__head analytics__head">
+      <div>
+        <p class="eyebrow">Подтверждённые продажи</p>
+        <h1 class="section__title">Что покупают</h1>
+        <p class="analytics__lead">Только продажи, которые менеджер отметил в диалоге CRM.</p>
+      </div>
+      <label class="analytics__period">Период
+        <select id="analyticsDays">
+          ${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "1 год"]]
+            .map(([value, label]) => `<option value="${value}" ${state.analyticsDays === value ? "selected" : ""}>${label}</option>`)
+            .join("")}
+        </select>
+      </label>
+    </div>
+    <div id="analyticsMount"><div class="crm__loading">Собираем аналитику…</div></div>`;
+}
+
+function renderAnalyticsMount(): void {
+  const mount = document.getElementById("analyticsMount");
+  const data = state.analytics;
+  if (!mount || !data) return;
+  const maxUnits = Math.max(1, ...data.trend.map((item) => item.units));
+  const maxProductUnits = Math.max(1, ...data.topProducts.map((item) => item.units));
+  const sourceTotal = Math.max(1, data.sources.reduce((sum, item) => sum + item.units, 0));
+
+  mount.innerHTML = `
+    <section class="analytics__kpis">
+      <article><span>Продаж</span><strong>${data.summary.salesCount}</strong><small>оформленных сделок</small></article>
+      <article class="analytics__kpiHero"><span>Товаров продано</span><strong>${data.summary.units}</strong><small>штук за период</small></article>
+      <article><span>Выручка</span><strong class="analytics__money">${esc(analyticsRevenue())}</strong><small>по валютам, без смешивания</small></article>
+    </section>
+
+    <div class="analytics__grid">
+      <section class="analytics__panel analytics__leaders">
+        <header><div><p class="eyebrow">Рейтинг</p><h2>Товары-лидеры</h2></div><span>${data.topProducts.length} позиций</span></header>
+        <div class="analytics__leaderList">
+          ${data.topProducts.map((product, index) => `
+            <article class="analytics__leader">
+              <b class="analytics__rank">${String(index + 1).padStart(2, "0")}</b>
+              <div class="analytics__leaderMain">
+                <strong>${esc(product.productName)}</strong>
+                <div class="analytics__track"><i style="width:${Math.max(6, product.units / maxProductUnits * 100)}%"></i></div>
+              </div>
+              <div class="analytics__leaderValue"><b>${product.units} шт.</b><small>${esc(fmtMoney(product.revenue, product.currency))}</small></div>
+            </article>`).join("") || `<div class="analytics__empty">Пока нет подтверждённых продаж. Отметьте первую в диалоге CRM.</div>`}
+        </div>
+      </section>
+
+      <section class="analytics__panel analytics__trend">
+        <header><div><p class="eyebrow">Динамика</p><h2>Продажи по дням</h2></div></header>
+        <div class="analytics__bars">
+          ${data.trend.map((item) => `
+            <div class="analytics__bar" title="${esc(item.day)} — ${item.units} шт.">
+              <b>${item.units}</b><i style="height:${Math.max(8, item.units / maxUnits * 100)}%"></i>
+              <span>${new Date(`${item.day}T00:00:00`).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" })}</span>
+            </div>`).join("") || `<div class="analytics__empty">Динамика появится после первой продажи.</div>`}
+        </div>
+        <div class="analytics__sources">
+          <p>Откуда приходят покупатели</p>
+          ${data.sources.map((item) => `
+            <div><span>${esc(crmSourceLabel(item.source))}</span><i><b style="width:${item.units / sourceTotal * 100}%"></b></i><strong>${item.units}</strong></div>
+          `).join("") || `<small>Источников пока нет</small>`}
+        </div>
+      </section>
+    </div>
+
+    <section class="analytics__panel analytics__recent">
+      <header><div><p class="eyebrow">Журнал</p><h2>Последние продажи</h2></div></header>
+      <div class="analytics__sales">
+        ${data.recent.map((sale) => `
+          <article>
+            <time>${esc(fmtRelative(sale.soldAt))}</time>
+            <div><b>${esc(sale.productName)}</b><small>${esc(sale.customerName || "Без привязки к диалогу")}</small></div>
+            <span>${sale.quantity} × ${esc(fmtMoney(sale.unitPrice, sale.currency))}</span>
+            <strong>${esc(fmtMoney(sale.totalAmount, sale.currency))}</strong>
+            <button type="button" data-sale-delete="${sale.id}" aria-label="Удалить ошибочную запись">×</button>
+          </article>`).join("") || `<div class="analytics__empty">Продаж за выбранный период пока нет.</div>`}
+      </div>
+    </section>`;
+
+  mount.querySelectorAll<HTMLElement>("[data-sale-delete]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      if (!confirm("Удалить эту запись о продаже?")) return;
+      await api("DELETE", `/crm/sales/${button.dataset.saleDelete}`);
+      toast("Запись удалена");
+      await loadAnalytics();
+    })
+  );
+}
+
+async function loadAnalytics(): Promise<void> {
+  try {
+    state.analytics = await api<CrmAnalytics>("GET", `/crm/analytics?days=${state.analyticsDays}`);
+    renderAnalyticsMount();
+  } catch (error) {
+    const mount = document.getElementById("analyticsMount");
+    if (mount) mount.innerHTML = `<p class="admin__error">${esc((error as Error).message)}</p>`;
+  }
+}
+
+function wireAnalyticsView(): void {
+  document.getElementById("analyticsDays")?.addEventListener("change", async (event) => {
+    state.analyticsDays = Number((event.target as HTMLSelectElement).value);
+    await loadAnalytics();
+  });
+  loadAnalytics();
+}
+
 // --- Общий каркас: вкладки + рендер ------------------------------------
 
 const TABS: { id: AdminView; label: string }[] = [
   { id: "crm", label: "CRM" },
+  { id: "analytics", label: "Аналитика" },
   { id: "products", label: "Товары" },
   { id: "news", label: "Посты" },
   { id: "history", label: "Обновления" },
@@ -1119,6 +1317,8 @@ function renderView(): void {
   const body =
     state.view === "crm"
       ? renderCrmView()
+      : state.view === "analytics"
+        ? renderAnalyticsView()
       : state.view === "news"
         ? renderNewsView()
         : state.view === "history"
@@ -1136,6 +1336,7 @@ function renderView(): void {
   );
 
   if (state.view === "crm") wireCrmView();
+  else if (state.view === "analytics") wireAnalyticsView();
   else if (state.view === "news") wireNewsView();
   else if (state.view === "history") loadHistory();
   else wireProductsView();

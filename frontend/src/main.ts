@@ -2,6 +2,7 @@
 // поиск, сортировка, калькуляторы Zero-рассрочки и обмена, корзина, анимации.
 // Данные берутся из CATALOG (живой каталог из Telegram) — см. catalog.ts.
 import "./styles.css";
+import "./page-loader";
 import {
   cartAdd,
   cartCount,

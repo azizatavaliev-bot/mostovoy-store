@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./page-loader";
 import { mountWhatsappFloat } from "./catalog";
 import "./render";
 

@@ -1,6 +1,7 @@
 // Страница товара: данные из живого каталога, выбор цвета/памяти,
 // рассрочка Zero, трейд-ин, корзина и кнопка «Связаться» в Telegram.
 import "./styles.css";
+import "./page-loader";
 import {
   CATALOG,
   cartAdd,

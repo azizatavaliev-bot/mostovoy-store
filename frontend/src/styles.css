@@ -31,6 +31,27 @@ button { font-family: inherit; }
 :focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
 .container { width: min(1160px, 90%); margin: 0 auto; }
 
+/* Фирменный экран загрузки публичных страниц. */
+body.page-loading { overflow: hidden; }
+.page-loader {
+  position: fixed; inset: 0; z-index: 10000; display: grid; place-content: center;
+  justify-items: center; gap: 18px; background: rgba(255,255,255,.96);
+  opacity: 1; visibility: visible; transition: opacity .38s ease, visibility .38s ease;
+}
+.page-loader--done { opacity: 0; visibility: hidden; pointer-events: none; }
+.page-loader__mark {
+  width: 76px; height: 76px; border-radius: 50%;
+  background: url("/images/logo.webp") 49% 45.5% / 132% no-repeat, var(--red);
+  box-shadow: 0 16px 42px rgba(225,29,29,.3);
+  animation: mostovoy-loader-spin .95s cubic-bezier(.55,.1,.45,.9) infinite;
+}
+.page-loader__name { font-size: 13px; font-weight: 900; letter-spacing: 3.5px; }
+@keyframes mostovoy-loader-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .page-loader__mark { animation: mostovoy-loader-pulse 1s ease-in-out infinite alternate; }
+  @keyframes mostovoy-loader-pulse { to { transform: scale(.9); opacity: .72; } }
+}
+
 /* ===== Buttons ===== */
 /* [hidden] обязан побеждать: .btn задаёт display сам, а атрибут hidden
    в браузерном UA-стиле имеет тот же вес и проигрывает по порядку правил. */

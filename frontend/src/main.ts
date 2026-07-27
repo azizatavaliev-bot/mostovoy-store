@@ -545,12 +545,16 @@ function renderActiveChips(): void {
   const badge = document.getElementById("filtersCount") as HTMLSpanElement;
   badge.textContent = String(count);
   badge.hidden = count === 0;
+  const headerBadge = document.getElementById("headerFiltersCount") as HTMLSpanElement;
+  headerBadge.textContent = String(count);
+  headerBadge.hidden = count === 0;
 }
 
 // Мобильный сайдбар — выезжающая панель, как корзина.
 function openFilters(show: boolean): void {
   document.getElementById("sidebar")!.classList.toggle("open", show);
   document.getElementById("sidebarOverlay")!.classList.toggle("show", show);
+  document.getElementById("headerFilters")!.setAttribute("aria-expanded", String(show));
   document.body.classList.toggle("noscroll", show);
 }
 
@@ -674,8 +678,16 @@ sortSel.addEventListener("change", (e) => {
 });
 
 document.getElementById("btnOpenFilters")!.addEventListener("click", () => openFilters(true));
+document.getElementById("headerFilters")!.addEventListener("click", () => openFilters(true));
 document.getElementById("btnCloseFilters")!.addEventListener("click", () => openFilters(false));
 document.getElementById("sidebarOverlay")!.addEventListener("click", () => openFilters(false));
+
+// На телефоне фильтры доступны из шапки на всём протяжении каталога.
+const headerFilters = document.getElementById("headerFilters") as HTMLButtonElement;
+new IntersectionObserver(([entry]) => {
+  headerFilters.classList.toggle("visible", entry.isIntersecting);
+  headerFilters.tabIndex = entry.isIntersecting ? 0 : -1;
+}, { threshold: 0 }).observe(document.getElementById("catalog")!);
 
 grid.addEventListener("click", (e) => {
   const target = e.target as HTMLElement;

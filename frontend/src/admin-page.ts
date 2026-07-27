@@ -646,7 +646,7 @@ function wireProductsView(): void {
   loadProducts();
 }
 
-// --- Вкладка «Новости» -------------------------------------------------
+// --- Вкладка «Посты» ---------------------------------------------------
 
 function postFormHTML(f: Partial<Post>): string {
   return `
@@ -654,7 +654,7 @@ function postFormHTML(f: Partial<Post>): string {
       <input name="title" required value="${esc(f.title || "")}" placeholder="Новая партия iPhone в наличии" />
     </label>
     <label>Текст *
-      <textarea name="body" rows="4" required placeholder="Текст новости">${esc(f.body || "")}</textarea>
+      <textarea name="body" rows="6" required placeholder="Текст поста">${esc(f.body || "")}</textarea>
     </label>
     ${imageFieldHTML("image", f.image, "Фото (необязательно)")}
     <label>Статус
@@ -670,8 +670,8 @@ function renderNewsView(): string {
   return `
     <div class="admin__head">
       <div>
-        <p class="eyebrow">Новости</p>
-        <h1 class="section__title">${editing ? "Редактировать новость" : "Добавить новость"}</h1>
+        <p class="eyebrow">Посты</p>
+        <h1 class="section__title">${editing ? "Редактировать пост" : "Новый пост"}</h1>
       </div>
       ${editing ? `<button type="button" class="btn btn--ghost" id="btnCancelPostEdit">Отменить редактирование</button>` : ""}
     </div>
@@ -683,7 +683,7 @@ function renderNewsView(): string {
       <p class="admin__formMsg" id="postFormMsg"></p>
     </form>
 
-    <div class="admin__listHead"><h2 class="section__title">Все новости (${state.posts.length})</h2></div>
+    <div class="admin__listHead"><h2 class="section__title">Все посты (${state.posts.length})</h2></div>
     <div class="admin__tableWrap">
       <table class="admin__table" id="postsTable"></table>
     </div>`;
@@ -708,7 +708,7 @@ function renderPostsTable(): void {
             </td>
           </tr>`
         )
-        .join("") || `<tr><td colspan="5" class="admin__empty">Пока нет новостей</td></tr>`}
+        .join("") || `<tr><td colspan="5" class="admin__empty">Пока нет постов</td></tr>`}
     </tbody>`;
 
   table.querySelectorAll<HTMLElement>("[data-edit-post]").forEach((b) =>
@@ -720,7 +720,7 @@ function renderPostsTable(): void {
   );
   table.querySelectorAll<HTMLElement>("[data-del-post]").forEach((b) =>
     b.addEventListener("click", async () => {
-      if (!confirm("Удалить новость безвозвратно?")) return;
+      if (!confirm("Удалить пост безвозвратно?")) return;
       await api("DELETE", `/posts/${encodeURIComponent(b.dataset.delPost as string)}`);
       await loadPosts();
     })
@@ -834,7 +834,7 @@ async function loadHistory(): Promise<void> {
 
 const TABS: { id: AdminView; label: string }[] = [
   { id: "products", label: "Товары" },
-  { id: "news", label: "Новости" },
+  { id: "news", label: "Посты" },
   { id: "history", label: "Обновления" },
 ];
 

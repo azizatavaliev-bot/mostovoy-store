@@ -41,10 +41,11 @@ function bodyHtml(value: string): string {
 
 function postHtml(post: NewsPost): string {
   const date = formatDate(post.publishedAt);
-  return `<article class="newspost">
-    <div class="newspost__date">${date ? `<time datetime="${esc(post.publishedAt)}">${esc(date)}</time>` : "Новость"}</div>
+  const size = post.body.length > 900 ? "large" : post.body.length > 360 ? "medium" : "compact";
+  return `<article class="newspost newspost--${size}">
+    ${post.image ? `<img class="newspost__image" src="${esc(post.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
     <div class="newspost__content">
-      ${post.image ? `<img class="newspost__image" src="${esc(post.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+      <div class="newspost__date">${date ? `<time datetime="${esc(post.publishedAt)}">${esc(date)}</time>` : "Пост"}</div>
       <h2>${esc(post.title)}</h2>
       <div class="newspost__body">${bodyHtml(post.body)}</div>
     </div>
@@ -62,13 +63,13 @@ async function init(): Promise<void> {
     feed.innerHTML = posts.length
       ? posts.map(postHtml).join("")
       : `<div class="newsfeed__state">
-          <h2>Пока без новостей</h2>
-          <p>Новые поступления и акции появятся здесь.</p>
+          <h2>Пока без постов</h2>
+          <p>Новые поступления, подборки и акции появятся здесь.</p>
           <a class="btn" href="index.html#catalog">Смотреть каталог</a>
         </div>`;
   } catch {
     feed.innerHTML = `<div class="newsfeed__state">
-      <h2>Новости временно недоступны</h2>
+      <h2>Посты временно недоступны</h2>
       <p>Обновите страницу позже или перейдите в каталог.</p>
       <a class="btn btn--ghost" href="index.html#catalog">В каталог</a>
     </div>`;

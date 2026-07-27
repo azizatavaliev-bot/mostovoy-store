@@ -890,6 +890,24 @@ function observeCards(): void {
 
 // --- Старт -----------------------------------------------------------------
 
+function mountHeroRotation(): void {
+  const hero = document.querySelector<HTMLElement>(".hero");
+  if (!hero) return;
+
+  let showMacbook = false;
+  window.setInterval(() => {
+    if (document.hidden) return;
+    showMacbook = !showMacbook;
+    const product = showMacbook ? "macbook" : "iphone";
+    hero.dataset.product = product;
+    hero.querySelectorAll<HTMLElement>("[data-hero-copy]").forEach((copy) => {
+      copy.setAttribute("aria-hidden", String(copy.dataset.heroCopy !== product));
+    });
+  }, 5200);
+}
+
+mountHeroRotation();
+
 (async function init() {
   products = await loadCatalog();
   const productIds = new Set(products.map((product) => String(product.id)));

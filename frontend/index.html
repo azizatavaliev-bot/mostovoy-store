@@ -94,12 +94,25 @@
   </div>
 
   <!-- Hero -->
-  <section class="hero">
+  <section class="hero" data-product="iphone">
     <div class="container hero__inner">
       <div class="hero__text">
         <p class="eyebrow">Apple · официально</p>
-        <h1 class="hero__title">Новый iPhone.<br /><span class="accent">Уже твой.</span></h1>
-        <p class="hero__sub">Обмен старого на новый и рассрочка без переплат.<br />Вся линейка iPhone в наличии.</p>
+        <h1 class="hero__title" aria-live="polite">
+          Новый
+          <span class="hero__product-word">
+            <span data-hero-copy="iphone">iPhone.</span>
+            <span data-hero-copy="macbook" aria-hidden="true">MacBook.</span>
+          </span>
+          <br /><span class="accent">Уже твой.</span>
+        </h1>
+        <p class="hero__sub">
+          Обмен старого на новый и рассрочка без переплат.<br />
+          <span class="hero__availability">
+            <span data-hero-copy="iphone">Вся линейка iPhone в наличии.</span>
+            <span data-hero-copy="macbook" aria-hidden="true">MacBook для работы и творчества в наличии.</span>
+          </span>
+        </p>
         <div class="hero__actions">
           <a href="#catalog" class="btn">Смотреть каталог <span aria-hidden="true">›</span></a>
           <a href="#trade" class="btn btn--ghost">Обменять свой <span aria-hidden="true">›</span></a>
@@ -126,7 +139,8 @@
       <div class="hero__visual" aria-hidden="true">
         <span class="hero__orbit"></span>
         <span class="hero__disc"></span>
-        <img class="hero__device" src="/images/iphone-hero.png" alt="" />
+        <img class="hero__device hero__device--iphone" src="/images/iphone-hero.png" alt="" fetchpriority="high" />
+        <img class="hero__device hero__device--macbook" src="/images/hero-macbook.png" alt="" />
       </div>
     </div>
     <div class="container hero__benefits">

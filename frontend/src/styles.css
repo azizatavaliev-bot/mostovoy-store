@@ -305,6 +305,25 @@ body.search-open { overflow: hidden; }
   font-size: clamp(58px, 5.4vw, 88px); font-weight: 900; line-height: .99;
   letter-spacing: -4.2px; margin: 0 0 24px; white-space: nowrap;
 }
+.hero__product-word, .hero__availability {
+  display: inline-grid; vertical-align: baseline;
+}
+.hero__product-word > span, .hero__availability > span {
+  grid-area: 1 / 1; transition:
+    opacity .58s var(--ease),
+    transform .72s var(--ease),
+    filter .58s var(--ease);
+}
+.hero__product-word > span[data-hero-copy="macbook"],
+.hero__availability > span[data-hero-copy="macbook"] {
+  opacity: 0; transform: translate3d(0, .55em, 0) rotateX(-35deg); filter: blur(5px);
+}
+.hero[data-product="macbook"] [data-hero-copy="iphone"] {
+  opacity: 0; transform: translate3d(0, -.48em, 0) rotateX(35deg); filter: blur(5px);
+}
+.hero[data-product="macbook"] [data-hero-copy="macbook"] {
+  opacity: 1; transform: none; filter: none;
+}
 .accent { color: #ef0c22; }
 .hero__sub { max-width: 570px; margin-bottom: 38px; color: #66666f; font-size: 19px; line-height: 1.55; }
 .hero__actions { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 54px; }
@@ -339,11 +358,25 @@ body.search-open { overflow: hidden; }
 .hero__device {
   position: absolute; z-index: 2; width: min(680px, 48vw); height: auto;
   right: 7%; bottom: 7%; filter: drop-shadow(0 34px 32px rgba(54,16,20,.12));
-  animation: heroDeviceIn .9s var(--ease) both;
+  transition:
+    opacity .72s var(--ease),
+    transform .92s var(--ease),
+    filter .72s var(--ease);
+  will-change: opacity, transform, filter;
 }
-@keyframes heroDeviceIn {
-  from { opacity: 0; transform: translate3d(38px, 24px, 0) scale(.97); }
-  to { opacity: 1; transform: none; }
+.hero__device--macbook {
+  width: min(710px, 51vw); right: 1%; bottom: 7%; opacity: 0;
+  mix-blend-mode: multiply;
+  transform: translate3d(95px, 26px, 0) scale(.88) rotate(3deg);
+  filter: drop-shadow(0 34px 32px rgba(54,16,20,.08)) blur(3px);
+}
+.hero[data-product="macbook"] .hero__device--iphone {
+  opacity: 0; transform: translate3d(-90px, 22px, 0) scale(.9) rotate(-4deg);
+  filter: drop-shadow(0 20px 20px rgba(54,16,20,.06)) blur(3px);
+}
+.hero[data-product="macbook"] .hero__device--macbook {
+  opacity: 1; transform: none;
+  filter: drop-shadow(0 34px 32px rgba(54,16,20,.12));
 }
 .hero__benefits {
   position: absolute; z-index: 6; left: 50%; bottom: 0; transform: translateX(-50%);
@@ -621,9 +654,10 @@ body.search-open { overflow: hidden; }
 .card.in { opacity: 1; transform: none; }
 .card.in:hover { transform: translateY(-8px); }
 @media (prefers-reduced-motion: reduce) {
-  .reveal, .card, .hero__device, .btn::after {
+  .reveal, .card, .btn::after {
     opacity: 1 !important; transform: none !important; animation: none !important; transition: none;
   }
+  .hero__device, .hero__product-word > span, .hero__availability > span { transition: none; }
   .wafloat::before { display: none; }
 }
 
@@ -688,10 +722,14 @@ body.search-open { overflow: hidden; }
   .hero__disc { width: 560px; right: 50%; bottom: -190px; transform: translateX(50%); }
   .hero__orbit { width: 630px; right: 50%; bottom: -205px; transform: translateX(50%); }
   .hero__device { width: min(460px, 82vw); right: 50%; bottom: 12px; transform: translateX(50%); }
-  @keyframes heroDeviceIn {
-    from { opacity: 0; transform: translate3d(50%, 24px, 0) scale(.97); }
-    to { opacity: 1; transform: translateX(50%); }
+  .hero__device--macbook {
+    width: min(520px, 91vw); right: 50%; bottom: 4px;
+    transform: translateX(50%) translate3d(70px, 22px, 0) scale(.9) rotate(3deg);
   }
+  .hero[data-product="macbook"] .hero__device--iphone {
+    transform: translateX(50%) translate3d(-70px, 18px, 0) scale(.9) rotate(-4deg);
+  }
+  .hero[data-product="macbook"] .hero__device--macbook { transform: translateX(50%); }
   .hero__benefits {
     position: relative; left: auto; bottom: auto; transform: none; width: 92%;
     min-height: 0; grid-template-columns: repeat(2, 1fr); gap: 0;
@@ -780,6 +818,7 @@ body.search-open { overflow: hidden; }
   .hero__disc { width: 370px; bottom: -145px; }
   .hero__orbit { width: 420px; bottom: -155px; border-width: 3px; }
   .hero__device { width: min(300px, 82vw); bottom: 0; }
+  .hero__device--macbook { width: min(320px, 86vw); bottom: -58px; }
   .hero__benefits { grid-template-columns: 1fr; padding: 14px 20px; margin-top: -8px; }
   .hero__benefit, .hero__benefit:first-child, .hero__benefit:last-child {
     min-height: 84px; padding: 12px 4px; border-right: 0; border-bottom: 1px solid var(--line);

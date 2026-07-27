@@ -35,6 +35,169 @@ const searchInput = document.getElementById("search") as HTMLInputElement;
 const sortSel = document.getElementById("sort") as HTMLSelectElement;
 let products: Product[] = [];
 
+// --- Быстрый поиск из шапки -----------------------------------------------
+
+const homeSearch = document.getElementById("homeSearch") as HTMLDivElement;
+const headerSearch = document.getElementById("headerSearch") as HTMLButtonElement;
+const homeSearchInput = document.getElementById("homeSearchInput") as HTMLInputElement;
+const homeSearchResults = document.getElementById("homeSearchResults") as HTMLDivElement;
+let homeSearchMatches: Product[] = [];
+let homeSearchActive = -1;
+
+const normalizeSearch = (value: string): string =>
+  value
+    .toLocaleLowerCase("ru")
+    .replace(/ё/g, "е")
+    .replace(/\s+/g, " ")
+    .trim();
+
+function productSearchText(product: Product): string {
+  return normalizeSearch(
+    [product.name, product.brand, product.group, product.category, product.color, product.storage]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function compactSearchMedia(product: Product): string {
+  const src = product.image || product.img || "";
+  const fallback = String(product.name || "?").trim().charAt(0).toUpperCase();
+  return `<span class="home-search__media">
+    <span aria-hidden="true">${fallback}</span>
+    ${src ? `<img src="${src}" alt="" onerror="this.remove()" />` : ""}
+  </span>`;
+}
+
+function setHomeSearchActive(next: number): void {
+  const items = [...homeSearchResults.querySelectorAll<HTMLAnchorElement>("[data-search-result]")];
+  if (!items.length) {
+    homeSearchActive = -1;
+    return;
+  }
+  homeSearchActive = Math.max(0, Math.min(next, items.length - 1));
+  items.forEach((item, index) => {
+    item.classList.toggle("active", index === homeSearchActive);
+    item.setAttribute("aria-selected", String(index === homeSearchActive));
+  });
+  items[homeSearchActive]?.scrollIntoView({ block: "nearest" });
+}
+
+function renderHomeSearch(): void {
+  const query = normalizeSearch(homeSearchInput.value);
+  homeSearchActive = -1;
+  if (!query) {
+    homeSearchMatches = [];
+    homeSearchResults.innerHTML = `
+      <div class="home-search__hint">
+        <span>Быстрый поиск</span>
+        <p>Введите название, бренд или модель товара.</p>
+        <div class="home-search__examples">
+          ${["iPhone 17", "MacBook", "Samsung", "Dyson"].map((item) => `<button type="button" data-search-example="${item}">${item}</button>`).join("")}
+        </div>
+      </div>`;
+    return;
+  }
+
+  const terms = query.split(" ").filter(Boolean);
+  homeSearchMatches = products.filter((product) => {
+    const text = productSearchText(product);
+    return terms.every((term) => text.includes(term));
+  });
+
+  if (!homeSearchMatches.length) {
+    homeSearchResults.innerHTML = `
+      <div class="home-search__empty">
+        <b>Ничего не найдено</b>
+        <p>Проверьте название или попробуйте найти товар по бренду.</p>
+      </div>`;
+    return;
+  }
+
+  const visible = homeSearchMatches.slice(0, 6);
+  homeSearchResults.innerHTML = `
+    <p class="home-search__count">Найдено ${homeSearchMatches.length}</p>
+    <div class="home-search__list" role="listbox">
+      ${visible
+        .map(
+          (product, index) => `
+            <a class="home-search__result" data-search-result="${index}" role="option"
+               href="product.html?id=${encodeURIComponent(product.id)}" aria-selected="false">
+              ${compactSearchMedia(product)}
+              <span class="home-search__resultCopy">
+                <b>${product.name}</b>
+                <small>${[product.brand, product.category, product.color].filter(Boolean).join(" · ")}</small>
+              </span>
+              <strong>${fmt(product.price, product.currency)}</strong>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </a>`
+        )
+        .join("")}
+    </div>
+    <button type="button" class="home-search__all" id="homeSearchAll">
+      Показать все результаты <span>${homeSearchMatches.length}</span>
+    </button>`;
+}
+
+function openHomeSearch(show: boolean): void {
+  homeSearch.hidden = !show;
+  headerSearch.setAttribute("aria-expanded", String(show));
+  document.body.classList.toggle("search-open", show);
+  if (show) {
+    renderHomeSearch();
+    window.setTimeout(() => homeSearchInput.focus(), 30);
+  } else {
+    homeSearchInput.value = "";
+    homeSearchActive = -1;
+  }
+}
+
+function showAllSearchResults(): void {
+  const query = homeSearchInput.value.trim();
+  searchInput.value = query;
+  state.q = query;
+  renderGrid();
+  openHomeSearch(false);
+  document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+  window.setTimeout(() => searchInput.focus(), 500);
+}
+
+headerSearch.addEventListener("click", () => openHomeSearch(true));
+document.getElementById("homeSearchClose")?.addEventListener("click", () => openHomeSearch(false));
+document.getElementById("homeSearchBackdrop")?.addEventListener("click", () => openHomeSearch(false));
+homeSearchInput.addEventListener("input", renderHomeSearch);
+homeSearchResults.addEventListener("click", (event) => {
+  const example = (event.target as HTMLElement).closest<HTMLButtonElement>("[data-search-example]");
+  if (example) {
+    homeSearchInput.value = example.dataset.searchExample || "";
+    renderHomeSearch();
+    homeSearchInput.focus();
+    return;
+  }
+  if ((event.target as HTMLElement).closest("#homeSearchAll")) showAllSearchResults();
+});
+homeSearchInput.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    openHomeSearch(false);
+    headerSearch.focus();
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    setHomeSearchActive(homeSearchActive + 1);
+    return;
+  }
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    setHomeSearchActive(homeSearchActive <= 0 ? 0 : homeSearchActive - 1);
+    return;
+  }
+  if (event.key === "Enter" && homeSearchMatches.length) {
+    event.preventDefault();
+    const target = homeSearchMatches[homeSearchActive >= 0 ? homeSearchActive : 0];
+    window.location.href = `product.html?id=${encodeURIComponent(target.id)}`;
+  }
+});
+
 // --- Сайдбар: тип товара → подкатегория, бренд, диапазон цены -------------
 
 const groupsOf = () => [...new Set(products.map((p) => p.group).filter(Boolean))] as string[];
@@ -477,10 +640,6 @@ function observeCards(): void {
     heroCount.dataset.count = String(products.length);
     animateCount(heroCount);
   }
-  document.getElementById("headerSearch")?.addEventListener("click", () => {
-    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
-    window.setTimeout(() => searchInput.focus(), 500);
-  });
   document.getElementById("headerFavorites")?.addEventListener("click", () => toast("Избранное появится скоро"));
   document.getElementById("headerCart")?.addEventListener("click", () => openCart(true));
 

@@ -439,4 +439,16 @@ module.exports = [
       WHERE slug IN ('magic-mouse-usb-c-white', 'magic-mouse-usb-c-black');
     `,
   },
+  {
+    // Локальные изображения старых iPhone переведены в WebP. Обновляем пути
+    // уже существующих товаров, чтобы после удаления JPG карточки не давали 404.
+    name: "014_legacy_iphone_webp",
+    sql: `
+      UPDATE products
+      SET main_image_url = replace(main_image_url, '.jpg', '.webp'),
+          updated_at = datetime('now')
+      WHERE slug IN ('se', '13', '14', '15', '15-pro', '16', '16-plus')
+        AND main_image_url LIKE '/images/products/apple/%.jpg';
+    `,
+  },
 ];

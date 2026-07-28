@@ -11,6 +11,7 @@ const crypto = require("crypto");
 const path = require("path");
 const express = require("express");
 const multer = require("multer");
+const sharp = require("sharp");
 const config = require("../config");
 const logger = require("../logger");
 const { transaction, logPriceChange } = require("../db");
@@ -82,10 +83,7 @@ fs.mkdirSync(config.uploads.dir, { recursive: true });
 const EXT_BY_MIME = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "image/gif": ".gif" };
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: config.uploads.dir,
-    filename: (req, file, cb) => cb(null, crypto.randomBytes(16).toString("hex") + (EXT_BY_MIME[file.mimetype] || "")),
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: config.uploads.maxBytes, files: 1 },
   fileFilter: (req, file, cb) => cb(null, Object.prototype.hasOwnProperty.call(EXT_BY_MIME, file.mimetype)),
 });
@@ -367,7 +365,7 @@ function createAdminRouter({ db, crm }) {
   if (crm) createCrmAdminRoutes(router, crm);
 
   router.post("/upload", (req, res) => {
-    upload.single("file")(req, res, (err) => {
+    upload.single("file")(req, res, async (err) => {
       if (err) {
         const message = err.code === "LIMIT_FILE_SIZE" ? "Файл слишком большой" : "Не удалось загрузить файл";
         return res.status(400).json({ error: message });
@@ -375,19 +373,35 @@ function createAdminRouter({ db, crm }) {
       if (!req.file) return res.status(400).json({ error: "Файл не передан или это не изображение" });
 
       // Проверка магических байтов — content-type в multipart можно подделать.
-      const buf = fs.readFileSync(req.file.path);
+      const buf = req.file.buffer;
       const size = imageSize(buf);
       if (!size) {
-        fs.unlink(req.file.path, () => {});
         return res.status(422).json({ error: "Файл не похож на настоящее изображение" });
       }
       if (size.width < config.images.minWidth) {
-        fs.unlink(req.file.path, () => {});
         return res.status(422).json({ error: `Слишком маленькое изображение (${size.width}px, нужно ≥ ${config.images.minWidth}px)` });
       }
 
-      logger.info("admin.upload_ok", { file: req.file.filename, width: size.width, height: size.height });
-      res.status(201).json({ url: `/uploads/${req.file.filename}`, width: size.width, height: size.height });
+      const animated = req.file.mimetype === "image/gif";
+      const filename = `${crypto.randomBytes(16).toString("hex")}.webp`;
+      const outputPath = path.join(config.uploads.dir, filename);
+
+      try {
+        const image = sharp(buf, { animated, failOn: "error" });
+        if (!animated) image.rotate();
+        await image.webp({ lossless: true, effort: 6 }).toFile(outputPath);
+      } catch (conversionError) {
+        logger.warn("admin.upload_invalid", { error: conversionError.message });
+        return res.status(422).json({ error: "Не удалось обработать изображение" });
+      }
+
+      logger.info("admin.upload_ok", { file: filename, width: size.width, height: size.height });
+      res.status(201).json({
+        url: `/uploads/${filename}`,
+        width: size.width,
+        height: size.height,
+        format: "webp",
+      });
     });
   });
 

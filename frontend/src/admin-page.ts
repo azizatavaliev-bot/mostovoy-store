@@ -205,7 +205,6 @@ interface ProductForm {
 
 type AdminView = "products" | "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
-type AnalyticsMode = "demo" | "real";
 
 const root = document.getElementById("admin") as HTMLElement;
 const btnLogout = document.getElementById("btnLogout") as HTMLButtonElement;
@@ -231,9 +230,7 @@ const state = {
   aiUsage: null as AiUsageAnalytics | null,
   botEvents: [] as BotEvent[],
   labHistory: [] as LabMessage[],
-  analytics: null as CrmAnalytics | null,
   analyticsDays: 30,
-  analyticsMode: "demo" as AnalyticsMode,
   editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
   search: "",
@@ -1311,12 +1308,6 @@ function renderAnalyticsView(): string {
         <p class="analytics__lead">Считаем товары в момент нажатия «Купить в WhatsApp» на сайте.</p>
       </div>
       <div class="analytics__controls">
-        <label class="analytics__period">Данные
-          <select id="analyticsMode">
-            <option value="demo" ${state.analyticsMode === "demo" ? "selected" : ""}>Демо-данные</option>
-            <option value="real" ${state.analyticsMode === "real" ? "selected" : ""}>Реальные данные</option>
-          </select>
-        </label>
         <label class="analytics__period">Период
           <select id="analyticsDays">
             ${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "1 год"]]
@@ -1380,13 +1371,8 @@ function buildDemoAnalytics(days: number): CrmAnalytics {
 
 function renderAnalyticsMount(): void {
   const mount = document.getElementById("analyticsMount");
-  const isDemo = state.analyticsMode === "demo";
-  const data = isDemo ? buildDemoAnalytics(state.analyticsDays) : state.analytics;
   if (!mount) return;
-  if (!data) {
-    mount.innerHTML = `<div class="crm__loading">Загружаем реальные данные…</div>`;
-    return;
-  }
+  const data = buildDemoAnalytics(state.analyticsDays);
   const maxClicks = Math.max(1, ...data.trend.map((item) => item.clicks));
   const maxProductClicks = Math.max(1, ...data.topProducts.map((item) => item.clicks));
   const sourceTotal = Math.max(1, data.sources.reduce((sum, item) => sum + item.clicks, 0));
@@ -1394,10 +1380,9 @@ function renderAnalyticsMount(): void {
     source === "product" ? "Карточка товара" : source === "credit" ? "Рассрочка" : "Корзина";
 
   mount.innerHTML = `
-    ${isDemo ? `<aside class="analytics__demoNote">
+    <aside class="analytics__demoNote">
       <div><b><i></i>Демонстрационный режим</b><span>Цифры ниже — пример оформления. Реальные нажатия продолжают записываться отдельно.</span></div>
-      <small>${state.analytics ? `${state.analytics.summary.clicks} реальных нажатий за период` : "Синхронизируем реальные события…"}</small>
-    </aside>` : ""}
+    </aside>
     <section class="analytics__kpis">
       <article><span>Нажатий «Купить»</span><strong>${data.summary.clicks}</strong><small>переходов в WhatsApp</small></article>
       <article class="analytics__kpiHero"><span>Товаров в запросах</span><strong>${data.summary.units}</strong><small>с учётом количества в корзине</small></article>
@@ -1458,28 +1443,12 @@ function renderAnalyticsMount(): void {
     </section>`;
 }
 
-async function loadAnalytics(): Promise<void> {
-  try {
-    state.analytics = await api<CrmAnalytics>("GET", `/crm/analytics?days=${state.analyticsDays}`);
-    renderAnalyticsMount();
-  } catch (error) {
-    const mount = document.getElementById("analyticsMount");
-    if (mount && state.analyticsMode === "real") mount.innerHTML = `<p class="admin__error">${esc((error as Error).message)}</p>`;
-  }
-}
-
 function wireAnalyticsView(): void {
-  document.getElementById("analyticsMode")?.addEventListener("change", (event) => {
-    state.analyticsMode = (event.target as HTMLSelectElement).value as AnalyticsMode;
-    renderAnalyticsMount();
-  });
-  document.getElementById("analyticsDays")?.addEventListener("change", async (event) => {
+  document.getElementById("analyticsDays")?.addEventListener("change", (event) => {
     state.analyticsDays = Number((event.target as HTMLSelectElement).value);
     renderAnalyticsMount();
-    await loadAnalytics();
   });
   renderAnalyticsMount();
-  loadAnalytics();
 }
 
 // --- Подтверждение ответов бота ---------------------------------------

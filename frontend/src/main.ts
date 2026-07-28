@@ -18,7 +18,7 @@ import {
   setDisplayCurrency,
   toast,
 } from "./catalog";
-import { enhanceSelects, installment, mediaHTML, refreshCustomSelect } from "./render";
+import { enhanceSelects, installment, isInstallmentEligible, mediaHTML, refreshCustomSelect } from "./render";
 import type { Product } from "./types";
 
 interface FilterState {
@@ -617,7 +617,7 @@ function swatchesHTML(p: Product): string {
 function cardHTML(p: Product): string {
   const hasDiscount = (p.discountPercent || 0) > 0 && p.salePrice != null && p.salePrice < p.price;
   const effectivePrice = hasDiscount ? (p.salePrice as number) : p.price;
-  const monthly = installment(effectivePrice, 12).monthly;
+  const monthly = isInstallmentEligible(p) ? installment(effectivePrice, 12).monthly : null;
   const colorName = p.swatches?.length ? p.swatches[cardColor.get(p.id) || 0][0] : p.color;
   const specification = [colorName || p.category, p.storage, p.variant].filter(Boolean).join(" · ");
   const badge = hasDiscount
@@ -639,7 +639,7 @@ function cardHTML(p: Product): string {
       <p class="card__spec">${specification}${p.available ? "" : " · нет в наличии"}</p>
       <div class="card__price">
         ${hasDiscount ? `<span class="card__old">${fmt(p.price, p.currency)}</span> ` : ""}${fmt(effectivePrice, p.currency)}
-        <span class="card__from">/ от ${fmt(monthly, p.currency)} в мес.</span>
+        ${monthly == null ? "" : `<span class="card__from">/ от ${fmt(monthly, p.currency)} в мес.</span>`}
       </div>
     </a>
     <button type="button" class="card__add" data-add="${p.id}">В корзину</button>
@@ -820,6 +820,7 @@ const creditSubmit = document.getElementById("creditSubmit") as HTMLButtonElemen
 function fillCreditModels(): void {
   const keep = creditPrice.selectedIndex;
   creditPrice.innerHTML = products
+    .filter(isInstallmentEligible)
     .map((p) => `<option value="${p.price}" data-id="${p.id}" data-cur="${p.currency}">${p.name} — ${fmt(p.price, p.currency)}</option>`)
     .join("");
   if (keep >= 0 && keep < creditPrice.options.length) creditPrice.selectedIndex = keep;

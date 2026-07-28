@@ -3,6 +3,7 @@
 const os = require("os");
 const path = require("path");
 const fs = require("fs");
+const sharp = require("sharp");
 
 process.env.ADMIN_TOKEN = "test-admin-token";
 process.env.ADMIN_USERNAME = "azis";
@@ -395,8 +396,10 @@ test("сессия с чужим/поддельным токеном не раб
 
 // --- Загрузка фото файлом -----------------------------------------------
 
-function pngFile(name, width = 800, height = 600) {
-  const buf = pngBuffer(width, height);
+async function pngFile(name, width = 800, height = 600) {
+  const buf = await sharp({
+    create: { width, height, channels: 4, background: { r: 239, g: 12, b: 34, alpha: 1 } },
+  }).png().toBuffer();
   return new File([buf], name, { type: "image/png" });
 }
 
@@ -405,16 +408,17 @@ test("загрузка настоящей картинки принимаетс�
   t.after(app.close);
 
   const form = new FormData();
-  form.append("file", pngFile("photo.png"));
+  form.append("file", await pngFile("photo.png"));
   const res = await fetch(`${app.base}/api/admin/upload`, { method: "POST", headers: H_UPLOAD, body: form });
   assert.equal(res.status, 201);
   const body = await res.json();
-  assert.match(body.url, /^\/uploads\/[a-f0-9]+\.png$/);
+  assert.match(body.url, /^\/uploads\/[a-f0-9]+\.webp$/);
   assert.equal(body.width, 800);
+  assert.equal(body.format, "webp");
 
   const served = await fetch(`${app.base}${body.url}`);
   assert.equal(served.status, 200);
-  assert.equal(served.headers.get("content-type"), "image/png");
+  assert.equal(served.headers.get("content-type"), "image/webp");
 });
 
 test("подделанное расширение (не настоящая картинка) отклоняется", async (t) => {
@@ -430,7 +434,7 @@ test("слишком маленькая загруженная картинка 
   const app = startApp();
   t.after(app.close);
   const form = new FormData();
-  form.append("file", pngFile("tiny.png", 50, 50));
+  form.append("file", await pngFile("tiny.png", 50, 50));
   const res = await fetch(`${app.base}/api/admin/upload`, { method: "POST", headers: H_UPLOAD, body: form });
   assert.equal(res.status, 422);
 });
@@ -439,7 +443,7 @@ test("загруженное фото можно сразу использова
   const app = startApp();
   t.after(app.close);
   const form = new FormData();
-  form.append("file", pngFile("photo.png"));
+  form.append("file", await pngFile("photo.png"));
   const uploaded = await (await fetch(`${app.base}/api/admin/upload`, { method: "POST", headers: H_UPLOAD, body: form })).json();
 
   const res = await fetch(`${app.base}/api/admin/products`, {

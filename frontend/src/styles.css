@@ -386,7 +386,7 @@ body.search-open { overflow: hidden; }
   filter: drop-shadow(0 30px 28px rgba(54,16,20,.08)) blur(3px);
 }
 .hero__device--airpods {
-  width: min(430px, 32vw); right: 12%; bottom: -3%; opacity: 0;
+  width: min(540px, 40vw); right: 7%; bottom: -12%; opacity: 0;
   border-radius: 42px;
   transform: translate3d(95px, 20px, 0) scale(.9) rotate(3deg);
   filter: drop-shadow(0 30px 28px rgba(54,16,20,.08)) blur(3px);
@@ -771,7 +771,7 @@ body.search-open { overflow: hidden; }
     transform: translateX(50%) translate3d(70px, 20px, 0) scale(.9) rotate(3deg);
   }
   .hero__device--airpods {
-    width: min(330px, 62vw); right: 50%; bottom: -42px; border-radius: 32px;
+    width: min(420px, 78vw); right: 50%; bottom: -90px; border-radius: 32px;
     transform: translateX(50%) translate3d(70px, 20px, 0) scale(.9) rotate(3deg);
   }
   .hero[data-product="macbook"] .hero__device--iphone {
@@ -879,7 +879,7 @@ body.search-open { overflow: hidden; }
   .hero__device { width: min(300px, 82vw); bottom: 0; }
   .hero__device--macbook { width: min(320px, 86vw); bottom: -58px; }
   .hero__device--ipad { width: min(310px, 84vw); bottom: -46px; }
-  .hero__device--airpods { width: min(225px, 60vw); bottom: -48px; border-radius: 24px; }
+  .hero__device--airpods { width: min(285px, 80vw); bottom: -90px; border-radius: 24px; }
   .hero__benefits { grid-template-columns: 1fr; padding: 14px 20px; margin-top: -8px; }
   .hero__benefit, .hero__benefit:first-child, .hero__benefit:last-child {
     min-height: 84px; padding: 12px 4px; border-right: 0; border-bottom: 1px solid var(--line);

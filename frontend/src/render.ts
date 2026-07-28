@@ -109,6 +109,12 @@ export function mediaHTML(p: Product, cls: string): string {
 const INSTALLMENT_TERMS: Record<number, number> = { 3: 0.94, 6: 0.89, 12: 0.84 };
 export const INSTALLMENT_TERM_LIST = [3, 6, 12];
 
+export function isInstallmentEligible(product: Product): boolean {
+  const group = String(product.group || "").trim().toLocaleLowerCase("ru");
+  const category = String(product.category || "").trim().toLocaleLowerCase("ru");
+  return group !== "аксессуары" && category !== "аксессуары" && category !== "фены и стайлеры";
+}
+
 export function installment(principal: number, months: number): Installment {
   principal = Math.max(principal, 0);
   const k = INSTALLMENT_TERMS[months];

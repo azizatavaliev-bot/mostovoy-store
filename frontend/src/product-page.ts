@@ -18,7 +18,7 @@ import {
   productMessage,
   toast,
 } from "./catalog";
-import { enhanceSelects, installment, INSTALLMENT_TERM_LIST, mediaHTML } from "./render";
+import { enhanceSelects, installment, INSTALLMENT_TERM_LIST, isInstallmentEligible, mediaHTML } from "./render";
 import type { Product } from "./types";
 
 const root = document.getElementById("product") as HTMLElement;
@@ -92,6 +92,7 @@ function renderProduct(p: Product, all: Product[]): void {
   // Текущая цена с учётом выбранной памяти. p.price всегда остаётся ценой
   // младшего варианта — от неё считается наценка при переключении пилюль.
   const priceState: PriceState = { value: p.price };
+  const installmentEligible = isInstallmentEligible(p);
 
   const specs = Object.entries(p.specifications || {}).filter(([, v]) => v) as [string, string][];
 
@@ -116,7 +117,7 @@ function renderProduct(p: Product, all: Product[]): void {
 
       <div class="product__price">
         <b id="pPrice">${fmt(p.price, p.currency)}</b>
-        <span id="pMonthly">или от ${fmt(installment(p.price, 12).monthly, p.currency)} / мес</span>
+        ${installmentEligible ? `<span id="pMonthly">или от ${fmt(installment(p.price, 12).monthly, p.currency)} / мес</span>` : ""}
       </div>
 
       ${swatches
@@ -139,7 +140,7 @@ function renderProduct(p: Product, all: Product[]): void {
         <button type="button" class="btn" id="btnBuy">Купить в WhatsApp</button>
         <button type="button" class="btn btn--dark" id="btnCart">В корзину</button>
         <button type="button" class="btn btn--ghost" id="btnContact">Связаться в Telegram</button>
-        <a href="#calc" class="btn btn--ghost">Рассчитать рассрочку</a>
+        ${installmentEligible ? `<a href="#calc" class="btn btn--ghost">Рассчитать рассрочку</a>` : ""}
       </div>
 
       <div class="product__perks">
@@ -152,7 +153,7 @@ function renderProduct(p: Product, all: Product[]): void {
     </div>
   </section>
 
-  <section class="tradeblock container" id="calc">
+  ${installmentEligible ? `<section class="tradeblock container" id="calc">
     <div class="tradeblock__head reveal in">
       <p class="eyebrow">Обмен + рассрочка</p>
       <h2 class="section__title">Рассчитай свою цену</h2>
@@ -186,7 +187,7 @@ function renderProduct(p: Product, all: Product[]): void {
         <li><b>4. Забираешь технику</b><p>Остаток делится на 3, 6 или 12 месяцев.</p></li>
       </ol>
     </div>
-  </section>
+  </section>` : ""}
 
   ${specs.length
     ? `<section class="specs-full container">
@@ -201,7 +202,7 @@ function renderProduct(p: Product, all: Product[]): void {
   </section>`;
 
   renderRelated(p, all);
-  const tradeRecalc = wireTradeIn(p, priceState);
+  const tradeRecalc = installmentEligible ? wireTradeIn(p, priceState) : () => {};
   wireInteractions(p, priceState, tradeRecalc);
 }
 
@@ -279,8 +280,10 @@ function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () =>
 
   function refreshPrice() {
     document.getElementById("pPrice")!.textContent = fmt(priceState.value, p.currency);
-    document.getElementById("pMonthly")!.textContent =
-      `или от ${fmt(installment(priceState.value, 12).monthly, p.currency)} / мес`;
+    const monthly = document.getElementById("pMonthly");
+    if (monthly) {
+      monthly.textContent = `или от ${fmt(installment(priceState.value, 12).monthly, p.currency)} / мес`;
+    }
     tradeRecalc();
   }
 

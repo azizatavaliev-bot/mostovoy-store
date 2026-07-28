@@ -31,7 +31,7 @@
       </a>
       <nav class="nav" id="nav">
         <a href="#catalog">Каталог <span class="nav__chevron">⌄</span></a>
-        <a href="#trade">Обмен</a>
+        <a href="trade.html">Обмен</a>
         <a href="#credit">Рассрочка</a>
         <a href="news.html">Посты</a>
         <a href="#why">О нас</a>
@@ -119,7 +119,7 @@
         </p>
         <div class="hero__actions">
           <a href="#catalog" class="btn">Смотреть каталог <span aria-hidden="true">›</span></a>
-          <a href="#trade" class="btn btn--ghost">Обменять свой <span aria-hidden="true">›</span></a>
+          <a href="trade.html" class="btn btn--ghost">Обменять свой <span aria-hidden="true">›</span></a>
         </div>
         <div class="hero__quickfacts">
           <div class="hero__quickfact">
@@ -251,44 +251,26 @@
   </section>
 
   <!-- Trade-in -->
-  <section class="section section--gray" id="trade">
-    <div class="container split">
-      <div class="split__text reveal">
-        <p class="eyebrow">Trade-in</p>
-        <h2 class="section__title">Обмен старого на новый</h2>
-        <p class="lead">Принесите свой смартфон или MacBook — оценим состояние и вычтем стоимость из цены новой техники. Быстро и честно.</p>
-        <ul class="checklist">
-          <li>Оценка за 2 минуты</li>
-          <li>Принимаем Android, iPhone и MacBook</li>
-          <li>Скидка сразу при покупке</li>
-        </ul>
-      </div>
-      <div class="calc reveal" id="tradeCalc">
-        <h3>Оценить своё устройство</h3>
-        <label>Модель
-          <select id="tradeModel">
-            <option value="0">Выберите модель</option>
-            <option value="380">iPhone 13</option>
-            <option value="520">iPhone 14</option>
-            <option value="700">iPhone 15</option>
-            <option value="180">Android (флагман)</option>
-            <option value="70">Android (бюджет)</option>
-            <option value="450">MacBook Air M1</option>
-            <option value="650">MacBook Air M2</option>
-            <option value="850">MacBook Air M3 / M4</option>
-            <option value="1050">MacBook Pro 14</option>
-            <option value="1250">MacBook Pro 16</option>
-          </select>
-        </label>
-        <label>Состояние
-          <select id="tradeState">
-            <option value="1">Отличное</option>
-            <option value="0.7">Хорошее</option>
-            <option value="0.45">С дефектами</option>
-          </select>
-        </label>
-        <div class="calc__result">Оценка: <b id="tradeResult">0 ₽</b></div>
-      </div>
+  <section class="home-trade" id="trade">
+    <div class="container">
+      <article class="home-trade__card">
+        <div class="home-trade__copy reveal">
+          <p class="eyebrow">Trade-in</p>
+          <h2>Обмен старого<br /><span>на новый</span></h2>
+          <p>Принесите свой смартфон или MacBook — оценим состояние и вычтем стоимость из цены новой техники.</p>
+          <div class="home-trade__perks">
+            <span>Оценка за 2 минуты</span>
+            <span>Apple и Samsung</span>
+            <span>Скидка сразу</span>
+          </div>
+          <a href="trade.html#estimate" class="trade-action">
+            Оценить своё устройство <span aria-hidden="true">→</span>
+          </a>
+        </div>
+        <div class="home-trade__visual reveal">
+          <img src="/images/trade-in-iphone-macbook.webp" alt="iPhone и MacBook для обмена по Trade-in" width="1254" height="1254" loading="lazy" />
+        </div>
+      </article>
     </div>
   </section>
 
@@ -381,7 +363,7 @@
       <div class="footer__col">
         <h4>Навигация</h4>
         <a href="#catalog">Каталог</a>
-        <a href="#trade">Обмен</a>
+        <a href="trade.html">Обмен</a>
         <a href="#credit">Доступ</a>
         <a href="news.html">Посты</a>
         <a href="#location">Где мы находимся</a>

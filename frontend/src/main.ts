@@ -890,16 +890,17 @@ if (whyGrid) {
 
 // --- Калькулятор обмена ----------------------------------------------------
 
-const tradeModel = document.getElementById("tradeModel") as HTMLSelectElement;
-const tradeState = document.getElementById("tradeState") as HTMLSelectElement;
-const tradeResult = document.getElementById("tradeResult") as HTMLElement;
+const tradeModel = document.getElementById("tradeModel") as HTMLSelectElement | null;
+const tradeState = document.getElementById("tradeState") as HTMLSelectElement | null;
+const tradeResult = document.getElementById("tradeResult") as HTMLElement | null;
 
 // Оценки трейд-ина заданы в долларах (см. index.html).
 function calcTrade(): void {
+  if (!tradeModel || !tradeState || !tradeResult) return;
   tradeResult.textContent = fmt(+tradeModel.value * +tradeState.value, "USD");
 }
-tradeModel.addEventListener("change", calcTrade);
-tradeState.addEventListener("change", calcTrade);
+tradeModel?.addEventListener("change", calcTrade);
+tradeState?.addEventListener("change", calcTrade);
 
 // --- Калькулятор рассрочки -------------------------------------------------
 

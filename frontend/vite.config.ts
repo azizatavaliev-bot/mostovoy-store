@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, "index.html"),
         product: path.resolve(__dirname, "product.html"),
+        trade: path.resolve(__dirname, "trade.html"),
         news: path.resolve(__dirname, "news.html"),
         admin: path.resolve(__dirname, "admin.html"),
       },

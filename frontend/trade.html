@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Trade-in в МОСТОВОМ: обменяйте iPhone, Samsung или MacBook на новую технику с доплатой." />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="МОСТОВОЙ" />
+  <meta property="og:title" content="Обмен старого на новый — МОСТОВОЙ" />
+  <meta property="og:description" content="Предварительная оценка устройства за 2 минуты и скидка сразу при покупке." />
+  <meta property="og:url" content="https://mostovoy.vercel.app/trade.html" />
+  <meta property="og:image" content="https://mostovoy.vercel.app/images/mostovoyshopbanner.webp" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <title>Обмен техники — МОСТОВОЙ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+</head>
+<body class="trade-page">
+  <header class="header" id="top">
+    <div class="container header__inner">
+      <a href="index.html" class="logo" aria-label="Мостовой">
+        <span class="logo__badge" role="img" aria-label="Мостовой"></span>
+        <span class="logo__text">МОСТОВОЙ</span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="index.html#catalog">Каталог</a>
+        <a href="trade.html" aria-current="page">Обмен</a>
+        <a href="index.html#credit">Рассрочка</a>
+        <a href="news.html">Посты</a>
+        <a href="index.html#why">О нас</a>
+        <a href="index.html#location">Контакты</a>
+      </nav>
+      <a href="index.html#catalog" class="btn btn--sm header__cta">Купить</a>
+      <button class="burger" id="burger" aria-label="Меню"><span></span><span></span><span></span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="trade-hero">
+      <div class="container trade-hero__grid">
+        <div class="trade-hero__copy reveal">
+          <p class="eyebrow">Trade-in</p>
+          <h1>Обмен старого<br /><span>на новый</span></h1>
+          <p class="trade-hero__lead">Принесите свой смартфон или MacBook — оценим состояние и вычтем стоимость из цены новой техники. Быстро и честно.</p>
+          <ul class="trade-hero__perks" aria-label="Преимущества обмена">
+            <li>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+              <span>Оценка<br /><b>за 2 минуты</b></span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="10" height="16" rx="2"></rect><rect x="10" y="7" width="10" height="14" rx="2"></rect></svg>
+              <span>Принимаем<br /><b>Apple и Samsung</b></span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="8" r="2"></circle><circle cx="16" cy="16" r="2"></circle><path d="m7 17 10-10"></path></svg>
+              <span>Скидка сразу<br /><b>при покупке</b></span>
+            </li>
+          </ul>
+          <a class="trade-action" href="#estimate">
+            Оценить своё устройство
+            <span aria-hidden="true">→</span>
+          </a>
+        </div>
+        <div class="trade-hero__visual reveal">
+          <span class="trade-hero__halo" aria-hidden="true"></span>
+          <img src="/images/trade-in-iphone-macbook.webp" alt="iPhone и MacBook для обмена по Trade-in" width="1254" height="1254" fetchpriority="high" />
+        </div>
+      </div>
+    </section>
+
+    <section class="trade-estimator-wrap" id="estimate">
+      <div class="container">
+        <div class="trade-estimator reveal">
+          <div class="trade-estimator__title">
+            <p class="eyebrow">Предварительная оценка</p>
+            <h2>Оценить своё устройство</h2>
+          </div>
+          <label>
+            Модель
+            <select id="tradePageModel">
+              <option value="0">Выберите модель</option>
+              <optgroup label="iPhone">
+                <option value="250">iPhone 12</option>
+                <option value="380">iPhone 13</option>
+                <option value="520">iPhone 14</option>
+                <option value="700">iPhone 15</option>
+                <option value="900">iPhone 16</option>
+              </optgroup>
+              <optgroup label="Samsung Galaxy">
+                <option value="180">Galaxy A-серии</option>
+                <option value="430">Galaxy S23 / S24</option>
+                <option value="650">Galaxy Ultra</option>
+              </optgroup>
+              <optgroup label="MacBook">
+                <option value="450">MacBook Air M1</option>
+                <option value="650">MacBook Air M2</option>
+                <option value="850">MacBook Air M3 / M4</option>
+                <option value="1050">MacBook Pro 14</option>
+                <option value="1250">MacBook Pro 16</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            Состояние
+            <select id="tradePageState">
+              <option value="1">Отличное</option>
+              <option value="0.7">Хорошее</option>
+              <option value="0.45">С дефектами</option>
+            </select>
+          </label>
+          <div class="trade-estimator__result">
+            <span>Предварительная оценка</span>
+            <b id="tradePageResult">0 с</b>
+          </div>
+          <button class="trade-action trade-estimator__button" type="button" id="tradePageEstimate">
+            <span>Оценить устройство</span><i aria-hidden="true">→</i>
+          </button>
+          <button class="trade-estimator__send" type="button" id="tradePageSend" hidden>Подтвердить оценку в WhatsApp</button>
+          <p class="trade-estimator__privacy">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"></rect><path d="M8 10V7a4 4 0 0 1 8 0v3"></path></svg>
+            Точная стоимость определяется после диагностики в магазине
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="trade-process section">
+      <div class="container">
+        <div class="trade-section-title reveal">
+          <p class="eyebrow">Просто и прозрачно</p>
+          <h2>Как это работает</h2>
+        </div>
+        <ol class="trade-steps">
+          <li class="reveal"><span>01</span><b>Выберите модель</b><p>Укажите устройство и его состояние — получите предварительную оценку.</p></li>
+          <li class="reveal"><span>02</span><b>Пройдите диагностику</b><p>Принесите технику в магазин для бесплатной проверки.</p></li>
+          <li class="reveal"><span>03</span><b>Получите скидку</b><p>Мы вычтем согласованную стоимость из цены новой техники.</p></li>
+          <li class="reveal"><span>04</span><b>Заберите покупку</b><p>Оформите новый гаджет сразу — без ожидания и сложных документов.</p></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="trade-accepted section">
+      <div class="container trade-accepted__grid">
+        <article class="trade-accepted__card reveal">
+          <p class="eyebrow">Что принимаем</p>
+          <h2>Техника, которая получает вторую жизнь</h2>
+          <div class="trade-accepted__families">
+            <div><b>iPhone</b><span>Все актуальные модели</span></div>
+            <div><b>Samsung Galaxy</b><span>Серии A, S и Ultra</span></div>
+            <div><b>MacBook</b><span>Air и Pro на Apple Silicon</span></div>
+          </div>
+          <p class="trade-accepted__note">Устройство должно включаться. Финальную стоимость назовём после проверки состояния и комплектации.</p>
+        </article>
+        <article class="trade-bonus reveal">
+          <span class="trade-bonus__ring" aria-hidden="true"></span>
+          <p class="eyebrow">Больше выгоды</p>
+          <h2>Старое устройство становится скидкой</h2>
+          <p>Не нужно отдельно искать покупателя. Оценим технику и сразу уменьшим стоимость новой покупки.</p>
+          <a class="trade-bonus__link" href="#estimate">Рассчитать выгоду <span aria-hidden="true">→</span></a>
+        </article>
+      </div>
+    </section>
+
+    <section class="trade-stats">
+      <div class="container trade-stats__grid">
+        <div><b>1000+</b><span>успешных обменов</span></div>
+        <div><b>до 70%</b><span>выгоды от стоимости</span></div>
+        <div><b>15 мин</b><span>в среднем в магазине</span></div>
+        <div><b>1 магазин</b><span>в центре Бишкека</span></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer" id="footer">
+    <div class="container footer__inner">
+      <div>
+        <a href="index.html" class="logo logo--footer">
+          <span class="logo__badge" role="img" aria-label="Мостовой"></span>
+          <span class="logo__text">МОСТОВОЙ</span>
+        </a>
+        <p class="footer__desc">Продажа техники. Обмен и рассрочка.</p>
+      </div>
+      <div class="footer__col">
+        <h4>Навигация</h4>
+        <a href="index.html#catalog">Каталог</a>
+        <a href="trade.html">Обмен</a>
+        <a href="index.html#credit">Рассрочка</a>
+        <a href="news.html">Посты</a>
+      </div>
+      <div class="footer__col">
+        <h4>Контакты</h4>
+        <a href="https://wa.me/996999110110" target="_blank" rel="noopener">WhatsApp — 0999 110 110</a>
+        <a href="tel:+996700922622">0700 922 622 — Рахмон</a>
+        <a href="https://t.me/mostovoyshop" target="_blank" rel="noopener">Telegram — @mostovoyshop</a>
+      </div>
+    </div>
+    <div class="footer__bottom container">
+      <span>© 2026 МОСТОВОЙ.</span>
+      <span>Предварительная оценка не является публичной офертой.</span>
+    </div>
+  </footer>
+
+  <script type="module" src="/src/trade-page.ts"></script>
+</body>
+</html>

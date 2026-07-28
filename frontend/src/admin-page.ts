@@ -124,6 +124,7 @@ interface BotSettings {
     enabled: boolean;
   }[];
   systemPrompt: string;
+  hypervisorPrompt: string;
   characterPrompt: string;
   rulesPrompt: string;
   taskPrompt: string;
@@ -1561,6 +1562,7 @@ function currentBotSettings(): Partial<BotSettings> {
     aggressiveLearning: Boolean((document.getElementById("botAggressiveLearning") as HTMLInputElement | null)?.checked),
     model: (document.getElementById("botModel") as HTMLSelectElement | null)?.value,
     systemPrompt: promptValue("botSystemPrompt"),
+    hypervisorPrompt: promptValue("botHypervisorPrompt"),
     characterPrompt: promptValue("botCharacterPrompt"),
     rulesPrompt: promptValue("botRulesPrompt"),
     taskPrompt: promptValue("botTaskPrompt"),
@@ -1593,6 +1595,7 @@ function renderAiUsage(): string {
   ];
   const taskNames: Record<string, string> = {
     sales_agent: "Продавец-консультант",
+    hypervisor_context: "Гипервизор · контекст",
     media_analysis: "Изображения и аудио",
     laboratory: "Лаборатория",
     aggressive_learning: "Агрессивное обучение",
@@ -1644,6 +1647,7 @@ function renderDeveloperMount(): void {
           </option>`).join("")}</select></label>
         ${[
           ["botSystemPrompt", "Системный промпт", s.systemPrompt],
+          ["botHypervisorPrompt", "Промпт гипервизора · только пересказ контекста", s.hypervisorPrompt],
           ["botCharacterPrompt", "Промпт характера", s.characterPrompt],
           ["botRulesPrompt", "Промпт правил", s.rulesPrompt],
           ["botTaskPrompt", "Промпт задачи", s.taskPrompt],

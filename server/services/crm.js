@@ -7,6 +7,10 @@ const DEFAULT_PROMPT = `Ты продавец-консультант магаз�
 Отвечай кратко, дружелюбно и на языке клиента. Используй только цены и наличие из каталога ниже.
 Не придумывай характеристики, скидки и сроки доставки. Если данных нет — честно скажи, что менеджер уточнит.
 Помоги выбрать товар и мягко предложи оформить заказ. Не упоминай, что ты AI.`;
+const DEFAULT_HYPERVISOR_PROMPT = `Ты создаёшь краткое резюме контекста диалога для менеджера магазина техники.
+Перескажи только факты из переписки: что хочет клиент, какие товары и условия обсуждались, что уже выяснено и какой вопрос остался открытым.
+Не оценивай ответ консультанта, не исправляй его, не предлагай свой ответ и ничего не выдумывай.
+Ответ — не более трёх коротких предложений.`;
 const DEFAULT_CHARACTER_PROMPT = `Доброжелательный, уверенный и внимательный консультант. Общается естественно, без канцелярита и навязчивости.`;
 const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены и условия. Не обещай то, чего нет в каталоге. Если информации недостаточно — передай вопрос менеджеру.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и мягко подведи к оформлению заказа.`;
@@ -100,6 +104,7 @@ class CrmService {
       aggressiveLearning: rows.bot_learning_mode === "aggressive",
       model: ALLOWED_MODELS.includes(rows.bot_model) ? rows.bot_model : config.deepseek.model,
       systemPrompt: rows.bot_system_prompt || rows.sales_prompt || DEFAULT_PROMPT,
+      hypervisorPrompt: rows.bot_hypervisor_prompt || DEFAULT_HYPERVISOR_PROMPT,
       characterPrompt: rows.bot_character_prompt || DEFAULT_CHARACTER_PROMPT,
       rulesPrompt: rows.bot_rules_prompt || DEFAULT_RULES_PROMPT,
       taskPrompt: rows.bot_task_prompt || DEFAULT_TASK_PROMPT,
@@ -116,6 +121,7 @@ class CrmService {
       bot_learning_mode: (payload.aggressiveLearning ?? current.aggressiveLearning) ? "aggressive" : "manual",
       bot_model: ALLOWED_MODELS.includes(payload.model) ? payload.model : current.model,
       bot_system_prompt: String(payload.systemPrompt ?? current.systemPrompt).trim().slice(0, 16000) || DEFAULT_PROMPT,
+      bot_hypervisor_prompt: String(payload.hypervisorPrompt ?? current.hypervisorPrompt).trim().slice(0, 8000) || DEFAULT_HYPERVISOR_PROMPT,
       bot_character_prompt: String(payload.characterPrompt ?? current.characterPrompt).trim().slice(0, 8000) || DEFAULT_CHARACTER_PROMPT,
       bot_rules_prompt: String(payload.rulesPrompt ?? current.rulesPrompt).trim().slice(0, 8000) || DEFAULT_RULES_PROMPT,
       bot_task_prompt: String(payload.taskPrompt ?? current.taskPrompt).trim().slice(0, 8000) || DEFAULT_TASK_PROMPT,
@@ -468,6 +474,26 @@ prompt_patch — не больше двух коротких предложен�
     ].filter(Boolean).join("\n\n");
   }
 
+  async _summarizeConversation(conversationId, history, settings) {
+    this._logEvent(conversationId, "info", "hypervisor", "hypervisor.started", "Гипервизор пересказывает контекст диалога");
+    try {
+      const summary = await this.ai.chatText({
+        system: settings.hypervisorPrompt,
+        messages: history,
+        model: settings.model,
+        maxTokens: 260,
+        temperature: 0.1,
+        onUsage: this._usageRecorder("hypervisor_context", conversationId, settings.model),
+      });
+      const value = String(summary || "").trim().slice(0, 2000);
+      this._logEvent(conversationId, "info", "hypervisor", "hypervisor.completed", "Контекст диалога подготовлен");
+      return value || null;
+    } catch (error) {
+      this._logEvent(conversationId, "warn", "hypervisor", "hypervisor.failed", error.message);
+      return null;
+    }
+  }
+
   _upsertConversation(data) {
     this.db.prepare(
       `INSERT INTO crm_conversations
@@ -632,12 +658,13 @@ prompt_patch — не больше двух коротких предложен�
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
       if (settings.approvalEnabled) {
+        const summary = await this._summarizeConversation(conversationId, history, settings);
         const customerMessage = [...detail.messages].reverse().find((message) => message.direction === "incoming")?.text || "";
         const result = this.db.prepare(
           `INSERT INTO bot_approvals
             (conversation_id, incoming_message_id, customer_message, ai_reply, conversation_summary, model)
            VALUES (?, ?, ?, ?, ?, ?)`
-        ).run(conversationId, incomingMessageId || null, customerMessage, reply, null, settings.model);
+        ).run(conversationId, incomingMessageId || null, customerMessage, reply, summary, settings.model);
         this._logEvent(conversationId, "info", "approval", "approval.created", "Черновик ждёт подтверждения", {
           approvalId: Number(result.lastInsertRowid),
         });
@@ -696,6 +723,7 @@ prompt_patch — не больше двух коротких предложен�
 module.exports = {
   CrmService,
   DEFAULT_PROMPT,
+  DEFAULT_HYPERVISOR_PROMPT,
   DEFAULT_CHARACTER_PROMPT,
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,

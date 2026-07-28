@@ -157,7 +157,7 @@ test("Telegram-фото анализируется и попадает в кон
   assert.equal(crm.listApprovals("pending").length, 1);
 });
 
-test("настройки бота сохраняют модель, подтверждение и четыре промпта без гипервизора", (t) => {
+test("настройки бота сохраняют модель, подтверждение и гипервизор контекста", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const crm = new CrmService({ db, deepseek: { enabled: true }, amocrm: { enabled: false } });
@@ -167,6 +167,7 @@ test("настройки бота сохраняют модель, подтве�
     aggressiveLearning: true,
     model: "deepseek-v4-pro",
     systemPrompt: "Система",
+    hypervisorPrompt: "Только перескажи контекст",
     characterPrompt: "Характер",
     rulesPrompt: "Правила",
     taskPrompt: "Задача",
@@ -176,10 +177,43 @@ test("настройки бота сохраняют модель, подтве�
   assert.equal(settings.aggressiveLearning, true);
   assert.equal(settings.model, "deepseek-v4-pro");
   assert.equal(settings.systemPrompt, "Система");
-  assert.equal("hypervisorPrompt" in settings, false);
+  assert.equal(settings.hypervisorPrompt, "Только перескажи контекст");
   assert.equal(settings.characterPrompt, "Характер");
   assert.equal(settings.rulesPrompt, "Правила");
   assert.equal(settings.taskPrompt, "Задача");
+});
+
+test("гипервизор получает только историю диалога и сохраняет её резюме отдельно от ответа", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const calls = [];
+  const ai = {
+    enabled: true,
+    chatText: async (payload) => {
+      calls.push(payload);
+      return payload.system.includes("Только факты из истории")
+        ? "Клиент ищет iPhone 17 и уточняет наличие. Цвет пока не выбран."
+        : "Да, iPhone 17 есть в наличии.";
+    },
+  };
+  const crm = new CrmService({ db, ai, amocrm: { enabled: false } });
+  crm.saveSettings({ hypervisorPrompt: "Только факты из истории. Не оценивай ответ." });
+
+  await crm.receiveTelegram({
+    message_id: 122,
+    text: "Есть iPhone 17?",
+    chat: { id: 122, type: "private" },
+    from: { first_name: "Клиент" },
+  });
+
+  const draft = crm.listApprovals("pending")[0];
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].system.includes("Только факты из истории"), false);
+  assert.equal(calls[1].system, "Только факты из истории. Не оценивай ответ.");
+  assert.deepEqual(calls[1].messages, [{ role: "user", content: "Есть iPhone 17?" }]);
+  assert.equal("user" in calls[1], false);
+  assert.equal(draft.aiReply, "Да, iPhone 17 есть в наличии.");
+  assert.equal(draft.summary, "Клиент ищет iPhone 17 и уточняет наличие. Цвет пока не выбран.");
 });
 
 test("агрессивное обучение сохраняет отклонение и точечно обновляет системный промпт", async (t) => {

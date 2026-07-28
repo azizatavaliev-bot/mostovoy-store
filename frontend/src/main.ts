@@ -1,5 +1,5 @@
 // Логика главной: сайдбар-фильтр (тип товара → подкатегория, бренд, цена),
-// поиск, сортировка, калькуляторы Zero-рассрочки и обмена, корзина, анимации.
+// поиск, сортировка, калькуляторы рассрочки и обмена, корзина, анимации.
 // Данные берутся из CATALOG (живой каталог из Telegram) — см. catalog.ts.
 import "./styles.css";
 import "./page-loader";
@@ -9,6 +9,7 @@ import {
   convertPrice,
   fmt,
   getDisplayCurrency,
+  handleOrderClick,
   loadCatalog,
   mountCartDrawer,
   mountWhatsappFloat,
@@ -782,7 +783,7 @@ const WHY: [string, string, string][] = [
   ["🛡️", "Официальная гарантия", "1 год на всю технику"],
   ["✅", "Только оригинал", "Никаких копий и восстановленных под видом новых"],
   ["🔄", "Trade-in", "Обменяем ваш старый телефон с доплатой"],
-  ["💳", "Рассрочка Zero", "Верификация в приложении — и техника ваша"],
+  ["💳", "Рассрочка", "Выберите удобный срок и ежемесячный платёж"],
   ["🚚", "Быстрая доставка", "По Бишкеку 1–2 дня, по всему Кыргызстану"],
   ["🛠️", "Свой сервис", "Настройка, перенос данных и ремонт на месте"],
   ["⭐", "50 000+ клиентов", "Нам доверяют по всей стране 12 лет"],
@@ -808,17 +809,18 @@ function calcTrade(): void {
 tradeModel.addEventListener("change", calcTrade);
 tradeState.addEventListener("change", calcTrade);
 
-// --- Калькулятор рассрочки Zero --------------------------------------------
+// --- Калькулятор рассрочки -------------------------------------------------
 
 const creditPrice = document.getElementById("creditPrice") as HTMLSelectElement;
 const creditTerm = document.getElementById("creditTerm") as HTMLSelectElement;
 const crMonthly = document.getElementById("crMonthly") as HTMLElement;
 const crBreak = document.getElementById("crBreak") as HTMLElement;
+const creditSubmit = document.getElementById("creditSubmit") as HTMLButtonElement;
 
 function fillCreditModels(): void {
   const keep = creditPrice.selectedIndex;
   creditPrice.innerHTML = products
-    .map((p) => `<option value="${p.price}" data-cur="${p.currency}">${p.name} — ${fmt(p.price, p.currency)}</option>`)
+    .map((p) => `<option value="${p.price}" data-id="${p.id}" data-cur="${p.currency}">${p.name} — ${fmt(p.price, p.currency)}</option>`)
     .join("");
   if (keep >= 0 && keep < creditPrice.options.length) creditPrice.selectedIndex = keep;
   refreshCustomSelect(creditPrice);
@@ -841,6 +843,27 @@ function calcCredit(): void {
 }
 creditPrice.addEventListener("change", calcCredit);
 creditTerm.addEventListener("change", calcCredit);
+creditSubmit.addEventListener("click", () => {
+  const opt = creditPrice.options[creditPrice.selectedIndex];
+  const product = products.find((item) => String(item.id) === String(opt?.dataset.id));
+  if (!product) {
+    toast("Сначала выберите товар");
+    return;
+  }
+  const months = +creditTerm.value;
+  const result = installment(product.price, months);
+  const text = [
+    "Здравствуйте! Хочу оформить рассрочку:",
+    `Товар: ${product.name}`,
+    `Срок: ${months} месяцев`,
+    `Стоимость: ${fmt(product.price, product.currency)}`,
+    `Платёж в месяц: ${fmt(result.monthly, product.currency)}`,
+    `Сумма к оплате: ${fmt(result.total, product.currency)}`,
+    "",
+    "Подскажите, пожалуйста, как оформить?",
+  ].join("\n");
+  handleOrderClick(text, [{ productId: String(product.id), quantity: 1 }], "credit");
+});
 
 // --- Анимации появления ----------------------------------------------------
 
@@ -894,7 +917,7 @@ function mountHeroRotation(): void {
   const hero = document.querySelector<HTMLElement>(".hero");
   if (!hero) return;
 
-  const products = ["iphone", "macbook", "ipad"] as const;
+  const products = ["iphone", "macbook", "ipad", "airpods"] as const;
   let productIndex = 0;
   window.setInterval(() => {
     if (document.hidden) return;

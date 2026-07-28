@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 
 function recordBuyClick(db, payload = {}) {
-  const source = payload.source === "product" ? "product" : "cart";
+  const source = ["product", "cart", "credit"].includes(payload.source) ? payload.source : "cart";
   const items = Array.isArray(payload.items) ? payload.items.slice(0, 20) : [];
   const slugs = [...new Set(items.map((item) => String(item?.productId || "").trim()).filter(Boolean))];
   if (!slugs.length) throw new Error("Товары не указаны");
@@ -66,7 +66,7 @@ function getBuyClickAnalytics(db, days = 30) {
   const sources = db.prepare(
     `SELECT source, COUNT(DISTINCT click_group) AS clicks
      FROM buy_clicks WHERE clicked_at >= datetime('now', ?)
-     GROUP BY source ORDER BY clicks DESC`
+     GROUP BY source ORDER BY clicks DESC, source ASC`
   ).all(since).map((row) => ({ source: row.source, clicks: Number(row.clicks) }));
   const recent = db.prepare(
     `SELECT click_group, source, page_path, visitor_id, MAX(clicked_at) AS clicked_at

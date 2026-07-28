@@ -1,5 +1,5 @@
 // Страница товара: данные из живого каталога, выбор цвета/памяти,
-// рассрочка Zero, трейд-ин, корзина и кнопка «Связаться» в Telegram.
+// рассрочка, трейд-ин, корзина и кнопка «Связаться» в Telegram.
 import "./styles.css";
 import "./page-loader";
 import {
@@ -18,7 +18,7 @@ import {
   productMessage,
   toast,
 } from "./catalog";
-import { enhanceSelects, installment, mediaHTML, ZERO_TERM_LIST } from "./render";
+import { enhanceSelects, installment, INSTALLMENT_TERM_LIST, mediaHTML } from "./render";
 import type { Product } from "./types";
 
 const root = document.getElementById("product") as HTMLElement;
@@ -116,7 +116,7 @@ function renderProduct(p: Product, all: Product[]): void {
 
       <div class="product__price">
         <b id="pPrice">${fmt(p.price, p.currency)}</b>
-        <span id="pMonthly">или от ${fmt(installment(p.price, 12).monthly, p.currency)} / мес · Zero</span>
+        <span id="pMonthly">или от ${fmt(installment(p.price, 12).monthly, p.currency)} / мес</span>
       </div>
 
       ${swatches
@@ -154,13 +154,13 @@ function renderProduct(p: Product, all: Product[]): void {
 
   <section class="tradeblock container" id="calc">
     <div class="tradeblock__head reveal in">
-      <p class="eyebrow">Обмен + рассрочка Zero</p>
+      <p class="eyebrow">Обмен + рассрочка</p>
       <h2 class="section__title">Рассчитай свою цену</h2>
-      <p class="lead">Сдай старый телефон в трейд-ин, а остаток оформи в рассрочку Zero: проходишь верификацию в приложении и сразу забираешь технику.</p>
+      <p class="lead">Сдай старый телефон или MacBook в трейд-ин, а остаток раздели на удобный срок.</p>
     </div>
     <div class="tradeblock__grid">
       <div class="tcalc reveal in">
-        <label>Твой текущий телефон
+        <label>Твоё текущее устройство
           <select id="pOld"></select>
         </label>
         <label>Состояние
@@ -172,17 +172,17 @@ function renderProduct(p: Product, all: Product[]): void {
         </label>
         <div class="tcalc__rows">
           <div><span>Цена ${p.name}</span><b id="tcBasePrice">${fmt(priceState.value, p.currency)}</b></div>
-          <div class="minus"><span>− Обмен твоего телефона</span><b id="tvVal">− 0</b></div>
+          <div class="minus"><span>− Обмен твоего устройства</span><b id="tvVal">− 0</b></div>
           <div class="total"><span>Остаток</span><b id="tvPay">${fmt(priceState.value, p.currency)}</b></div>
         </div>
-        <p class="tcalc__sub">Сумма к оплате по Zero:</p>
+        <p class="tcalc__sub">Сумма к оплате:</p>
         <div class="terms" id="terms"></div>
         <p class="tcalc__over" id="tvOver"></p>
       </div>
       <ol class="steps reveal in">
-        <li><b>1. Выбираешь товар</b><p>Открываешь карточку и добавляешь свой старый телефон для оценки.</p></li>
-        <li><b>2. Оцениваем обмен</b><p>Считаем стоимость твоего телефона и вычитаем её из цены нового.</p></li>
-        <li><b>3. Проходишь верификацию Zero</b><p>В приложении Zero, моментально — без справок и залога.</p></li>
+        <li><b>1. Выбираешь товар</b><p>Открываешь карточку и добавляешь своё старое устройство для оценки.</p></li>
+        <li><b>2. Оцениваем обмен</b><p>Считаем стоимость устройства и вычитаем её из цены нового.</p></li>
+        <li><b>3. Выбираешь срок</b><p>Сразу видишь ежемесячный платёж и итоговую сумму.</p></li>
         <li><b>4. Забираешь технику</b><p>Остаток делится на 3, 6 или 12 месяцев.</p></li>
       </ol>
     </div>
@@ -228,11 +228,13 @@ function renderRelated(p: Product, all: Product[]): void {
 
 // Оценки трейд-ина заданы в долларах.
 const TRADEIN: [string, number][] = [
-  ["Не сдаю телефон", 0],
+  ["Не сдаю устройство", 0],
   ["iPhone 15 Pro Max", 900], ["iPhone 15 Pro", 800], ["iPhone 15", 620],
   ["iPhone 14 Pro", 600], ["iPhone 14", 480], ["iPhone 13", 360], ["iPhone 12", 260],
   ["Galaxy S24 Ultra", 740], ["Galaxy S24", 520], ["Galaxy S23", 380], ["Galaxy S22", 260],
   ["Другой Android (флагман)", 180], ["Другой Android (бюджет)", 65],
+  ["MacBook Air M1", 450], ["MacBook Air M2", 650], ["MacBook Air M3 / M4", 850],
+  ["MacBook Pro 14", 1050], ["MacBook Pro 16", 1250],
 ];
 
 function wireTradeIn(p: Product, priceState: PriceState): () => void {
@@ -249,7 +251,7 @@ function wireTradeIn(p: Product, priceState: PriceState): () => void {
 
     document.getElementById("tvVal")!.textContent = "− " + fmt(tradeUsd, "USD");
     document.getElementById("tvPay")!.textContent = fmt(principal, p.currency);
-    document.getElementById("terms")!.innerHTML = ZERO_TERM_LIST.map((t) => {
+    document.getElementById("terms")!.innerHTML = INSTALLMENT_TERM_LIST.map((t) => {
       const r = installment(principal, t);
       return `<div class="term"><b>${fmt(r.monthly, p.currency)}</b><span>× ${t} мес</span><em>всего ${fmt(r.total, p.currency)}</em></div>`;
     }).join("");
@@ -278,7 +280,7 @@ function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () =>
   function refreshPrice() {
     document.getElementById("pPrice")!.textContent = fmt(priceState.value, p.currency);
     document.getElementById("pMonthly")!.textContent =
-      `или от ${fmt(installment(priceState.value, 12).monthly, p.currency)} / мес · Zero`;
+      `или от ${fmt(installment(priceState.value, 12).monthly, p.currency)} / мес`;
     tradeRecalc();
   }
 

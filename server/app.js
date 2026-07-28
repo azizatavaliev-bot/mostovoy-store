@@ -6,6 +6,7 @@ const express = require("express");
 const config = require("./config");
 const logger = require("./logger");
 const { DeepSeekClient } = require("./services/deepseek");
+const { AiRouter } = require("./services/ai");
 const { ProductResearchService } = require("./services/research");
 const { createResearchProvider } = require("./services/research/providers");
 const { SyncService } = require("./services/sync");
@@ -17,8 +18,9 @@ const { createAmoCrmRouter } = require("./routes/amocrm");
 const { AmoCrmClient } = require("./services/amocrm");
 const { CrmService } = require("./services/crm");
 
-function createApp({ db, deepseek, research, queue, crm, amocrm } = {}) {
+function createApp({ db, deepseek, ai, research, queue, crm, amocrm } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
+  const aiRouter = ai || new AiRouter({ deepseek: deepseekClient });
   const researchService =
     research ||
     new ProductResearchService({
@@ -29,7 +31,7 @@ function createApp({ db, deepseek, research, queue, crm, amocrm } = {}) {
   const syncService = new SyncService({ db, deepseek: deepseekClient, research: researchService });
   const syncQueue = queue || new SyncQueue({ db, syncService });
   const amoCrmClient = amocrm || new AmoCrmClient();
-  const crmService = crm || new CrmService({ db, deepseek: deepseekClient, amocrm: amoCrmClient });
+  const crmService = crm || new CrmService({ db, ai: aiRouter, deepseek: deepseekClient, amocrm: amoCrmClient });
 
   const app = express();
   app.disable("x-powered-by");
@@ -69,6 +71,7 @@ function createApp({ db, deepseek, research, queue, crm, amocrm } = {}) {
 
   app.locals.services = {
     deepseek: deepseekClient,
+    ai: aiRouter,
     research: researchService,
     sync: syncService,
     queue: syncQueue,

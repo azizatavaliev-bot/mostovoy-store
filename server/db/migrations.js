@@ -428,4 +428,15 @@ module.exports = [
       WHERE slug = '16-plus';
     `,
   },
+  {
+    // Обе версии Magic Mouse USB-C используют переданное владельцем фото.
+    // Миграция обновляет уже существующие товары в production-базе.
+    name: "013_magic_mouse_images",
+    sql: `
+      UPDATE products
+      SET main_image_url = 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQFC7E3rE1RGRYYpx7AUfYwskDhP3Odv7XKINDtTfOIpfMDIWUtk5slf04&s=10',
+          updated_at = datetime('now')
+      WHERE slug IN ('magic-mouse-usb-c-white', 'magic-mouse-usb-c-black');
+    `,
+  },
 ];

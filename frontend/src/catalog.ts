@@ -317,7 +317,7 @@ function buyVisitorId(): string {
   return id;
 }
 
-function trackBuyClick(items: BuyClickItem[], source: "product" | "cart"): void {
+function trackBuyClick(items: BuyClickItem[], source: "product" | "cart" | "credit"): void {
   if (!items.length) return;
   const body = JSON.stringify({
     items,
@@ -335,7 +335,7 @@ function trackBuyClick(items: BuyClickItem[], source: "product" | "cart"): void 
   }).catch(() => {});
 }
 
-export function handleOrderClick(text: string, items: BuyClickItem[], source: "product" | "cart"): void {
+export function handleOrderClick(text: string, items: BuyClickItem[], source: "product" | "cart" | "credit"): void {
   trackBuyClick(items, source);
   openWhatsApp(text);
   toast("Открываем WhatsApp с вашим заказом");

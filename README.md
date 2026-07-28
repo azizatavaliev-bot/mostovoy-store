@@ -1,7 +1,7 @@
 # МОСТОВОЙ — витрина техники с автосинхронизацией из Telegram
 
 Сайт-витрина магазина «Мостовой» (Бишкек): каталог, страница товара, корзина,
-рассрочка Zero, трейд-ин, кнопка «Связаться» в Telegram.
+рассрочка, трейд-ин, кнопка «Связаться» в Telegram.
 
 Каталог **не ведётся руками**. Сотрудники продолжают публиковать прайс в
 Telegram-канале как обычно — бот читает публикации, ИИ разбирает их на товары,
@@ -111,6 +111,10 @@ TELEGRAM_WEBHOOK_SECRET=       # произвольная строка
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
+OPENAI_API_KEY=               # включает ChatGPT и анализ фото/аудио
+OPENAI_MODEL=gpt-5.6-sol
+GEMINI_API_KEY=               # включает Gemini и анализ фото/аудио
+GEMINI_MODEL=gemini-3.6-flash
 
 WHATSAPP_PHONE=996999110110               # заказы, межд. формат без «+»
 TELEGRAM_CONTACT_USERNAME=mostovoyshop    # чат «Связаться»

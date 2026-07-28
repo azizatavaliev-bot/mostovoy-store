@@ -95,6 +95,7 @@ interface CrmAnalytics {
     clicks: number;
     units: number;
     visitors: number;
+    handoffs: number;
   };
   topProducts: {
     productSlug: string | null;
@@ -103,7 +104,7 @@ interface CrmAnalytics {
     units: number;
   }[];
   trend: { day: string; clicks: number }[];
-  sources: { source: "product" | "cart"; clicks: number }[];
+  sources: { source: "product" | "cart" | "credit"; clicks: number }[];
   recent: {
     id: string;
     source: "product" | "cart";
@@ -116,9 +117,13 @@ interface BotSettings {
   approvalEnabled: boolean;
   aggressiveLearning: boolean;
   model: string;
-  models: string[];
+  models: {
+    id: string;
+    label: string;
+    provider: "deepseek" | "openai" | "gemini";
+    enabled: boolean;
+  }[];
   systemPrompt: string;
-  hypervisorPrompt: string;
   characterPrompt: string;
   rulesPrompt: string;
   taskPrompt: string;
@@ -200,6 +205,7 @@ interface ProductForm {
 
 type AdminView = "products" | "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
+type AnalyticsMode = "demo" | "real";
 
 const root = document.getElementById("admin") as HTMLElement;
 const btnLogout = document.getElementById("btnLogout") as HTMLButtonElement;
@@ -227,6 +233,7 @@ const state = {
   labHistory: [] as LabMessage[],
   analytics: null as CrmAnalytics | null,
   analyticsDays: 30,
+  analyticsMode: "demo" as AnalyticsMode,
   editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
   search: "",
@@ -1303,32 +1310,99 @@ function renderAnalyticsView(): string {
         <h1 class="section__title">Что хотят купить</h1>
         <p class="analytics__lead">Считаем товары в момент нажатия «Купить в WhatsApp» на сайте.</p>
       </div>
-      <label class="analytics__period">Период
-        <select id="analyticsDays">
-          ${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "1 год"]]
-            .map(([value, label]) => `<option value="${value}" ${state.analyticsDays === value ? "selected" : ""}>${label}</option>`)
-            .join("")}
-        </select>
-      </label>
+      <div class="analytics__controls">
+        <label class="analytics__period">Данные
+          <select id="analyticsMode">
+            <option value="demo" ${state.analyticsMode === "demo" ? "selected" : ""}>Демо-данные</option>
+            <option value="real" ${state.analyticsMode === "real" ? "selected" : ""}>Реальные данные</option>
+          </select>
+        </label>
+        <label class="analytics__period">Период
+          <select id="analyticsDays">
+            ${[[7, "7 дней"], [30, "30 дней"], [90, "90 дней"], [365, "1 год"]]
+              .map(([value, label]) => `<option value="${value}" ${state.analyticsDays === value ? "selected" : ""}>${label}</option>`)
+              .join("")}
+          </select>
+        </label>
+      </div>
     </div>
     <div id="analyticsMount"><div class="crm__loading">Собираем аналитику…</div></div>`;
 }
 
+function buildDemoAnalytics(days: number): CrmAnalytics {
+  const multiplier = ({ 7: 0.32, 30: 1, 90: 2.8, 365: 10.6 } as Record<number, number>)[days] || 1;
+  const scale = (value: number) => Math.max(1, Math.round(value * multiplier));
+  const productSeeds = [
+    ["iphone-17-pro-max-256-gb-belyi-esim", "iPhone 17 Pro Max", 42, 51],
+    ["macbook-pro-16-m5-pro-1-tb-space-black-24-gb-ram-mgea4", "MacBook Pro 16 M5 Pro", 31, 34],
+    ["airpods-pro-3", "AirPods Pro 3", 27, 39],
+    ["dyson-airwrap-hs09-co-anda2x-long-ceramic-pink-koreya-dorozhnaya-sumka-v-podarok", "Dyson Airwrap HS09", 24, 28],
+    ["apple-watch-ultra-3-black", "Apple Watch Ultra 3", 19, 22],
+    ["galaxy-s26-ultra-512-gb-vse-cveta-2-sim-vetnam", "Galaxy S26 Ultra", 16, 18],
+    ["nintendo-switch-2", "Nintendo Switch 2", 12, 15],
+  ] as const;
+  const pattern = [3, 5, 4, 8, 6, 9, 7, 11, 8, 10, 12, 9, 13, 11, 15, 12, 14, 16, 13, 17, 15, 19, 16, 18, 21, 17, 20, 22, 19, 24];
+  const pointCount = Math.min(days, 30);
+  const stepDays = Math.max(1, Math.floor(days / pointCount));
+  const now = Date.now();
+  const trend = Array.from({ length: pointCount }, (_, index) => {
+    const date = new Date(now - (pointCount - 1 - index) * stepDays * 86400000);
+    return { day: date.toISOString().slice(0, 10), clicks: scale(pattern[index % pattern.length]) };
+  });
+  const recentSeeds = [
+    ["product", "iPhone 17 Pro Max", 1, 8],
+    ["cart", "AirPods Pro 3", 2, 24],
+    ["product", "MacBook Pro 16 M5 Pro", 1, 51],
+    ["cart", "Dyson Airwrap HS09", 1, 83],
+    ["product", "Apple Watch Ultra 3", 1, 136],
+    ["product", "Galaxy S26 Ultra", 1, 204],
+  ] as const;
+
+  return {
+    periodDays: days,
+    summary: { clicks: scale(186), units: scale(243), visitors: scale(132), handoffs: scale(37) },
+    topProducts: productSeeds.map(([productSlug, productName, clicks, units]) => ({
+      productSlug, productName, clicks: scale(clicks), units: scale(units),
+    })),
+    trend,
+    sources: [
+      { source: "product", clicks: scale(128) },
+      { source: "cart", clicks: scale(58) },
+    ],
+    recent: recentSeeds.map(([source, productName, quantity, minutes], index) => ({
+      id: `demo-${index}`,
+      source,
+      clickedAt: new Date(now - minutes * 60000).toISOString(),
+      items: [{ productSlug: null, productName, quantity }],
+    })),
+  };
+}
+
 function renderAnalyticsMount(): void {
   const mount = document.getElementById("analyticsMount");
-  const data = state.analytics;
-  if (!mount || !data) return;
+  const isDemo = state.analyticsMode === "demo";
+  const data = isDemo ? buildDemoAnalytics(state.analyticsDays) : state.analytics;
+  if (!mount) return;
+  if (!data) {
+    mount.innerHTML = `<div class="crm__loading">Загружаем реальные данные…</div>`;
+    return;
+  }
   const maxClicks = Math.max(1, ...data.trend.map((item) => item.clicks));
   const maxProductClicks = Math.max(1, ...data.topProducts.map((item) => item.clicks));
   const sourceTotal = Math.max(1, data.sources.reduce((sum, item) => sum + item.clicks, 0));
-  const sourceLabel = (source: "product" | "cart") =>
-    source === "product" ? "Карточка товара" : "Корзина";
+  const sourceLabel = (source: "product" | "cart" | "credit") =>
+    source === "product" ? "Карточка товара" : source === "credit" ? "Рассрочка" : "Корзина";
 
   mount.innerHTML = `
+    ${isDemo ? `<aside class="analytics__demoNote">
+      <div><b><i></i>Демонстрационный режим</b><span>Цифры ниже — пример оформления. Реальные нажатия продолжают записываться отдельно.</span></div>
+      <small>${state.analytics ? `${state.analytics.summary.clicks} реальных нажатий за период` : "Синхронизируем реальные события…"}</small>
+    </aside>` : ""}
     <section class="analytics__kpis">
       <article><span>Нажатий «Купить»</span><strong>${data.summary.clicks}</strong><small>переходов в WhatsApp</small></article>
       <article class="analytics__kpiHero"><span>Товаров в запросах</span><strong>${data.summary.units}</strong><small>с учётом количества в корзине</small></article>
       <article><span>Посетителей</span><strong>${data.summary.visitors}</strong><small>уникальных покупателей</small></article>
+      <article><span>Передано менеджеру</span><strong>${data.summary.handoffs || 0}</strong><small>диалогов, где менеджер подтвердил или отправил ответ</small></article>
     </section>
 
     <div class="analytics__grid">
@@ -1390,15 +1464,21 @@ async function loadAnalytics(): Promise<void> {
     renderAnalyticsMount();
   } catch (error) {
     const mount = document.getElementById("analyticsMount");
-    if (mount) mount.innerHTML = `<p class="admin__error">${esc((error as Error).message)}</p>`;
+    if (mount && state.analyticsMode === "real") mount.innerHTML = `<p class="admin__error">${esc((error as Error).message)}</p>`;
   }
 }
 
 function wireAnalyticsView(): void {
+  document.getElementById("analyticsMode")?.addEventListener("change", (event) => {
+    state.analyticsMode = (event.target as HTMLSelectElement).value as AnalyticsMode;
+    renderAnalyticsMount();
+  });
   document.getElementById("analyticsDays")?.addEventListener("change", async (event) => {
     state.analyticsDays = Number((event.target as HTMLSelectElement).value);
+    renderAnalyticsMount();
     await loadAnalytics();
   });
+  renderAnalyticsMount();
   loadAnalytics();
 }
 
@@ -1512,7 +1592,6 @@ function currentBotSettings(): Partial<BotSettings> {
     aggressiveLearning: Boolean((document.getElementById("botAggressiveLearning") as HTMLInputElement | null)?.checked),
     model: (document.getElementById("botModel") as HTMLSelectElement | null)?.value,
     systemPrompt: promptValue("botSystemPrompt"),
-    hypervisorPrompt: promptValue("botHypervisorPrompt"),
     characterPrompt: promptValue("botCharacterPrompt"),
     rulesPrompt: promptValue("botRulesPrompt"),
     taskPrompt: promptValue("botTaskPrompt"),
@@ -1545,14 +1624,14 @@ function renderAiUsage(): string {
   ];
   const taskNames: Record<string, string> = {
     sales_agent: "Продавец-консультант",
-    hypervisor: "Гипервизор",
+    media_analysis: "Изображения и аудио",
     laboratory: "Лаборатория",
     aggressive_learning: "Агрессивное обучение",
   };
   return `
     <section class="bot-panel ai-usage">
-      <header><div><p class="eyebrow">DeepSeek API</p><h2>Расход токенов по периодам</h2></div>
-        <small>Вход: ${fmtUsd(usage.pricing.inputUsdPerMillion)} / 1 млн · Выход: ${fmtUsd(usage.pricing.outputUsdPerMillion)} / 1 млн</small></header>
+      <header><div><p class="eyebrow">AI API</p><h2>Расход токенов по периодам</h2></div>
+        <small>Стоимость рассчитана для DeepSeek; для ChatGPT и Gemini сохраняются токены.</small></header>
       <div class="ai-usage__periods">${periods.map(([key, label]) => `
         <article><strong>${fmtTokens(usage.periods[key].tokens)} <small>tok</small></strong>
           <b>${fmtUsd(usage.periods[key].costUsd)}</b><span>${label}</span></article>`).join("")}</div>
@@ -1566,7 +1645,7 @@ function renderAiUsage(): string {
           <span>${item.calls.toLocaleString("ru-RU")}</span>
           <span>${fmtTokens(item.tokens)}</span>
           <strong>${fmtUsd(item.costUsd)}</strong>
-        </div>`).join("") || `<div class="bot-empty">Расходов пока нет. Первый реальный вызов DeepSeek появится здесь автоматически.</div>`}
+        </div>`).join("") || `<div class="bot-empty">Расходов пока нет. Первый реальный вызов ИИ появится здесь автоматически.</div>`}
       </div>
     </section>`;
 }
@@ -1590,10 +1669,12 @@ function renderDeveloperMount(): void {
           Подтверждать ответы перед отправкой</label>
         <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botAggressiveLearning" ${s.aggressiveLearning ? "checked" : ""}><span></span>
           <div><b>Агрессивное обучение</b><small>После каждого отклонения сохраняет причину и точечно улучшает системный промпт.</small></div></label>
-        <label>Модель<select id="botModel">${s.models.map((model) => `<option ${model === s.model ? "selected" : ""}>${esc(model)}</option>`).join("")}</select></label>
+        <label>Модель<select id="botModel">${s.models.map((model) =>
+          `<option value="${esc(model.id)}" ${model.id === s.model ? "selected" : ""} ${model.enabled ? "" : "disabled"}>
+            ${esc(model.label)} · ${esc(model.provider)}${model.enabled ? "" : " — нужен API-ключ"}
+          </option>`).join("")}</select></label>
         ${[
           ["botSystemPrompt", "Системный промпт", s.systemPrompt],
-          ["botHypervisorPrompt", "Промпт гипервизора", s.hypervisorPrompt],
           ["botCharacterPrompt", "Промпт характера", s.characterPrompt],
           ["botRulesPrompt", "Промпт правил", s.rulesPrompt],
           ["botTaskPrompt", "Промпт задачи", s.taskPrompt],

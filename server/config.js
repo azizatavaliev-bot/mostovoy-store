@@ -62,6 +62,19 @@ const config = {
     maxTokens: int(process.env.DEEPSEEK_MAX_TOKENS, 4096),
   },
 
+  openai: {
+    apiKey: process.env.OPENAI_API_KEY || "",
+    baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, ""),
+    model: process.env.OPENAI_MODEL || "gpt-5.6-sol",
+    transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || "gpt-4o-mini-transcribe",
+  },
+
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || "",
+    baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta").replace(/\/+$/, ""),
+    model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+  },
+
   research: {
     // none | tavily | brave
     provider: process.env.PRODUCT_RESEARCH_PROVIDER || "none",
@@ -140,6 +153,8 @@ const config = {
 config.features = {
   telegram: Boolean(config.telegram.botToken && config.telegram.webhookSecret),
   deepseek: Boolean(config.deepseek.apiKey),
+  openai: Boolean(config.openai.apiKey),
+  gemini: Boolean(config.gemini.apiKey),
   research: config.research.provider !== "none",
   contact: Boolean(config.contact.telegram),
   adminToken: Boolean(config.admin.token),

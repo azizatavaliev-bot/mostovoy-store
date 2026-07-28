@@ -1,16 +1,16 @@
 const config = require("../config");
 const logger = require("../logger");
 const { getBuyClickAnalytics } = require("./buy-analytics");
+const { MODELS, modelInfo } = require("./ai");
 
 const DEFAULT_PROMPT = `Ты продавец-консультант магазина техники МОСТОВОЙ в Бишкеке.
 Отвечай кратко, дружелюбно и на языке клиента. Используй только цены и наличие из каталога ниже.
 Не придумывай характеристики, скидки и сроки доставки. Если данных нет — честно скажи, что менеджер уточнит.
 Помоги выбрать товар и мягко предложи оформить заказ. Не упоминай, что ты AI.`;
-const DEFAULT_HYPERVISOR_PROMPT = `Кратко опиши для менеджера, чего хочет клиент, что уже выяснено и что важно проверить перед отправкой ответа. Не более трёх предложений.`;
 const DEFAULT_CHARACTER_PROMPT = `Доброжелательный, уверенный и внимательный консультант. Общается естественно, без канцелярита и навязчивости.`;
 const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены и условия. Не обещай то, чего нет в каталоге. Если информации недостаточно — передай вопрос менеджеру.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и мягко подведи к оформлению заказа.`;
-const ALLOWED_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-reasoner"];
+const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
 
@@ -33,9 +33,10 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, deepseek, amocrm, fetchImpl } = {}) {
+  constructor({ db, ai, deepseek, amocrm, fetchImpl } = {}) {
     this.db = db;
     this.deepseek = deepseek;
+    this.ai = ai || deepseek;
     this.amocrm = amocrm;
     this.fetchImpl = fetchImpl || globalThis.fetch;
   }
@@ -85,7 +86,7 @@ class CrmService {
     return {
       telegram: Boolean(config.telegram.botToken),
       amocrm: Boolean(this.amocrm?.enabled),
-      ai: Boolean(this.deepseek?.enabled),
+      ai: Boolean(this.ai?.enabled),
       amocrmWebhook: `${base}/api/amocrm/webhook${secretPath}`,
     };
   }
@@ -99,11 +100,12 @@ class CrmService {
       aggressiveLearning: rows.bot_learning_mode === "aggressive",
       model: ALLOWED_MODELS.includes(rows.bot_model) ? rows.bot_model : config.deepseek.model,
       systemPrompt: rows.bot_system_prompt || rows.sales_prompt || DEFAULT_PROMPT,
-      hypervisorPrompt: rows.bot_hypervisor_prompt || DEFAULT_HYPERVISOR_PROMPT,
       characterPrompt: rows.bot_character_prompt || DEFAULT_CHARACTER_PROMPT,
       rulesPrompt: rows.bot_rules_prompt || DEFAULT_RULES_PROMPT,
       taskPrompt: rows.bot_task_prompt || DEFAULT_TASK_PROMPT,
-      models: ALLOWED_MODELS,
+      models: typeof this.ai?.listModels === "function"
+        ? this.ai.listModels()
+        : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),
     };
   }
 
@@ -114,7 +116,6 @@ class CrmService {
       bot_learning_mode: (payload.aggressiveLearning ?? current.aggressiveLearning) ? "aggressive" : "manual",
       bot_model: ALLOWED_MODELS.includes(payload.model) ? payload.model : current.model,
       bot_system_prompt: String(payload.systemPrompt ?? current.systemPrompt).trim().slice(0, 16000) || DEFAULT_PROMPT,
-      bot_hypervisor_prompt: String(payload.hypervisorPrompt ?? current.hypervisorPrompt).trim().slice(0, 8000) || DEFAULT_HYPERVISOR_PROMPT,
       bot_character_prompt: String(payload.characterPrompt ?? current.characterPrompt).trim().slice(0, 8000) || DEFAULT_CHARACTER_PROMPT,
       bot_rules_prompt: String(payload.rulesPrompt ?? current.rulesPrompt).trim().slice(0, 8000) || DEFAULT_RULES_PROMPT,
       bot_task_prompt: String(payload.taskPrompt ?? current.taskPrompt).trim().slice(0, 8000) || DEFAULT_TASK_PROMPT,
@@ -133,15 +134,28 @@ class CrmService {
   }
 
   getBuyAnalytics(days = 30) {
-    return getBuyClickAnalytics(this.db, days);
+    const analytics = getBuyClickAnalytics(this.db, days);
+    const since = `-${analytics.periodDays - 1} days`;
+    const row = this.db.prepare(
+      `SELECT COUNT(DISTINCT conversation_id) AS count FROM (
+         SELECT conversation_id FROM bot_approvals
+          WHERE status = 'approved' AND decided_at >= datetime('now', ?)
+         UNION
+         SELECT conversation_id FROM crm_messages
+          WHERE sender = 'manager' AND created_at >= datetime('now', ?)
+       )`
+    ).get(since, since);
+    analytics.summary.handoffs = Number(row.count || 0);
+    return analytics;
   }
 
   _recordUsage(task, conversationId, model, usage = {}) {
     const promptTokens = Math.max(0, Number(usage.prompt_tokens || 0));
     const completionTokens = Math.max(0, Number(usage.completion_tokens || 0));
     const totalTokens = Math.max(0, Number(usage.total_tokens || promptTokens + completionTokens));
-    const inputCost = promptTokens / 1_000_000 * DEEPSEEK_INPUT_USD_PER_MILLION;
-    const outputCost = completionTokens / 1_000_000 * DEEPSEEK_OUTPUT_USD_PER_MILLION;
+    const hasKnownPricing = String(model || "").startsWith("deepseek-");
+    const inputCost = hasKnownPricing ? promptTokens / 1_000_000 * DEEPSEEK_INPUT_USD_PER_MILLION : 0;
+    const outputCost = hasKnownPricing ? completionTokens / 1_000_000 * DEEPSEEK_OUTPUT_USD_PER_MILLION : 0;
     this.db.prepare(
       `INSERT INTO ai_usage
         (conversation_id, task, model, prompt_tokens, completion_tokens, total_tokens,
@@ -261,7 +275,7 @@ class CrmService {
       "SELECT COUNT(*) AS count FROM bot_events WHERE level = 'error' AND created_at >= datetime('now', '-24 hours')"
     ).get();
     return {
-      enabled: Boolean(this.deepseek?.enabled),
+      enabled: Boolean(this.ai?.enabled),
       settings: this.getSettings(),
       approvals: {
         total: Number(approvals.total || 0),
@@ -376,9 +390,9 @@ class CrmService {
   }
 
   async _calibratePromptFromReject(row, reason) {
-    if (!this.deepseek?.enabled || typeof this.deepseek.chatJson !== "function") return;
+    if (!this.ai?.enabled || typeof this.ai.chatJson !== "function") return;
     const settings = this.getSettings();
-    const result = await this.deepseek.chatJson({
+    const result = await this.ai.chatJson({
       system: `Ты калибруешь системный промпт продавца магазина техники.
 Верни JSON с полями prompt_patch и reasoning.
 prompt_patch — не больше двух коротких предложений, только универсальное правило.
@@ -391,6 +405,7 @@ prompt_patch — не больше двух коротких предложен�
       }),
       temperature: 0.2,
       maxTokens: 350,
+      model: settings.model,
       onUsage: this._usageRecorder("aggressive_learning", row.conversation_id, settings.model),
     });
     const patch = String(result?.prompt_patch || "").trim().slice(0, 1000);
@@ -429,7 +444,7 @@ prompt_patch — не больше двух коротких предложен�
     const settings = { ...this.getSettings(), ...prompts };
     const selectedModel = ALLOWED_MODELS.includes(model) ? model : settings.model;
     const startedAt = Date.now();
-    const reply = await this.deepseek.chatText({
+    const reply = await this.ai.chatText({
       system: this._composePrompt(settings, ""),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
@@ -493,7 +508,8 @@ prompt_patch — не больше двух коротких предложен�
   }
 
   async receiveTelegram(message) {
-    if (!message?.text?.trim() || message.from?.is_bot || message.chat?.type !== "private") return;
+    const hasMedia = Boolean(message?.photo?.length || message?.voice || message?.audio);
+    if ((!message?.text?.trim() && !message?.caption?.trim() && !hasMedia) || message.from?.is_bot || message.chat?.type !== "private") return;
     const chatId = String(message.chat.id);
     const name = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ");
     const conversation = this._upsertConversation({
@@ -504,11 +520,50 @@ prompt_patch — не больше двух коротких предложен�
       username: message.from?.username ? `@${message.from.username}` : null,
       createdAt: new Date(Number(message.date || Date.now() / 1000) * 1000).toISOString(),
     });
+    let text = String(message.text || message.caption || "").trim();
+    if (hasMedia) {
+      try {
+        const media = message.photo?.length
+          ? { kind: "image", file: message.photo.at(-1), mimeType: "image/jpeg" }
+          : { kind: "audio", file: message.voice || message.audio, mimeType: (message.voice || message.audio)?.mime_type || "audio/ogg" };
+        if (Number(media.file?.file_size || 0) > 20 * 1024 * 1024) throw new Error("Файл больше 20 МБ");
+        const fileRes = await this.fetchImpl(
+          `${config.telegram.apiBase}/bot${config.telegram.botToken}/getFile?file_id=${encodeURIComponent(media.file.file_id)}`
+        );
+        if (!fileRes.ok) throw new Error(`Telegram getFile: HTTP ${fileRes.status}`);
+        const fileData = await fileRes.json();
+        const filePath = fileData?.result?.file_path;
+        if (!filePath) throw new Error("Telegram не вернул путь к файлу");
+        const download = await this.fetchImpl(
+          `${config.telegram.apiBase}/file/bot${config.telegram.botToken}/${filePath}`
+        );
+        if (!download.ok) throw new Error(`Telegram file: HTTP ${download.status}`);
+        const bytes = Buffer.from(await download.arrayBuffer());
+        if (bytes.length > 20 * 1024 * 1024) throw new Error("Файл больше 20 МБ");
+        const analysis = await this.ai.analyzeMedia({
+          kind: media.kind,
+          bytes,
+          mimeType: media.mimeType,
+          caption: text,
+          onUsage: this._usageRecorder("media_analysis", conversation.id, this.getSettings().model),
+        });
+        text = [text, media.kind === "image" ? `[Изображение: ${analysis}]` : `[Аудио: ${analysis}]`]
+          .filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "info", "media", "media.analyzed", "Вложение проанализировано", {
+          kind: media.kind,
+          bytes: bytes.length,
+        });
+      } catch (error) {
+        text = [text, message.photo?.length ? "[Клиент прислал изображение]" : "[Клиент прислал аудио]"]
+          .filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "error", "media", "media.failed", error.message);
+      }
+    }
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: String(message.message_id),
       direction: "incoming",
       sender: "customer",
-      text: message.text.trim(),
+      text,
       raw: message,
     });
     if (inserted) {
@@ -549,13 +604,13 @@ prompt_patch — не больше двух коротких предложен�
   }
 
   async _autoReply(conversationId, incomingMessageId) {
-    if (!this.deepseek?.enabled) return;
+    if (!this.ai?.enabled) return;
     const detail = this.getConversation(conversationId);
     if (!detail?.conversation.aiEnabled) return;
     const settings = this.getSettings();
     const products = this.db.prepare(
       `SELECT official_name, color, storage, price, currency, available
-       FROM products WHERE status = 'active' AND price IS NOT NULL ORDER BY updated_at DESC LIMIT 120`
+       FROM products WHERE status = 'active' AND price IS NOT NULL ORDER BY updated_at DESC`
     ).all();
     const catalog = products.map((p) =>
       `- ${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}: ${p.price} ${p.currency}${p.available ? "" : " (нет в наличии)"}`
@@ -570,34 +625,19 @@ prompt_patch — не больше двух коротких предложен�
       incomingMessageId,
     });
     try {
-      const reply = await this.deepseek.chatText({
+      const reply = await this.ai.chatText({
         system: prompt,
         messages: history,
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
-      let summary = null;
-      const incomingCount = history.filter((message) => message.role === "user").length;
-      if (settings.approvalEnabled && incomingCount > 1) {
-        summary = await this.deepseek.chatText({
-          system: settings.hypervisorPrompt,
-          messages: history,
-          model: settings.model,
-          maxTokens: 240,
-          temperature: 0.15,
-          onUsage: this._usageRecorder("hypervisor", conversationId, settings.model),
-        }).catch((error) => {
-          this._logEvent(conversationId, "warn", "hypervisor", "hypervisor.failed", error.message);
-          return null;
-        });
-      }
       if (settings.approvalEnabled) {
         const customerMessage = [...detail.messages].reverse().find((message) => message.direction === "incoming")?.text || "";
         const result = this.db.prepare(
           `INSERT INTO bot_approvals
             (conversation_id, incoming_message_id, customer_message, ai_reply, conversation_summary, model)
            VALUES (?, ?, ?, ?, ?, ?)`
-        ).run(conversationId, incomingMessageId || null, customerMessage, reply, summary, settings.model);
+        ).run(conversationId, incomingMessageId || null, customerMessage, reply, null, settings.model);
         this._logEvent(conversationId, "info", "approval", "approval.created", "Черновик ждёт подтверждения", {
           approvalId: Number(result.lastInsertRowid),
         });
@@ -656,7 +696,6 @@ prompt_patch — не больше двух коротких предложен�
 module.exports = {
   CrmService,
   DEFAULT_PROMPT,
-  DEFAULT_HYPERVISOR_PROMPT,
   DEFAULT_CHARACTER_PROMPT,
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,

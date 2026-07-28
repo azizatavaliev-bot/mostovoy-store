@@ -104,9 +104,60 @@ test("ответ бота ждёт подтверждения и отправл�
   assert.equal(crm.listApprovals("pending").length, 0);
   assert.equal(crm.listApprovals("approved")[0].editedReply, "Да, есть. Какой цвет вас интересует?");
   assert.equal(crm.getConversation(draft.conversationId).messages.at(-1).sender, "assistant");
+  assert.equal(crm.getBuyAnalytics(30).summary.handoffs, 1);
 });
 
-test("настройки бота сохраняют модель, подтверждение и все пять промптов", (t) => {
+test("Telegram-фото анализируется и попадает в контекст диалога", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let analyzed = null;
+  const ai = {
+    enabled: true,
+    listModels: () => [{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek", enabled: true }],
+    analyzeMedia: async (payload) => {
+      analyzed = payload;
+      return "на фото белый iPhone 17 Pro Max";
+    },
+    chatText: async () => "Да, такая модель есть в каталоге.",
+  };
+  const crm = new CrmService({
+    db,
+    ai,
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (String(url).includes("/getFile")) {
+        return { ok: true, json: async () => ({ result: { file_path: "photos/phone.jpg" } }) };
+      }
+      return {
+        ok: true,
+        arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer,
+      };
+    },
+  });
+
+  await crm.receiveTelegram({
+    message_id: 92,
+    date: 1_700_000_000,
+    caption: "Есть такой?",
+    photo: [{ file_id: "small" }, { file_id: "large", file_size: 3 }],
+    chat: { id: 992, type: "private" },
+    from: { id: 992, first_name: "Клиент" },
+  });
+
+  assert.equal(analyzed.kind, "image");
+  assert.equal(analyzed.mimeType, "image/jpeg");
+  const detail = crm.getConversation(crm.listConversations()[0].id);
+  assert.match(detail.messages[0].text, /Есть такой/);
+  assert.match(detail.messages[0].text, /белый iPhone 17 Pro Max/);
+  assert.equal(crm.listApprovals("pending").length, 1);
+});
+
+test("настройки бота сохраняют модель, подтверждение и четыре промпта без гипервизора", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const crm = new CrmService({ db, deepseek: { enabled: true }, amocrm: { enabled: false } });
@@ -114,9 +165,8 @@ test("настройки бота сохраняют модель, подтве�
   const settings = crm.saveSettings({
     approvalEnabled: false,
     aggressiveLearning: true,
-    model: "deepseek-reasoner",
+    model: "deepseek-v4-pro",
     systemPrompt: "Система",
-    hypervisorPrompt: "Гипервизор",
     characterPrompt: "Характер",
     rulesPrompt: "Правила",
     taskPrompt: "Задача",
@@ -124,9 +174,9 @@ test("настройки бота сохраняют модель, подтве�
 
   assert.equal(settings.approvalEnabled, false);
   assert.equal(settings.aggressiveLearning, true);
-  assert.equal(settings.model, "deepseek-reasoner");
+  assert.equal(settings.model, "deepseek-v4-pro");
   assert.equal(settings.systemPrompt, "Система");
-  assert.equal(settings.hypervisorPrompt, "Гипервизор");
+  assert.equal("hypervisorPrompt" in settings, false);
   assert.equal(settings.characterPrompt, "Характер");
   assert.equal(settings.rulesPrompt, "Правила");
   assert.equal(settings.taskPrompt, "Задача");

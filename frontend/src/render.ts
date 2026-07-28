@@ -102,18 +102,16 @@ export function mediaHTML(p: Product, cls: string): string {
   return `<div class="${cls}">${base}${img}</div>`;
 }
 
-// Рассрочка Zero (онлайн-приложение).
-// Прошёл верификацию — сразу берёшь технику в рассрочку.
 // Сумма к оплате = стоимость / коэффициент срока. Коэффициент задаёт переплату.
 //   3 мес  → / 0.94   (40000 / 0.94 = 42 553,19)
 //   6 мес  → / 0.89   (40000 / 0.89 = 44 943,82)
 //   12 мес → / 0.84   (40000 / 0.84 = 47 619,05)
-const ZERO_TERMS: Record<number, number> = { 3: 0.94, 6: 0.89, 12: 0.84 };
-export const ZERO_TERM_LIST = [3, 6, 12];
+const INSTALLMENT_TERMS: Record<number, number> = { 3: 0.94, 6: 0.89, 12: 0.84 };
+export const INSTALLMENT_TERM_LIST = [3, 6, 12];
 
 export function installment(principal: number, months: number): Installment {
   principal = Math.max(principal, 0);
-  const k = ZERO_TERMS[months];
+  const k = INSTALLMENT_TERMS[months];
   if (!k) return { monthly: 0, total: 0, overpay: 0, rate: null };
   const total = principal / k;
   return {

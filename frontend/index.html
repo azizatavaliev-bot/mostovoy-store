@@ -17,7 +17,7 @@
   <meta name="twitter:title" content="МОСТОВОЙ — магазин техники" />
   <meta name="twitter:description" content="Оригинальная техника, trade-in и рассрочка в Бишкеке." />
   <meta name="twitter:image" content="https://mostovoy.vercel.app/images/mostovoyshopbanner.png" />
-  <title>МОСТОВОЙ — техника в Бишкеке: обмен и рассрочка Zero</title>
+  <title>МОСТОВОЙ — техника в Бишкеке: обмен и рассрочка</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 </head>
@@ -104,6 +104,7 @@
             <span data-hero-copy="iphone">iPhone.</span>
             <span data-hero-copy="macbook" aria-hidden="true">MacBook.</span>
             <span data-hero-copy="ipad" aria-hidden="true">iPad.</span>
+            <span data-hero-copy="airpods" aria-hidden="true">AirPods.</span>
           </span>
           <br /><span class="accent">Уже твой.</span>
         </h1>
@@ -113,6 +114,7 @@
             <span data-hero-copy="iphone">Вся линейка iPhone в наличии.</span>
             <span data-hero-copy="macbook" aria-hidden="true">MacBook для работы и творчества в наличии.</span>
             <span data-hero-copy="ipad" aria-hidden="true">iPad для учёбы, работы и творчества в наличии.</span>
+            <span data-hero-copy="airpods" aria-hidden="true">Новые AirPods для музыки и общения в наличии.</span>
           </span>
         </p>
         <div class="hero__actions">
@@ -144,6 +146,7 @@
         <img class="hero__device hero__device--iphone" src="/images/iphone-hero.png" alt="" fetchpriority="high" />
         <img class="hero__device hero__device--macbook" src="/images/hero-macbook-transparent.png" alt="" />
         <img class="hero__device hero__device--ipad" src="/images/hero-ipad-transparent.png" alt="" />
+        <img class="hero__device hero__device--airpods" src="/images/hero-airpods.png" alt="" />
       </div>
     </div>
     <div class="container hero__benefits">
@@ -241,15 +244,15 @@
       <div class="split__text reveal">
         <p class="eyebrow">Trade-in</p>
         <h2 class="section__title">Обмен старого на новый</h2>
-        <p class="lead">Принесите свой смартфон — оценим состояние и вычтем стоимость из цены нового iPhone. Быстро и честно.</p>
+        <p class="lead">Принесите свой смартфон или MacBook — оценим состояние и вычтем стоимость из цены новой техники. Быстро и честно.</p>
         <ul class="checklist">
           <li>Оценка за 2 минуты</li>
-          <li>Принимаем Android и iPhone</li>
+          <li>Принимаем Android, iPhone и MacBook</li>
           <li>Скидка сразу при покупке</li>
         </ul>
       </div>
       <div class="calc reveal" id="tradeCalc">
-        <h3>Оценить свой телефон</h3>
+        <h3>Оценить своё устройство</h3>
         <label>Модель
           <select id="tradeModel">
             <option value="0">Выберите модель</option>
@@ -258,6 +261,11 @@
             <option value="700">iPhone 15</option>
             <option value="180">Android (флагман)</option>
             <option value="70">Android (бюджет)</option>
+            <option value="450">MacBook Air M1</option>
+            <option value="650">MacBook Air M2</option>
+            <option value="850">MacBook Air M3 / M4</option>
+            <option value="1050">MacBook Pro 14</option>
+            <option value="1250">MacBook Pro 16</option>
           </select>
         </label>
         <label>Состояние
@@ -294,11 +302,12 @@
           <b id="crMonthly">—</b>
         </div>
         <div class="calc__break" id="crBreak"></div>
+        <button type="button" class="btn calc__submit" id="creditSubmit">Оформить в WhatsApp</button>
       </div>
       <div class="split__text reveal">
-        <p class="eyebrow">Рассрочка Zero</p>
-        <h2 class="section__title">Рассрочка через приложение Zero</h2>
-        <p class="lead">Прошёл верификацию в приложении Zero — и сразу берёшь телефон или любую технику в рассрочку. Три срока, каждый со своим коэффициентом.</p>
+        <p class="eyebrow">Рассрочка</p>
+        <h2 class="section__title">Техника в рассрочку</h2>
+        <p class="lead">Выберите товар и удобный срок. Калькулятор сразу покажет ежемесячный платёж и итоговую сумму.</p>
         <ul class="checklist">
           <li>3 месяца — стоимость делится на 0,94</li>
           <li>6 месяцев — стоимость делится на 0,89</li>

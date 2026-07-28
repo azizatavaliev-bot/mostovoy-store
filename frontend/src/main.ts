@@ -666,6 +666,98 @@ function renderSales(): void {
   observeCards();
 }
 
+// --- Линейка продуктов перед каталогом ------------------------------------
+
+const PRODUCT_FAMILIES = [
+  {
+    key: "iphone",
+    name: "iPhone",
+    query: "iPhone",
+    description: "Актуальные модели iPhone.",
+    match: (product: Product) => /^iphone\b/i.test(product.name),
+  },
+  {
+    key: "ipad",
+    name: "iPad",
+    query: "iPad",
+    description: "Для учёбы, работы и творчества.",
+    match: (product: Product) => /^ipad\b/i.test(product.name),
+  },
+  {
+    key: "mac",
+    name: "Mac",
+    query: "MacBook",
+    description: "Мощность для больших задач.",
+    match: (product: Product) => /^macbook\b/i.test(product.name),
+  },
+  {
+    key: "watch",
+    name: "Apple Watch",
+    query: "Apple Watch",
+    description: "Здоровье, связь и стиль.",
+    match: (product: Product) => /^apple watch\b/i.test(product.name),
+  },
+] as const;
+
+function familyProduct(match: (product: Product) => boolean): Product | null {
+  const matches = products.filter(match);
+  return (
+    matches.find((product) => product.available && Boolean(product.image || product.img)) ||
+    matches.find((product) => Boolean(product.image || product.img)) ||
+    matches[0] ||
+    null
+  );
+}
+
+function renderProductLine(): void {
+  const rail = document.getElementById("productLineRail");
+  if (!rail) return;
+
+  const families = PRODUCT_FAMILIES.map((family) => ({
+    family,
+    product: familyProduct(family.match),
+  })).filter((item): item is { family: (typeof PRODUCT_FAMILIES)[number]; product: Product } =>
+    Boolean(item.product)
+  );
+
+  rail.innerHTML = families
+    .map(
+      ({ family, product }) => `
+        <button type="button" class="product-family reveal" data-product-family="${family.key}"
+          aria-label="Смотреть ${family.name} в каталоге">
+          <span class="product-family__stage">
+            <span class="product-family__availability">${product.available ? "В наличии" : "Под заказ"}</span>
+            ${mediaHTML(product, "product-family__media")}
+          </span>
+          <span class="product-family__copy">
+            <strong>${family.name}</strong>
+            <small>${family.description}</small>
+            <span class="product-family__action">Смотреть <b aria-hidden="true">↗</b></span>
+          </span>
+        </button>`
+    )
+    .join("");
+
+  rail.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-product-family]");
+    if (!button) return;
+    const family = PRODUCT_FAMILIES.find((item) => item.key === button.dataset.productFamily);
+    if (!family) return;
+
+    state.group = null;
+    state.category = null;
+    state.brands = new Set();
+    state.min = null;
+    state.max = null;
+    state.q = family.query;
+    searchInput.value = family.query;
+    renderSidebar();
+    renderGrid();
+    renderActiveChips();
+    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+  });
+}
+
 // --- Поиск, сортировка, мобильный сайдбар ----------------------------------
 
 searchInput.addEventListener("input", (e) => {
@@ -956,6 +1048,7 @@ mountHeroRotation();
   renderGrid();
   renderActiveChips();
   renderSales();
+  renderProductLine();
   fillCreditModels();
   calcTrade();
   calcCredit();

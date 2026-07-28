@@ -47,6 +47,101 @@ test("amoCRM form webhook разбирает WhatsApp-сообщение", () =>
   assert.equal(parsed.source, "whatsapp");
 });
 
+test("amoCRM JSON webhook разбирает Instagram-сообщение", () => {
+  const parsed = parseAmoWebhook({
+    message: {
+      add: [{
+        text: "Хочу заказать",
+        type: "incoming",
+        chat_id: "ig-chat-1",
+        id: "ig-message-1",
+        origin: "instagram",
+        author: { id: "7", name: "Instagram client" },
+      }],
+    },
+  });
+  assert.equal(parsed.text, "Хочу заказать");
+  assert.equal(parsed.chatId, "ig-chat-1");
+  assert.equal(parsed.source, "instagram");
+});
+
+test("Instagram из amoCRM сохраняется отдельным каналом и зеркалируется в Azis CRM", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const events = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    azisCrm: {
+      enabled: true,
+      publishEvent: async (type, payload) => events.push({ type, payload }),
+    },
+  });
+
+  await crm.receiveAmo(
+    {
+      text: "Нужен MacBook",
+      direction: "incoming",
+      chatId: "instagram-chat-7",
+      messageId: "instagram-message-7",
+      customerName: "Клиент",
+      source: "instagram",
+      createdAt: "2026-07-28T12:00:00.000Z",
+    },
+    { raw: true },
+  );
+
+  assert.equal(crm.listConversations()[0].source, "instagram");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "message");
+  assert.equal(events[0].payload.channel, "instagram");
+  assert.equal(events[0].payload.externalMessageId, "instagram-message-7");
+});
+
+test("ответ из Azis CRM отправляется в исходный amoCRM-чат", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const sent = [];
+  const events = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: {
+      enabled: true,
+      sendMessage: async (payload) => sent.push(payload),
+    },
+    azisCrm: {
+      enabled: true,
+      publishEvent: async (type, payload) => events.push({ type, payload }),
+    },
+  });
+
+  await crm.receiveAmo({
+    text: "Есть iPhone 17?",
+    direction: "incoming",
+    chatId: "wa-chat-9",
+    messageId: "wa-message-9",
+    leadId: "901",
+    contactId: "902",
+    source: "whatsapp",
+  });
+  const result = await crm.sendExternal({
+    source: "whatsapp",
+    chatId: "wa-chat-9",
+    leadId: "901",
+    contactId: "902",
+    text: "Да, есть в наличии.",
+  });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chatId, "wa-chat-9");
+  assert.equal(sent[0].leadId, "901");
+  assert.equal(result.conversationId, crm.listConversations()[0].id);
+  assert.ok(result.messageId);
+  assert.equal(events.at(-1).payload.direction, "outgoing");
+});
+
 test("CRM хранит заметку и переключатель AI", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

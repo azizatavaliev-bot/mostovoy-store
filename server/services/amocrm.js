@@ -2,17 +2,19 @@ const config = require("../config");
 
 function parseAmoWebhook(body) {
   const get = (key) => body?.[key];
-  const created = Number(get("message[add][0][created_at]"));
+  const nested = body?.message?.add?.[0] || {};
+  const author = nested.author || {};
+  const created = Number(get("message[add][0][created_at]") || nested.created_at);
   return {
-    text: String(get("message[add][0][text]") || "").trim(),
-    direction: String(get("message[add][0][type]") || "incoming").toLowerCase(),
-    chatId: String(get("message[add][0][chat_id]") || ""),
-    messageId: String(get("message[add][0][id]") || ""),
-    customerId: String(get("message[add][0][author][id]") || ""),
-    customerName: String(get("message[add][0][author][name]") || ""),
-    leadId: String(get("message[add][0][element_id]") || get("message[add][0][entity_id]") || ""),
-    contactId: String(get("message[add][0][contact_id]") || ""),
-    source: String(get("message[add][0][origin]") || "whatsapp"),
+    text: String(get("message[add][0][text]") || nested.text || "").trim(),
+    direction: String(get("message[add][0][type]") || nested.type || "incoming").toLowerCase(),
+    chatId: String(get("message[add][0][chat_id]") || nested.chat_id || ""),
+    messageId: String(get("message[add][0][id]") || nested.id || ""),
+    customerId: String(get("message[add][0][author][id]") || author.id || ""),
+    customerName: String(get("message[add][0][author][name]") || author.name || ""),
+    leadId: String(get("message[add][0][element_id]") || get("message[add][0][entity_id]") || nested.element_id || nested.entity_id || ""),
+    contactId: String(get("message[add][0][contact_id]") || nested.contact_id || ""),
+    source: String(get("message[add][0][origin]") || nested.origin || "whatsapp"),
     createdAt: created ? new Date(created * 1000).toISOString() : new Date().toISOString(),
   };
 }

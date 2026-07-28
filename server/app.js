@@ -17,8 +17,10 @@ const { createAdminRouter } = require("./routes/admin");
 const { createAmoCrmRouter } = require("./routes/amocrm");
 const { AmoCrmClient } = require("./services/amocrm");
 const { CrmService } = require("./services/crm");
+const { AzisCrmClient } = require("./services/azis-crm");
+const { createAzisCrmRouter } = require("./routes/azis-crm");
 
-function createApp({ db, deepseek, ai, research, queue, crm, amocrm } = {}) {
+function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
   const aiRouter = ai || new AiRouter({ deepseek: deepseekClient });
   const researchService =
@@ -31,7 +33,14 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm } = {}) {
   const syncService = new SyncService({ db, deepseek: deepseekClient, research: researchService });
   const syncQueue = queue || new SyncQueue({ db, syncService });
   const amoCrmClient = amocrm || new AmoCrmClient();
-  const crmService = crm || new CrmService({ db, ai: aiRouter, deepseek: deepseekClient, amocrm: amoCrmClient });
+  const azisCrmClient = azisCrm || new AzisCrmClient();
+  const crmService = crm || new CrmService({
+    db,
+    ai: aiRouter,
+    deepseek: deepseekClient,
+    amocrm: amoCrmClient,
+    azisCrm: azisCrmClient,
+  });
 
   const app = express();
   app.disable("x-powered-by");
@@ -40,8 +49,9 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm } = {}) {
 
   app.use("/api/telegram", createTelegramRouter({ db, queue: syncQueue, crm: crmService }));
   app.use("/api/amocrm", createAmoCrmRouter({ crm: crmService }));
+  app.use("/api/integrations/azis", createAzisCrmRouter({ crm: crmService }));
   app.use("/api/admin", createAdminRouter({ db, crm: crmService }));
-  app.use("/api", createCatalogRouter({ db }));
+  app.use("/api", createCatalogRouter({ db, azisCrm: azisCrmClient }));
 
   // Фото, загруженные через админку. Живут вне репозитория (см. .gitignore).
   app.use("/uploads", express.static(config.uploads.dir, { maxAge: "30d" }));
@@ -77,6 +87,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm } = {}) {
     queue: syncQueue,
     crm: crmService,
     amocrm: amoCrmClient,
+    azisCrm: azisCrmClient,
   };
   return app;
 }

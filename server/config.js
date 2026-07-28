@@ -50,6 +50,13 @@ const config = {
     webhookSecret: process.env.AMOCRM_WEBHOOK_SECRET || "",
   },
 
+  azisCrm: {
+    baseUrl: (process.env.AZIS_CRM_BASE_URL || "").replace(/\/+$/, ""),
+    integrationSecret: process.env.AZIS_CRM_INTEGRATION_SECRET || "",
+    projectId: process.env.AZIS_CRM_PROJECT_ID || "",
+    timeoutMs: int(process.env.AZIS_CRM_TIMEOUT_MS, 10000),
+  },
+
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || "",
     baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, ""),
@@ -160,6 +167,7 @@ config.features = {
   adminToken: Boolean(config.admin.token),
   adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
   amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
+  azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
 };
 config.features.admin = config.features.adminToken || config.features.adminLogin;
 

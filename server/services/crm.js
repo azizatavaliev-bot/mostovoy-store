@@ -37,12 +37,39 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, ai, deepseek, amocrm, fetchImpl } = {}) {
+  constructor({ db, ai, deepseek, amocrm, azisCrm, fetchImpl } = {}) {
     this.db = db;
     this.deepseek = deepseek;
     this.ai = ai || deepseek;
     this.amocrm = amocrm;
+    this.azisCrm = azisCrm;
     this.fetchImpl = fetchImpl || globalThis.fetch;
+  }
+
+  _publishAzis(type, payload) {
+    if (!this.azisCrm?.enabled) return;
+    void this.azisCrm.publishEvent(type, payload).catch((error) =>
+      logger.error("azis_crm.publish_failed", { type, error: error.message })
+    );
+  }
+
+  _publishMessage(conversation, data) {
+    this._publishAzis("message", {
+      channel: conversation.source,
+      externalChatId: conversation.external_chat_id,
+      externalLeadId: conversation.external_lead_id,
+      externalContactId: conversation.external_contact_id,
+      customerName: conversation.customer_name,
+      customerUsername: conversation.customer_username,
+      customerPhone: conversation.customer_phone,
+      externalMessageId: data.externalMessageId,
+      direction: data.direction,
+      sender: data.sender,
+      text: data.text,
+      status: data.status || "stored",
+      createdAt: data.createdAt || new Date().toISOString(),
+      raw: data.raw,
+    });
   }
 
   listConversations() {
@@ -87,11 +114,18 @@ class CrmService {
     const secretPath = config.amocrm.webhookSecret
       ? `/${encodeURIComponent(config.amocrm.webhookSecret)}`
       : "";
+    const azisSecretPath = config.azisCrm.integrationSecret
+      ? `/${encodeURIComponent(config.azisCrm.integrationSecret)}`
+      : "";
     return {
       telegram: Boolean(config.telegram.botToken),
       amocrm: Boolean(this.amocrm?.enabled),
+      azisCrm: Boolean(this.azisCrm?.enabled),
       ai: Boolean(this.ai?.enabled),
       amocrmWebhook: `${base}/api/amocrm/webhook${secretPath}`,
+      primaryWebhook: config.azisCrm.baseUrl
+        ? `${config.azisCrm.baseUrl}/api/integrations/amo/webhook${azisSecretPath}`
+        : `${base}/api/amocrm/webhook${secretPath}`,
     };
   }
 
@@ -178,6 +212,21 @@ class CrmService {
       outputCost,
       inputCost + outputCost
     );
+    const conversation = conversationId == null
+      ? null
+      : this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
+    this._publishAzis("ai_usage", {
+      task,
+      model: String(model || this.getSettings().model),
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      costUsd: inputCost + outputCost,
+      channel: conversation?.source || "amocrm",
+      externalChatId: conversation?.external_chat_id || null,
+      externalLeadId: conversation?.external_lead_id || null,
+      externalContactId: conversation?.external_contact_id || null,
+    });
   }
 
   _usageRecorder(task, conversationId, fallbackModel) {
@@ -501,6 +550,7 @@ prompt_patch — не больше двух коротких предложен�
          customer_name, customer_username, customer_phone, unread_count, last_message_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
        ON CONFLICT(external_key) DO UPDATE SET
+         source = excluded.source,
          customer_name = COALESCE(excluded.customer_name, customer_name),
          customer_username = COALESCE(excluded.customer_username, customer_username),
          customer_phone = COALESCE(excluded.customer_phone, customer_phone),
@@ -511,7 +561,7 @@ prompt_patch — не больше двух коротких предложен�
          updated_at = datetime('now')`
     ).run(
       data.externalKey, data.source, data.chatId, data.leadId || null, data.contactId || null,
-      data.name || null, data.username || null, data.phone || null, data.createdAt
+      data.name || null, data.username || null, data.phone || null, data.createdAt || new Date().toISOString()
     );
     return this.db.prepare("SELECT * FROM crm_conversations WHERE external_key = ?").get(data.externalKey);
   }
@@ -593,6 +643,13 @@ prompt_patch — не больше двух коротких предложен�
       raw: message,
     });
     if (inserted) {
+      this._publishMessage(conversation, {
+        externalMessageId: String(message.message_id),
+        direction: "incoming",
+        sender: "customer",
+        text,
+        raw: message,
+      });
       this._logEvent(conversation.id, "info", "inbox", "message.received", "Получено сообщение из Telegram", {
         messageId: inserted,
       });
@@ -602,7 +659,11 @@ prompt_patch — не больше двух коротких предложен�
 
   async receiveAmo(incoming, raw) {
     if (!incoming.text || !incoming.chatId || incoming.direction !== "incoming") return { ignored: true };
-    const source = /whatsapp/i.test(incoming.source) ? "whatsapp" : "amocrm";
+    const source = /instagram/i.test(incoming.source)
+      ? "instagram"
+      : /whatsapp/i.test(incoming.source)
+        ? "whatsapp"
+        : "amocrm";
     const conversation = this._upsertConversation({
       externalKey: `amo:${incoming.chatId}`,
       source,
@@ -610,6 +671,8 @@ prompt_patch — не больше двух коротких предложен�
       leadId: incoming.leadId,
       contactId: incoming.contactId,
       name: incoming.customerName,
+      username: incoming.customerUsername,
+      phone: incoming.customerPhone,
       createdAt: incoming.createdAt,
     });
     const inserted = this._storeMessage(conversation.id, {
@@ -621,6 +684,14 @@ prompt_patch — не больше двух коротких предложен�
       createdAt: incoming.createdAt,
     });
     if (inserted) {
+      this._publishMessage(conversation, {
+        externalMessageId: incoming.messageId,
+        direction: "incoming",
+        sender: "customer",
+        text: incoming.text,
+        raw,
+        createdAt: incoming.createdAt,
+      });
       this._logEvent(conversation.id, "info", "inbox", "message.received", `Получено сообщение из ${source}`, {
         messageId: inserted,
       });
@@ -686,6 +757,32 @@ prompt_patch — не больше двух коротких предложен�
     return this._send(conversationId, value.slice(0, 4000), "manager");
   }
 
+  async sendExternal({ source, chatId, leadId, contactId, text }) {
+    const value = String(text || "").trim().slice(0, 4000);
+    if (!value) throw new Error("Сообщение пустое");
+    if (!chatId) throw new Error("chatId required");
+    const normalizedSource = /instagram/i.test(source)
+      ? "instagram"
+      : /whatsapp/i.test(source)
+        ? "whatsapp"
+        : "amocrm";
+    let conversation = this.db.prepare(
+      "SELECT * FROM crm_conversations WHERE external_chat_id = ? ORDER BY id DESC LIMIT 1"
+    ).get(String(chatId));
+    if (!conversation) {
+      conversation = this._upsertConversation({
+        externalKey: `amo:${chatId}`,
+        source: normalizedSource,
+        chatId: String(chatId),
+        leadId: leadId || null,
+        contactId: contactId || null,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    const detail = await this._send(Number(conversation.id), value, "manager");
+    return { messageId: detail.messageId, conversationId: Number(conversation.id) };
+  }
+
   async _send(conversationId, text, sender) {
     const c = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
     if (!c) throw new Error("Диалог не найден");
@@ -705,8 +802,16 @@ prompt_patch — не больше двух коротких предложен�
         text,
       });
     }
+    const externalMessageId = `${sender}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     this._storeMessage(c.id, {
-      externalMessageId: `${sender}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      externalMessageId,
+      direction: "outgoing",
+      sender,
+      text,
+      status: "sent",
+    });
+    this._publishMessage(c, {
+      externalMessageId,
       direction: "outgoing",
       sender,
       text,
@@ -716,7 +821,7 @@ prompt_patch — не больше двух коротких предложен�
       "UPDATE crm_conversations SET last_message_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
     ).run(c.id);
     this._logEvent(c.id, "info", "delivery", "message.sent", "Сообщение отправлено клиенту", { sender });
-    return this.getConversation(c.id);
+    return { ...this.getConversation(c.id), messageId: externalMessageId };
   }
 }
 

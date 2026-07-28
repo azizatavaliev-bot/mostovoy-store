@@ -53,7 +53,7 @@ function toPublic(row) {
   };
 }
 
-function createCatalogRouter({ db }) {
+function createCatalogRouter({ db, azisCrm }) {
   const router = express.Router();
   const contactUser = config.contact.telegram;
 
@@ -105,6 +105,17 @@ function createCatalogRouter({ db }) {
   router.post("/analytics/buy-click", (req, res) => {
     try {
       const result = recordBuyClick(db, req.body || {});
+      if (azisCrm?.enabled) {
+        void azisCrm.publishEvent("buy_click", {
+          eventKey: result.clickGroup,
+          clickGroup: result.clickGroup,
+          recorded: result.recorded,
+          source: req.body?.source,
+          items: req.body?.items,
+          pagePath: req.body?.pagePath,
+          visitorId: req.body?.visitorId,
+        }).catch(() => {});
+      }
       res.status(202).json({ ok: true, recorded: result.recorded });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });

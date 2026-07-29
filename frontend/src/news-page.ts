@@ -2,6 +2,7 @@ import "./styles.css";
 import "./page-loader";
 import { mountWhatsappFloat } from "./catalog";
 import "./render";
+import { optimizedImageUrl } from "./image-url";
 
 interface NewsPost {
   slug: string;
@@ -44,7 +45,7 @@ function postHtml(post: NewsPost): string {
   const date = formatDate(post.publishedAt);
   const size = post.body.length > 900 ? "large" : post.body.length > 360 ? "medium" : "compact";
   return `<article class="newspost newspost--${size}">
-    ${post.image ? `<img class="newspost__image" src="${esc(post.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}
+    ${post.image ? `<img class="newspost__image" src="${esc(optimizedImageUrl(post.image, 1200))}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : ""}
     <div class="newspost__content">
       <div class="newspost__date">${date ? `<time datetime="${esc(post.publishedAt)}">${esc(date)}</time>` : "Пост"}</div>
       <h2>${esc(post.title)}</h2>

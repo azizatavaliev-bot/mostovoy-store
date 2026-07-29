@@ -1,6 +1,7 @@
 // Страница товара: данные из живого каталога, выбор цвета/памяти,
 // рассрочка, трейд-ин, корзина и кнопка «Связаться» в Telegram.
 import "./styles.css";
+import { optimizedImageUrl } from "./image-url";
 import "./page-loader";
 import {
   CATALOG,
@@ -106,7 +107,7 @@ function renderProduct(p: Product, all: Product[]): void {
   <section class="product container">
     <div class="product__media reveal in">
       ${mediaHTML(p, "gallery")}
-      ${p.images?.length && p.images.length > 1 ? `<div class="thumbs">${p.images.slice(0, 5).map((u, i) => `<img src="${u}" alt="" data-i="${i}" class="${i === 0 ? "active" : ""}" onerror="this.remove()">`).join("")}</div>` : ""}
+      ${p.images?.length && p.images.length > 1 ? `<div class="thumbs">${p.images.slice(0, 5).map((u, i) => `<img src="${optimizedImageUrl(u, 240)}" alt="" loading="lazy" decoding="async" data-i="${i}" class="${i === 0 ? "active" : ""}" onerror="this.remove()">`).join("")}</div>` : ""}
     </div>
 
     <div class="product__info reveal in">

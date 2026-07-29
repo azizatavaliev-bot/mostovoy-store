@@ -389,7 +389,10 @@ function createAdminRouter({ db, crm }) {
       try {
         const image = sharp(buf, { animated, failOn: "error" });
         if (!animated) image.rotate();
-        await image.webp({ lossless: true, effort: 6 }).toFile(outputPath);
+        await image
+          .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+          .webp({ quality: 84, alphaQuality: 92, effort: 4, smartSubsample: true })
+          .toFile(outputPath);
       } catch (conversionError) {
         logger.warn("admin.upload_invalid", { error: conversionError.message });
         return res.status(422).json({ error: "Не удалось обработать изображение" });

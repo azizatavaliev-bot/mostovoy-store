@@ -5,6 +5,7 @@
 // Всё ходит в /api/admin/* — тот же API, что доступен из терминала
 // (npm run admin, по ADMIN_TOKEN) и curl'ом напрямую.
 import "./styles.css";
+import { optimizedImageUrl } from "./image-url";
 
 type Swatch = [string, string];
 type ProductStatus = "active" | "needs_research" | "hidden" | "sync_error";
@@ -232,6 +233,7 @@ const state = {
   botEvents: [] as BotEvent[],
   labHistory: [] as LabMessage[],
   analyticsDays: 30,
+  visibleProducts: 30,
   editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
   search: "",
@@ -721,7 +723,7 @@ function productRowHTML(p: AdminProduct): string {
     : `<b>${fmtDisplayMoney(p.price, p.currency)}</b>`;
 
   return `<article class="admin__prow" data-slug="${p.slug}">
-    <div class="admin__prow-media">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" onerror="this.remove()">` : `<span class="admin__ph">${esc((p.name || "?")[0])}</span>`}</div>
+    <div class="admin__prow-media">${p.image ? `<img src="${esc(optimizedImageUrl(p.image, 96))}" alt="" loading="lazy" decoding="async" fetchpriority="low" onerror="this.remove()">` : `<span class="admin__ph">${esc((p.name || "?")[0])}</span>`}</div>
     <div class="admin__prow-main">
       <div class="admin__prow-top">
         <b class="admin__prow-name">${esc(p.name)}</b>
@@ -770,10 +772,19 @@ function renderProductsList(): void {
   let filtered = state.products.filter((p) => showHidden || p.status !== "hidden");
   if (q) filtered = filtered.filter((p) => `${p.name} ${p.brand || ""} ${p.category || ""}`.toLowerCase().includes(q));
   filtered = sortProducts(filtered);
+  const visible = filtered.slice(0, state.visibleProducts);
+  const remaining = filtered.length - visible.length;
 
   list.innerHTML = filtered.length
-    ? filtered.map(productRowHTML).join("")
+    ? `${visible.map(productRowHTML).join("")}${remaining > 0
+      ? `<button type="button" class="btn btn--ghost admin__loadMore" id="productsLoadMore">Показать ещё (${remaining})</button>`
+      : ""}`
     : `<p class="admin__empty">Ничего не найдено</p>`;
+
+  document.getElementById("productsLoadMore")?.addEventListener("click", () => {
+    state.visibleProducts += 30;
+    renderProductsList();
+  });
 
   list.querySelectorAll<HTMLElement>("[data-edit]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -860,17 +871,22 @@ function wireProductsView(): void {
 
   document.getElementById("productSearch")!.addEventListener("input", (e) => {
     state.search = (e.target as HTMLInputElement).value;
+    state.visibleProducts = 30;
     renderProductsList();
   });
   document.getElementById("productSort")!.addEventListener("change", (e) => {
     state.sortBy = (e.target as HTMLSelectElement).value as ProductSort;
+    state.visibleProducts = 30;
     renderProductsList();
   });
   document.getElementById("productDisplayCurrency")!.addEventListener("change", (e) => {
     setAdminDisplayCurrency((e.target as HTMLSelectElement).value as CurrencyCode);
     renderProductsList();
   });
-  document.getElementById("showHidden")!.addEventListener("change", renderProductsList);
+  document.getElementById("showHidden")!.addEventListener("change", () => {
+    state.visibleProducts = 30;
+    renderProductsList();
+  });
 
   loadProducts();
 }

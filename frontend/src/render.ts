@@ -91,11 +91,12 @@ function placeholderSVG(p: Product): string {
 // Если картинка не загрузилась — она удаляется и остаётся подложка.
 export function mediaHTML(p: Product, cls: string): string {
   const fromFeed = PHOTOS[p.id];
-  const src = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.jpg` : "");
+  const originalSrc = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.jpg` : "");
+  const src = optimizedImageUrl(originalSrc, cls === "gallery" ? 1200 : 640);
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);
   const img = src
-    ? `<img src="${src}" alt="${p.name}" loading="lazy"
+    ? `<img src="${src}" alt="${p.name}" loading="lazy" decoding="async"
         onload="this.previousElementSibling.style.opacity='0'"
         onerror="this.remove()">`
     : "";
@@ -215,3 +216,4 @@ document.addEventListener("DOMContentLoaded", () => {
   onScroll();
   window.addEventListener("scroll", onScroll, { passive: true });
 });
+import { optimizedImageUrl } from "./image-url";

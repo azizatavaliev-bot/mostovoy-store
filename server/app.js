@@ -14,6 +14,7 @@ const { SyncQueue } = require("./queue");
 const { createTelegramRouter } = require("./routes/telegram");
 const { createCatalogRouter } = require("./routes/catalog");
 const { createAdminRouter } = require("./routes/admin");
+const { createImageRouter } = require("./routes/images");
 const { createAmoCrmRouter } = require("./routes/amocrm");
 const { AmoCrmClient } = require("./services/amocrm");
 const { CrmService } = require("./services/crm");
@@ -51,6 +52,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm } =
   app.use("/api/amocrm", createAmoCrmRouter({ crm: crmService }));
   app.use("/api/integrations/azis", createAzisCrmRouter({ crm: crmService }));
   app.use("/api/admin", createAdminRouter({ db, crm: crmService }));
+  app.use("/api/images", createImageRouter({ db }));
   app.use("/api", createCatalogRouter({ db, azisCrm: azisCrmClient }));
 
   // Фото, загруженные через админку. Живут вне репозитория (см. .gitignore).

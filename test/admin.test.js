@@ -454,6 +454,15 @@ test("загруженное фото можно сразу использова
   assert.equal(res.status, 201);
   const { product } = await res.json();
   assert.equal(product.image, uploaded.url);
+
+  const optimized = await fetch(
+    `${app.base}/api/images/webp?src=${encodeURIComponent(uploaded.url)}&w=96`
+  );
+  assert.equal(optimized.status, 200);
+  assert.equal(optimized.headers.get("content-type"), "image/webp");
+  const metadata = await sharp(Buffer.from(await optimized.arrayBuffer())).metadata();
+  assert.equal(metadata.format, "webp");
+  assert.equal(metadata.width, 96);
 });
 
 // --- Группы, доступные цвета, акции ---------------------------------------

@@ -125,7 +125,7 @@ function syncFavorites(): void {
 function favoriteMedia(product: Product): string {
   const src = product.image || product.img || "";
   return src
-    ? `<img src="${src}" alt="" onerror="this.remove()" />`
+    ? `<img src="${optimizedImageUrl(src, 160)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`
     : `<span aria-hidden="true">${String(product.name || "?").trim().charAt(0).toUpperCase()}</span>`;
 }
 
@@ -254,7 +254,7 @@ function compactSearchMedia(product: Product): string {
   const fallback = String(product.name || "?").trim().charAt(0).toUpperCase();
   return `<span class="home-search__media">
     <span aria-hidden="true">${fallback}</span>
-    ${src ? `<img src="${src}" alt="" onerror="this.remove()" />` : ""}
+    ${src ? `<img src="${optimizedImageUrl(src, 96)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />` : ""}
   </span>`;
 }
 
@@ -1066,3 +1066,4 @@ mountHeroRotation();
     calcCredit();
   });
 })();
+import { optimizedImageUrl } from "./image-url";

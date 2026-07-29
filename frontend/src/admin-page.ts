@@ -7,32 +7,7 @@
 import "./styles.css";
 import { optimizedImageUrl } from "./image-url";
 
-type Swatch = [string, string];
-type ProductStatus = "active" | "needs_research" | "hidden" | "sync_error";
 type CurrencyCode = "USD" | "KGS" | "RUB";
-
-interface AdminProduct {
-  slug: string;
-  name: string;
-  brand?: string;
-  category?: string;
-  group?: string;
-  price: number;
-  currency: string;
-  color?: string;
-  variant?: string;
-  storageOptions?: string[];
-  description?: string;
-  image?: string;
-  images?: string[];
-  available: boolean;
-  status: ProductStatus;
-  updatedAt: string;
-  swatches?: Swatch[];
-  discountPercent?: number | null;
-  discountLabel?: string | null;
-  salePrice?: number | null;
-}
 
 interface Post {
   slug: string;
@@ -187,26 +162,7 @@ interface LabMessage {
   model?: string;
 }
 
-interface ProductForm {
-  name: string;
-  brand: string;
-  category: string;
-  productGroup: string;
-  price: number | string;
-  currency: string;
-  color: string;
-  variant: string;
-  storage: string;
-  description: string;
-  image: string;
-  images: string;
-  available: boolean;
-  discountPercent: number | string;
-  discountLabel: string;
-}
-
-type AdminView = "products" | "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
-type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
+type AdminView = "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
 
 const root = document.getElementById("admin") as HTMLElement;
 const btnLogout = document.getElementById("btnLogout") as HTMLButtonElement;
@@ -216,10 +172,7 @@ const btnToTop = document.getElementById("btnToTop") as HTMLButtonElement;
 const state = {
   authenticated: false,
   loginEnabled: true,
-  view: "products" as AdminView,
-  products: [] as AdminProduct[],
-  groups: ["Гаджеты", "Игры", "Аксессуары", "Другое"],
-  categorySuggestions: [] as string[],
+  view: "crm" as AdminView,
   posts: [] as Post[],
   history: [] as PriceChange[],
   crmConversations: [] as CrmConversation[],
@@ -233,11 +186,7 @@ const state = {
   botEvents: [] as BotEvent[],
   labHistory: [] as LabMessage[],
   analyticsDays: 30,
-  visibleProducts: 30,
-  editingProductSlug: null as string | null,
   editingPostSlug: null as string | null,
-  search: "",
-  sortBy: "updated_desc" as ProductSort,
   displayCurrency: (["USD", "KGS", "RUB"].includes(localStorage.getItem("mostovoy_currency") || "")
     ? localStorage.getItem("mostovoy_currency")
     : "USD") as CurrencyCode,
@@ -498,399 +447,6 @@ function wireImageField(formEl: HTMLFormElement, name: string): void {
   });
 }
 
-// --- Виджет доступных цветов ------------------------------------------------
-
-function swatchRowHTML(name = "", hex = "#cccccc"): string {
-  return `<div class="admin__swrow">
-    <input type="text" class="sw-name" placeholder="Название (Чёрный)" value="${esc(name)}" />
-    <input type="color" class="sw-hex" value="${/^#[0-9a-f]{6}$/i.test(hex) ? hex : "#cccccc"}" />
-    <button type="button" class="admin__link admin__link--danger sw-remove">Удалить</button>
-  </div>`;
-}
-
-function wireSwatches(formEl: HTMLFormElement, initial: Swatch[] | undefined): void {
-  const wrap = formEl.querySelector(".admin__swatches")!;
-  const add = formEl.querySelector(".admin__sw-add")!;
-  const addRow = (name?: string, hex?: string) => wrap.insertAdjacentHTML("beforeend", swatchRowHTML(name, hex));
-  (initial?.length ? initial : []).forEach(([n, h]) => addRow(n, h));
-
-  wrap.addEventListener("click", (e) => {
-    (e.target as HTMLElement).closest(".sw-remove")?.closest(".admin__swrow")?.remove();
-  });
-  add.addEventListener("click", () => addRow());
-}
-
-function readSwatches(formEl: HTMLFormElement): Swatch[] {
-  return [...formEl.querySelectorAll<HTMLElement>(".admin__swrow")]
-    .map((row): Swatch => [
-      row.querySelector<HTMLInputElement>(".sw-name")!.value.trim(),
-      row.querySelector<HTMLInputElement>(".sw-hex")!.value,
-    ])
-    .filter(([name]) => name);
-}
-
-// --- Вкладка «Товары» -------------------------------------------------------
-
-function emptyProductForm(): ProductForm {
-  return { name: "", brand: "", category: "", productGroup: "", price: "", currency: "USD", color: "", variant: "", storage: "", description: "", image: "", images: "", available: true, discountPercent: "", discountLabel: "" };
-}
-
-function productToForm(p: AdminProduct): ProductForm {
-  return {
-    name: p.name || "", brand: p.brand || "", category: p.category || "", productGroup: p.group || "",
-    price: p.price ?? "", currency: p.currency || "USD", color: p.color || "", variant: p.variant || "",
-    storage: (p.storageOptions || []).join(", "), description: p.description || "",
-    image: p.image || "", images: (p.images || []).join("\n"), available: p.available !== false,
-    discountPercent: p.discountPercent ?? "", discountLabel: p.discountLabel || "",
-  };
-}
-
-function productFormHTML(f: ProductForm): string {
-  return `
-    <div class="calc__row2">
-      <label>Название *
-        <input name="name" required value="${esc(f.name)}" placeholder="iPhone 16 Pro Max" />
-      </label>
-      <label>Бренд
-        <input name="brand" value="${esc(f.brand)}" placeholder="Apple" />
-      </label>
-    </div>
-    <div class="calc__row2">
-      <label>Категория
-        <input name="category" value="${esc(f.category)}" placeholder="Смартфоны" list="categorySuggestions" />
-      </label>
-      <label>Группа
-        <select name="productGroup">
-          <option value="">— подобрать автоматически —</option>
-          ${state.groups.map((g) => `<option value="${g}" ${f.productGroup === g ? "selected" : ""}>${g}</option>`).join("")}
-        </select>
-      </label>
-    </div>
-    <div class="calc__row2">
-      <label>Цена *
-        <input name="price" type="number" min="0" step="0.01" required value="${f.price}" />
-      </label>
-      <label>Валюта
-        <select name="currency">
-          ${["USD", "KGS", "RUB"].map((c) => `<option value="${c}" ${f.currency === c ? "selected" : ""}>${c}</option>`).join("")}
-        </select>
-      </label>
-    </div>
-
-    <label>Варианты памяти (через запятую — цена растёт с объёмом автоматически)
-      <input name="storage" value="${esc(f.storage)}" placeholder="128 GB, 256 GB, 512 GB" />
-    </label>
-    <div class="calc__row2">
-      <label>Цвет (если один)
-        <input name="color" value="${esc(f.color)}" placeholder="Чёрный" />
-      </label>
-      <label>Вариант (если не про память — напр. «Body+Face»)
-        <input name="variant" value="${esc(f.variant)}" />
-      </label>
-    </div>
-
-    <div class="admin__block">
-      <p class="opt__title">Доступные цвета (необязательно)</p>
-      <div class="admin__swatches"></div>
-      <button type="button" class="admin__link admin__sw-add">+ добавить цвет</button>
-    </div>
-
-    <label>Описание
-      <textarea name="description" rows="3" placeholder="Короткое описание товара">${esc(f.description)}</textarea>
-    </label>
-
-    ${imageFieldHTML("image", f.image, "Главное фото")}
-    <label>Доп. фото — URL по одному на строку
-      <textarea name="images" rows="2">${esc(f.images)}</textarea>
-    </label>
-
-    <div class="admin__block admin__discount">
-      <p class="opt__title">Акция</p>
-      <div class="calc__row2">
-        <label>Процент скидки (1–99, пусто — без акции)
-          <input name="discountPercent" type="number" min="1" max="99" value="${f.discountPercent}" />
-        </label>
-        <label>Подпись акции
-          <input name="discountLabel" value="${esc(f.discountLabel)}" placeholder="Летняя распродажа" />
-        </label>
-      </div>
-      <p class="admin__discountPreview" id="discountPreview"></p>
-    </div>
-
-    <label class="admin__checkbox">
-      <input type="checkbox" name="available" ${f.available ? "checked" : ""} /> В наличии
-    </label>`;
-}
-
-function wireDiscountPreview(formEl: HTMLFormElement): void {
-  const priceInput = formEl.elements.namedItem("price") as HTMLInputElement;
-  const pctInput = formEl.elements.namedItem("discountPercent") as HTMLInputElement;
-  const currency = formEl.elements.namedItem("currency") as HTMLSelectElement;
-  const out = formEl.querySelector("#discountPreview") as HTMLElement;
-
-  const update = () => {
-    const price = Number(priceInput.value);
-    const pct = Number(pctInput.value);
-    if (!price || !pct || pct <= 0 || pct >= 100) {
-      out.textContent = "";
-      return;
-    }
-    const sale = Math.round(price * (1 - pct / 100) * 100) / 100;
-    out.innerHTML = `Цена по акции: <b>${fmtMoney(sale, currency.value)}</b> <s>${fmtMoney(price, currency.value)}</s>`;
-  };
-  [priceInput, pctInput, currency].forEach((el) => el.addEventListener("input", update));
-  update();
-}
-
-function readProductForm(formEl: HTMLFormElement) {
-  const fd = new FormData(formEl);
-  const str = (k: string) => (fd.get(k) as string) || "";
-  return {
-    name: str("name").trim(),
-    brand: str("brand").trim() || undefined,
-    category: str("category").trim() || undefined,
-    productGroup: str("productGroup") || undefined,
-    color: str("color").trim() || undefined,
-    variant: str("variant").trim() || undefined,
-    price: fd.get("price"),
-    currency: fd.get("currency"),
-    storageOptions: str("storage").trim() || "",
-    description: str("description").trim() || undefined,
-    image: str("image").trim() || undefined,
-    images: str("images").trim() || "",
-    swatches: readSwatches(formEl),
-    discountPercent: str("discountPercent").trim() ?? "",
-    discountLabel: str("discountLabel").trim() || undefined,
-    available: (formEl.elements.namedItem("available") as HTMLInputElement).checked,
-  };
-}
-
-function renderProductsView(): string {
-  const editing = state.editingProductSlug ? state.products.find((p) => p.slug === state.editingProductSlug) : null;
-  const f = editing ? productToForm(editing) : emptyProductForm();
-
-  return `
-    <div class="admin__head">
-      <div>
-        <p class="eyebrow">Товары</p>
-        <h1 class="section__title">${editing ? "Редактировать товар" : "Добавить товар"}</h1>
-      </div>
-      ${editing ? `<button type="button" class="btn btn--ghost" id="btnCancelEdit">Отменить редактирование</button>` : ""}
-    </div>
-
-    <datalist id="categorySuggestions">${state.categorySuggestions.map((c) => `<option value="${esc(c)}">`).join("")}</datalist>
-
-    <form id="productForm" class="calc admin__form">
-      ${productFormHTML(f)}
-      <div class="admin__formActions">
-        <button type="submit" class="btn">${editing ? "Сохранить" : "Добавить товар"}</button>
-      </div>
-      <p class="admin__formMsg" id="formMsg"></p>
-    </form>
-
-    <div class="admin__listHead">
-      <h2 class="section__title">Каталог (${state.products.length})</h2>
-      <div class="admin__listControls">
-        <input type="search" id="productSearch" placeholder="Поиск по названию, бренду…" value="${esc(state.search)}" />
-        <select id="productSort">
-          <option value="updated_desc" ${state.sortBy === "updated_desc" ? "selected" : ""}>Сначала недавно изменённые</option>
-          <option value="group" ${state.sortBy === "group" ? "selected" : ""}>По группе</option>
-          <option value="brand" ${state.sortBy === "brand" ? "selected" : ""}>По бренду</option>
-          <option value="price_asc" ${state.sortBy === "price_asc" ? "selected" : ""}>Цена: по возрастанию</option>
-          <option value="price_desc" ${state.sortBy === "price_desc" ? "selected" : ""}>Цена: по убыванию</option>
-          <option value="status" ${state.sortBy === "status" ? "selected" : ""}>По статусу</option>
-        </select>
-        ${currencySwitchHTML("productDisplayCurrency")}
-        <label class="admin__checkbox">
-          <input type="checkbox" id="showHidden" /> показывать скрытые
-        </label>
-      </div>
-    </div>
-    <div class="admin__products" id="productsList"></div>`;
-}
-
-const STATUS_LABEL: Record<string, string> = { active: "активен", needs_research: "нужно уточнить", hidden: "скрыт", sync_error: "ошибка" };
-
-function productRowHTML(p: AdminProduct): string {
-  const configLine = [
-    p.storageOptions?.length ? p.storageOptions.join(" / ") : null,
-    p.swatches?.length ? `цвета: ${p.swatches.map((s) => s[0]).join(", ")}` : null,
-    p.variant,
-  ].filter(Boolean).join(" · ");
-
-  const priceHTML = p.salePrice
-    ? `<b class="admin__price--sale">${fmtDisplayMoney(p.salePrice, p.currency)}</b> <s>${fmtDisplayMoney(p.price, p.currency)}</s> <span class="admin__discountTag">−${p.discountPercent}%</span>`
-    : `<b>${fmtDisplayMoney(p.price, p.currency)}</b>`;
-
-  return `<article class="admin__prow" data-slug="${p.slug}">
-    <div class="admin__prow-media">${p.image ? `<img src="${esc(optimizedImageUrl(p.image, 96))}" alt="" loading="lazy" decoding="async" fetchpriority="low" onerror="this.remove()">` : `<span class="admin__ph">${esc((p.name || "?")[0])}</span>`}</div>
-    <div class="admin__prow-main">
-      <div class="admin__prow-top">
-        <b class="admin__prow-name">${esc(p.name)}</b>
-        <span class="admin__prow-tag">${esc(p.brand || "")}${p.brand && p.group ? " · " : ""}${esc(p.group || "")}</span>
-      </div>
-      ${configLine ? `<p class="admin__prow-config">${esc(configLine)}</p>` : ""}
-    </div>
-    <div class="admin__prow-price">${priceHTML}</div>
-    <div class="admin__prow-status"><span class="admin__status admin__status--${p.status}">${STATUS_LABEL[p.status] || p.status}</span></div>
-    <div class="admin__prow-updated">${fmtRelative(p.updatedAt)}</div>
-    <div class="admin__prow-actions">
-      <button type="button" class="admin__link" data-edit="${p.slug}">Править</button>
-      ${p.status === "hidden"
-        ? `<button type="button" class="admin__link" data-restore="${p.slug}">Вернуть</button>`
-        : `<button type="button" class="admin__link admin__link--danger" data-hide="${p.slug}">Скрыть</button>`}
-      <button type="button" class="admin__link admin__link--delete" data-delete="${p.slug}" data-name="${esc(p.name)}">Удалить</button>
-    </div>
-  </article>`;
-}
-
-const GROUP_ORDER = ["Гаджеты", "Игры", "Аксессуары", "Другое"];
-function sortProducts(list: AdminProduct[]): AdminProduct[] {
-  const arr = [...list];
-  switch (state.sortBy) {
-    case "group":
-      return arr.sort((a, b) => GROUP_ORDER.indexOf(a.group as string) - GROUP_ORDER.indexOf(b.group as string) || a.name.localeCompare(b.name, "ru"));
-    case "brand":
-      return arr.sort((a, b) => (a.brand || "").localeCompare(b.brand || "", "ru") || a.name.localeCompare(b.name, "ru"));
-    case "price_asc":
-      return arr.sort((a, b) => convertDisplayPrice(a.salePrice ?? a.price, a.currency) - convertDisplayPrice(b.salePrice ?? b.price, b.currency));
-    case "price_desc":
-      return arr.sort((a, b) => convertDisplayPrice(b.salePrice ?? b.price, b.currency) - convertDisplayPrice(a.salePrice ?? a.price, a.currency));
-    case "status":
-      return arr.sort((a, b) => a.status.localeCompare(b.status));
-    default:
-      return arr.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }
-}
-
-function renderProductsList(): void {
-  const list = document.getElementById("productsList");
-  if (!list) return;
-  const showHidden = (document.getElementById("showHidden") as HTMLInputElement | null)?.checked;
-  const q = state.search.trim().toLowerCase();
-
-  let filtered = state.products.filter((p) => showHidden || p.status !== "hidden");
-  if (q) filtered = filtered.filter((p) => `${p.name} ${p.brand || ""} ${p.category || ""}`.toLowerCase().includes(q));
-  filtered = sortProducts(filtered);
-  const visible = filtered.slice(0, state.visibleProducts);
-  const remaining = filtered.length - visible.length;
-
-  list.innerHTML = filtered.length
-    ? `${visible.map(productRowHTML).join("")}${remaining > 0
-      ? `<button type="button" class="btn btn--ghost admin__loadMore" id="productsLoadMore">Показать ещё (${remaining})</button>`
-      : ""}`
-    : `<p class="admin__empty">Ничего не найдено</p>`;
-
-  document.getElementById("productsLoadMore")?.addEventListener("click", () => {
-    state.visibleProducts += 30;
-    renderProductsList();
-  });
-
-  list.querySelectorAll<HTMLElement>("[data-edit]").forEach((b) =>
-    b.addEventListener("click", () => {
-      state.editingProductSlug = b.dataset.edit as string;
-      renderView();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    })
-  );
-  list.querySelectorAll<HTMLElement>("[data-hide]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      if (!confirm("Скрыть товар с витрины?")) return;
-      await api("DELETE", `/products/${encodeURIComponent(b.dataset.hide as string)}`);
-      await loadProducts();
-    })
-  );
-  list.querySelectorAll<HTMLElement>("[data-restore]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      await api("POST", `/products/${encodeURIComponent(b.dataset.restore as string)}/restore`);
-      await loadProducts();
-    })
-  );
-  list.querySelectorAll<HTMLElement>("[data-delete]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      const name = b.dataset.name || "этот товар";
-      if (!confirm(`Удалить «${name}» навсегда? Это действие нельзя отменить.`)) return;
-      await api("DELETE", `/products/${encodeURIComponent(b.dataset.delete as string)}/permanent`);
-      if (state.editingProductSlug === b.dataset.delete) state.editingProductSlug = null;
-      toast("Товар удалён");
-      await loadProducts();
-    })
-  );
-}
-
-async function loadProducts(): Promise<void> {
-  try {
-    const { products, groups, categorySuggestions } = await api<{ products: AdminProduct[]; groups?: string[]; categorySuggestions?: string[] }>("GET", "/products");
-    state.products = products;
-    if (groups?.length) state.groups = groups;
-    if (categorySuggestions?.length) {
-      state.categorySuggestions = categorySuggestions;
-      const dl = document.getElementById("categorySuggestions");
-      if (dl) dl.innerHTML = categorySuggestions.map((c) => `<option value="${esc(c)}">`).join("");
-    }
-    renderProductsList();
-  } catch (err) {
-    const list = document.getElementById("productsList");
-    if (list) list.innerHTML = `<p class="admin__error">${esc((err as Error).message)}</p>`;
-  }
-}
-
-function wireProductsView(): void {
-  const formEl = document.getElementById("productForm") as HTMLFormElement;
-  const editing = state.editingProductSlug ? state.products.find((p) => p.slug === state.editingProductSlug) : null;
-
-  wireImageField(formEl, "image");
-  wireSwatches(formEl, editing?.swatches);
-  wireDiscountPreview(formEl);
-
-  formEl.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const msg = document.getElementById("formMsg") as HTMLElement;
-    msg.textContent = "Сохраняю…";
-    msg.className = "admin__formMsg";
-    try {
-      const body = readProductForm(formEl);
-      const result = state.editingProductSlug
-        ? await api<{ warnings?: string[] }>("PUT", `/products/${encodeURIComponent(state.editingProductSlug)}`, body)
-        : await api<{ warnings?: string[] }>("POST", "/products", body);
-      msg.textContent = result.warnings?.length ? `Сохранено. ${result.warnings.join(" ")}` : "Сохранено.";
-      msg.className = "admin__formMsg admin__formMsg--ok";
-      state.editingProductSlug = null;
-      await loadProducts();
-      setTimeout(() => renderView(), 900);
-    } catch (err) {
-      msg.textContent = (err as Error).message;
-      msg.className = "admin__formMsg admin__formMsg--error";
-    }
-  });
-
-  document.getElementById("btnCancelEdit")?.addEventListener("click", () => {
-    state.editingProductSlug = null;
-    renderView();
-  });
-
-  document.getElementById("productSearch")!.addEventListener("input", (e) => {
-    state.search = (e.target as HTMLInputElement).value;
-    state.visibleProducts = 30;
-    renderProductsList();
-  });
-  document.getElementById("productSort")!.addEventListener("change", (e) => {
-    state.sortBy = (e.target as HTMLSelectElement).value as ProductSort;
-    state.visibleProducts = 30;
-    renderProductsList();
-  });
-  document.getElementById("productDisplayCurrency")!.addEventListener("change", (e) => {
-    setAdminDisplayCurrency((e.target as HTMLSelectElement).value as CurrencyCode);
-    renderProductsList();
-  });
-  document.getElementById("showHidden")!.addEventListener("change", () => {
-    state.visibleProducts = 30;
-    renderProductsList();
-  });
-
-  loadProducts();
-}
-
 // --- Вкладка «Посты» ---------------------------------------------------
 
 function postFormHTML(f: Partial<Post>): string {
@@ -1046,7 +602,7 @@ function renderHistoryTable(): void {
         .map(
           (c) => `<tr>
             <td class="admin__muted">${fmtRelative(c.changedAt)}</td>
-            <td>${c.productSlug ? `<a href="#" data-goto="${c.productSlug}">${esc(c.productName)}</a>` : esc(c.productName)}</td>
+            <td>${esc(c.productName)}</td>
             <td>${c.oldPrice == null ? "<span class=\"admin__muted\">новый товар</span>" : fmtDisplayMoney(c.oldPrice, c.currency)}</td>
             <td><b>${fmtDisplayMoney(c.newPrice, c.currency)}</b></td>
             <td><span class="admin__status admin__status--${c.source === "telegram" ? "active" : "needs_research"}">${c.source === "telegram" ? "Telegram" : "Админка"}</span></td>
@@ -1054,16 +610,6 @@ function renderHistoryTable(): void {
         )
         .join("") || `<tr><td colspan="5" class="admin__empty">Изменений пока нет</td></tr>`}
     </tbody>`;
-
-  table.querySelectorAll<HTMLElement>("[data-goto]").forEach((a) =>
-    a.addEventListener("click", (e) => {
-      e.preventDefault();
-      state.view = "products";
-      state.editingProductSlug = a.dataset.goto as string;
-      renderView();
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    })
-  );
 }
 
 async function loadHistory(): Promise<void> {
@@ -1755,7 +1301,6 @@ const TABS: { id: AdminView; label: string }[] = [
   { id: "crm", label: "CRM" },
   { id: "approvals", label: "Ответы бота" },
   { id: "analytics", label: "Аналитика" },
-  { id: "products", label: "Товары" },
   { id: "news", label: "Посты" },
   { id: "history", label: "Обновления" },
   { id: "developer", label: "Разработчикам" },
@@ -1797,9 +1342,7 @@ function renderView(): void {
         ? renderAnalyticsView()
       : state.view === "news"
         ? renderNewsView()
-        : state.view === "history"
-          ? renderHistoryView()
-          : renderProductsView();
+        : renderHistoryView();
   const currentTabs = root.querySelector<HTMLElement>(".admin__tabs");
   const currentView = root.querySelector<HTMLElement>(".admin__view");
   if (currentTabs && currentView) {
@@ -1816,7 +1359,6 @@ function renderView(): void {
     b.dataset.wired = "true";
     b.addEventListener("click", () => {
       state.view = b.dataset.tab as AdminView;
-      state.editingProductSlug = null;
       state.editingPostSlug = null;
       renderView();
     });
@@ -1829,7 +1371,6 @@ function renderView(): void {
   else if (state.view === "analytics") wireAnalyticsView();
   else if (state.view === "news") wireNewsView();
   else if (state.view === "history") wireHistoryView();
-  else wireProductsView();
 }
 
 btnLogout.addEventListener("click", async () => {

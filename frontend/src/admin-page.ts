@@ -943,7 +943,7 @@ function renderPostsTable(): void {
       ${state.posts
         .map(
           (p) => `<tr data-slug="${p.slug}">
-            <td class="admin__thumb">${p.image ? `<img src="${esc(p.image)}" alt="" loading="lazy" onerror="this.remove()">` : ""}</td>
+            <td class="admin__thumb">${p.image ? `<img src="${esc(optimizedImageUrl(p.image, 96))}" alt="" loading="lazy" decoding="async" fetchpriority="low" onerror="this.remove()">` : ""}</td>
             <td><b>${esc(p.title)}</b></td>
             <td><span class="admin__status admin__status--${p.status === "published" ? "active" : "hidden"}">${p.status === "published" ? "опубликовано" : "черновик"}</span></td>
             <td class="admin__muted">${fmtRelative(p.publishedAt)}</td>

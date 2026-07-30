@@ -41,8 +41,8 @@ async function main() {
   const result = await call("setWebhook", {
     url,
     secret_token: config.telegram.webhookSecret,
-    // Нужны только посты канала — лишние апдейты не запрашиваем.
-    allowed_updates: ["channel_post", "edited_channel_post"],
+    // Личные сообщения идут консультанту, посты канала обновляют каталог.
+    allowed_updates: ["message", "channel_post", "edited_channel_post"],
     max_connections: 10,
   });
   console.log(JSON.stringify(result, null, 2));

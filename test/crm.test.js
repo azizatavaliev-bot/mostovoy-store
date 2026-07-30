@@ -1,9 +1,20 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createConnection } = require("../server/db");
-const { CrmService } = require("../server/services/crm");
+const { CrmService, telegramHtml } = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
 const config = require("../server/config");
+
+test("Markdown-оформление ответа преобразуется в безопасный Telegram HTML", () => {
+  assert.equal(
+    telegramHtml("1. **iPhone 17 Pro Max** — <флагман>\n*В наличии*\n`128 < 256`"),
+    "1. <b>iPhone 17 Pro Max</b> — &lt;флагман&gt;\n<i>В наличии</i>\n<code>128 &lt; 256</code>",
+  );
+  assert.equal(
+    telegramHtml("__Подчёркнуто__ и ~~зачёркнуто~~"),
+    "<u>Подчёркнуто</u> и <s>зачёркнуто</s>",
+  );
+});
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {
   const db = createConnection(":memory:");

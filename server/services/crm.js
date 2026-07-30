@@ -3,6 +3,38 @@ const logger = require("../logger");
 const { getBuyClickAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
 
+function escapeTelegramHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function telegramHtml(markdown) {
+  const protectedBlocks = [];
+  const protect = (html) => {
+    const token = `\uE000${protectedBlocks.length}\uE001`;
+    protectedBlocks.push(html);
+    return token;
+  };
+
+  let text = String(markdown || "");
+  text = text.replace(/```(?:[a-z0-9_-]+)?\s*\n?([\s\S]*?)```/gi, (_, code) =>
+    protect(`<pre>${escapeTelegramHtml(code.trim())}</pre>`)
+  );
+  text = text.replace(/`([^`\n]+)`/g, (_, code) =>
+    protect(`<code>${escapeTelegramHtml(code)}</code>`)
+  );
+  text = escapeTelegramHtml(text)
+    .replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>")
+    .replace(/__([^_\n]+)__/g, "<u>$1</u>")
+    .replace(/~~([^~\n]+)~~/g, "<s>$1</s>")
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/gm, "$1<i>$2</i>")
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/gm, "$1<i>$2</i>");
+
+  return text.replace(/\uE000(\d+)\uE001/g, (_, index) => protectedBlocks[Number(index)] || "");
+}
+
 const DEFAULT_PROMPT = `Ты продавец-консультант магазина техники МОСТОВОЙ в Бишкеке.
 Отвечай кратко, дружелюбно и на языке клиента. Используй только цены и наличие из каталога ниже.
 Не придумывай характеристики, скидки и сроки доставки. Если данных нет — честно скажи, что менеджер уточнит.
@@ -791,7 +823,11 @@ prompt_patch — не больше двух коротких предложен�
       const res = await this.fetchImpl(`${config.telegram.apiBase}/bot${config.telegram.botToken}/sendMessage`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ chat_id: c.external_chat_id, text }),
+        body: JSON.stringify({
+          chat_id: c.external_chat_id,
+          text: telegramHtml(text),
+          parse_mode: "HTML",
+        }),
       });
       if (!res.ok) throw new Error(`Telegram: HTTP ${res.status}`);
     } else {
@@ -832,5 +868,6 @@ module.exports = {
   DEFAULT_CHARACTER_PROMPT,
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,
+  telegramHtml,
   toConversation,
 };

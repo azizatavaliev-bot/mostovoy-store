@@ -1,5 +1,5 @@
 // Рендер телефона: реалистичный SVG «вид сзади» по данным модели.
-// Если есть фото images/{id}.jpg — оно перекрывает SVG.
+// Если есть фото images/{id}.webp — оно перекрывает SVG.
 import { PHOTOS } from "./photos";
 import type { Installment, Product } from "./types";
 
@@ -91,7 +91,7 @@ function placeholderSVG(p: Product): string {
 // Если картинка не загрузилась — она удаляется и остаётся подложка.
 export function mediaHTML(p: Product, cls: string): string {
   const fromFeed = PHOTOS[p.id];
-  const originalSrc = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.jpg` : "");
+  const originalSrc = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.webp` : "");
   const src = optimizedImageUrl(originalSrc, cls === "gallery" ? 1200 : 640);
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);

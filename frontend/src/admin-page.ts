@@ -465,7 +465,7 @@ function imageFieldHTML(name: string, value: string | undefined, label: string):
           <input type="file" accept="image/*" hidden data-upload-for="${name}" />
         </label>
       </div>
-      <div class="admin__imgpreview" data-preview-for="${name}">${value ? `<img src="${esc(value)}" alt="" onerror="this.parentElement.innerHTML=''">` : ""}</div>
+      <div class="admin__imgpreview" data-preview-for="${name}">${value ? `<img src="${esc(optimizedImageUrl(value, 160))}" alt="" loading="lazy" decoding="async" onerror="this.parentElement.innerHTML=''">` : ""}</div>
     </div>`;
 }
 

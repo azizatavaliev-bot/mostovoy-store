@@ -33,10 +33,11 @@ interface FilterState {
 
 const state: FilterState = { group: null, category: null, brands: new Set(), q: "", sort: "pop", min: null, max: null };
 
-const grid = document.getElementById("grid") as HTMLDivElement;
-const gridEmpty = document.getElementById("gridEmpty") as HTMLParagraphElement;
-const searchInput = document.getElementById("search") as HTMLInputElement;
-const sortSel = document.getElementById("sort") as HTMLSelectElement;
+const grid = document.getElementById("grid") as HTMLDivElement | null;
+const gridEmpty = document.getElementById("gridEmpty") as HTMLParagraphElement | null;
+const searchInput = document.getElementById("search") as HTMLInputElement | null;
+const sortSel = document.getElementById("sort") as HTMLSelectElement | null;
+const hasCatalog = Boolean(grid && gridEmpty && searchInput && sortSel);
 let products: Product[] = [];
 
 // --- Валюта в шапке --------------------------------------------------------
@@ -202,7 +203,8 @@ function mountFavorites(): void {
   drawer.querySelector(".favorites__close")?.addEventListener("click", () => openFavorites(false));
   drawer.querySelector(".favorites__catalog")?.addEventListener("click", () => {
     openFavorites(false);
-    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+    if (hasCatalog) document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+    else window.location.href = "catalog.html#catalog";
   });
   document.getElementById("headerFavorites")?.addEventListener("click", () => openFavorites(true));
   renderFavorites();
@@ -343,6 +345,10 @@ function openHomeSearch(show: boolean): void {
 
 function showAllSearchResults(): void {
   const query = homeSearchInput.value.trim();
+  if (!hasCatalog || !searchInput) {
+    window.location.href = `catalog.html?q=${encodeURIComponent(query)}#catalog`;
+    return;
+  }
   searchInput.value = query;
   state.q = query;
   renderGrid();
@@ -419,12 +425,14 @@ const readLimit = (el: HTMLInputElement): number | null => {
 };
 
 function renderSidebar(): void {
+  const sidebarBody = document.getElementById("sidebarBody");
+  if (!sidebarBody) return;
   const bounds = priceBounds();
   const groups = groupsOf();
   const cats = categoriesOf(state.group);
   const brands = brandsOf(state.group, state.category);
 
-  document.getElementById("sidebarBody")!.innerHTML = `
+  sidebarBody.innerHTML = `
     <div class="catalog__filterGroup">
       <p class="catalog__filterTitle">Цена</p>
       <div class="pricefilter pricefilter--sidebar">
@@ -457,7 +465,8 @@ function renderSidebar(): void {
 }
 
 function wireSidebar(): void {
-  const body = document.getElementById("sidebarBody")!;
+  const body = document.getElementById("sidebarBody");
+  if (!body) return;
 
   body.querySelectorAll<HTMLButtonElement>("[data-group]").forEach((b) =>
     b.addEventListener("click", () => {
@@ -522,6 +531,8 @@ interface Chip {
 // Плашки активных фильтров над сеткой — видно и снимается по одной, даже
 // когда сайдбар на телефоне закрыт.
 function renderActiveChips(): void {
+  const el = document.getElementById("activeChips");
+  if (!el) return;
   const chips: Chip[] = [];
   if (state.group) chips.push({ label: state.group, clear: () => { state.group = null; state.category = null; state.brands = new Set(); } });
   if (state.category) chips.push({ label: state.category, clear: () => { state.category = null; } });
@@ -529,7 +540,6 @@ function renderActiveChips(): void {
   if (state.min != null) chips.push({ label: `от ${state.min.toLocaleString("ru-RU")}`, clear: () => { state.min = null; } });
   if (state.max != null) chips.push({ label: `до ${state.max.toLocaleString("ru-RU")}`, clear: () => { state.max = null; } });
 
-  const el = document.getElementById("activeChips")!;
   el.innerHTML = chips
     .map((c, i) => `<button type="button" class="catalog__activeChip" data-chip="${i}">${c.label} <span>✕</span></button>`)
     .join("");
@@ -543,19 +553,30 @@ function renderActiveChips(): void {
   );
 
   const count = chips.length;
-  const badge = document.getElementById("filtersCount") as HTMLSpanElement;
-  badge.textContent = String(count);
-  badge.hidden = count === 0;
-  const headerBadge = document.getElementById("headerFiltersCount") as HTMLSpanElement;
-  headerBadge.textContent = String(count);
-  headerBadge.hidden = count === 0;
+  const badge = document.getElementById("filtersCount") as HTMLSpanElement | null;
+  if (badge) {
+    badge.textContent = String(count);
+    badge.hidden = count === 0;
+  }
+  const headerBadge = document.getElementById("headerFiltersCount") as HTMLSpanElement | null;
+  if (headerBadge) {
+    headerBadge.textContent = String(count);
+    headerBadge.hidden = count === 0;
+  }
 }
 
 // Мобильный сайдбар — выезжающая панель, как корзина.
 function openFilters(show: boolean): void {
-  document.getElementById("sidebar")!.classList.toggle("open", show);
-  document.getElementById("sidebarOverlay")!.classList.toggle("show", show);
-  document.getElementById("headerFilters")!.setAttribute("aria-expanded", String(show));
+  const sidebar = document.getElementById("sidebar");
+  const overlay = document.getElementById("sidebarOverlay");
+  const headerFilters = document.getElementById("headerFilters");
+  if (!sidebar || !overlay || !headerFilters) {
+    window.location.href = "catalog.html#catalog";
+    return;
+  }
+  sidebar.classList.toggle("open", show);
+  overlay.classList.toggle("show", show);
+  headerFilters.setAttribute("aria-expanded", String(show));
   document.body.classList.toggle("noscroll", show);
 }
 
@@ -647,6 +668,7 @@ function cardHTML(p: Product): string {
 }
 
 function renderGrid(): void {
+  if (!grid || !gridEmpty) return;
   const list = filtered();
   gridEmpty.hidden = list.length > 0;
   grid.innerHTML = list.map(cardHTML).join("");
@@ -674,20 +696,35 @@ const PRODUCT_FAMILIES = [
     name: "iPhone",
     query: "iPhone",
     description: "Актуальные модели iPhone.",
+    fallbackImage: "/images/iphone-hero.webp",
+    fallbackVisual: "image",
     match: (product: Product) => /^iphone\b/i.test(product.name),
+  },
+  {
+    key: "airpods",
+    name: "AirPods",
+    query: "AirPods",
+    description: "Наушники для музыки и звонков.",
+    fallbackImage: "/images/hero-airpods.webp",
+    fallbackVisual: "image",
+    match: (product: Product) => /^airpods\b/i.test(product.name),
   },
   {
     key: "ipad",
     name: "iPad",
     query: "iPad",
     description: "Для учёбы, работы и творчества.",
+    fallbackImage: "/images/hero-ipad-transparent.webp",
+    fallbackVisual: "image",
     match: (product: Product) => /^ipad\b/i.test(product.name),
   },
   {
     key: "mac",
-    name: "Mac",
+    name: "MacBook",
     query: "MacBook",
     description: "Мощность для больших задач.",
+    fallbackImage: "/images/hero-macbook-transparent.webp",
+    fallbackVisual: "image",
     match: (product: Product) => /^macbook\b/i.test(product.name),
   },
   {
@@ -695,7 +732,54 @@ const PRODUCT_FAMILIES = [
     name: "Apple Watch",
     query: "Apple Watch",
     description: "Здоровье, связь и стиль.",
+    fallbackImage: "/images/apple-watch-series.png",
+    fallbackVisual: "image",
     match: (product: Product) => /^apple watch\b/i.test(product.name),
+  },
+] as const;
+
+const OTHER_PRODUCT_FAMILIES = [
+  {
+    key: "whoop",
+    name: "Whoop",
+    query: "Whoop",
+    description: "Трекер восстановления, сна и нагрузки.",
+    visual: "video",
+  },
+  {
+    key: "console",
+    name: "Приставки",
+    query: "PlayStation Xbox Nintendo",
+    description: "Игры, подписки и домашние развлечения.",
+    visual: "console",
+  },
+  {
+    key: "garmin",
+    name: "Garmin",
+    query: "Garmin",
+    description: "Спорт, навигация и автономные часы.",
+    visual: "garmin",
+  },
+  {
+    key: "meta",
+    name: "Очки Meta",
+    query: "Meta Ray-Ban",
+    description: "Умные очки, камера и AI на каждый день.",
+    visual: "meta",
+  },
+  {
+    key: "hairdryer",
+    name: "Фены",
+    query: "Dyson фен",
+    description: "Уход за волосами и компактный стайлинг.",
+    visual: "hairdryer",
+  },
+  {
+    key: "shaver",
+    name: "Бритвы",
+    query: "Philips бритва триммер",
+    description: "Электробритвы и триммеры для ухода.",
+    visual: "shaver",
   },
 ] as const;
 
@@ -709,6 +793,66 @@ function familyProduct(match: (product: Product) => boolean): Product | null {
   );
 }
 
+function applyProductLineQuery(query: string): void {
+  if (!hasCatalog || !searchInput) {
+    window.location.href = `catalog.html?q=${encodeURIComponent(query)}#catalog`;
+    return;
+  }
+  state.group = null;
+  state.category = null;
+  state.brands = new Set();
+  state.min = null;
+  state.max = null;
+  state.q = query;
+  searchInput.value = query;
+  renderSidebar();
+  renderGrid();
+  renderActiveChips();
+  document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+}
+
+function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual"]): string {
+  if (kind === "video") {
+    return `
+      <img class="product-family__image" src="/images/whoop.jpg" alt="" loading="lazy" decoding="async" />
+      <span class="product-family__glass product-family__glass--whoop">WHOOP</span>`;
+  }
+
+  if (kind === "console") {
+    return `
+      <span class="product-family__console">
+        <span></span><i></i><b></b>
+      </span>`;
+  }
+
+  if (kind === "garmin") {
+    return `
+      <img class="product-family__image product-family__image--contain" src="/images/garmin-fenix-8.jpg" alt="" loading="lazy" decoding="async" />`;
+  }
+
+  if (kind === "hairdryer") {
+    return `
+      <img class="product-family__image product-family__image--contain" src="/images/dyson-hair-dryer.jpg" alt="" loading="lazy" decoding="async" />`;
+  }
+
+  if (kind === "shaver") {
+    return `
+      <img class="product-family__image product-family__image--contain" src="/images/philips-shaver.jpg" alt="" loading="lazy" decoding="async" />`;
+  }
+
+  return `
+    <span class="product-family__glasses">
+      <span></span><span></span><i></i>
+    </span>`;
+}
+
+function appleFamilyVisual(family: (typeof PRODUCT_FAMILIES)[number], product: Product | null): string {
+  if (product) return mediaHTML(product, "product-family__media");
+  return `<span class="product-family__media">
+    <img src="${family.fallbackImage}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />
+  </span>`;
+}
+
 function renderProductLine(): void {
   const rail = document.getElementById("productLineRail");
   if (!rail) return;
@@ -716,9 +860,7 @@ function renderProductLine(): void {
   const families = PRODUCT_FAMILIES.map((family) => ({
     family,
     product: familyProduct(family.match),
-  })).filter((item): item is { family: (typeof PRODUCT_FAMILIES)[number]; product: Product } =>
-    Boolean(item.product)
-  );
+  }));
 
   rail.innerHTML = families
     .map(
@@ -726,8 +868,8 @@ function renderProductLine(): void {
         <button type="button" class="product-family reveal" data-product-family="${family.key}"
           aria-label="Смотреть ${family.name} в каталоге">
           <span class="product-family__stage">
-            <span class="product-family__availability">${product.available ? "В наличии" : "Под заказ"}</span>
-            ${mediaHTML(product, "product-family__media")}
+            <span class="product-family__availability">${product?.available ? "В наличии" : "Под заказ"}</span>
+            ${appleFamilyVisual(family, product)}
           </span>
           <span class="product-family__copy">
             <strong>${family.name}</strong>
@@ -743,65 +885,118 @@ function renderProductLine(): void {
     if (!button) return;
     const family = PRODUCT_FAMILIES.find((item) => item.key === button.dataset.productFamily);
     if (!family) return;
+    applyProductLineQuery(family.query);
+  });
 
-    state.group = null;
-    state.category = null;
-    state.brands = new Set();
-    state.min = null;
-    state.max = null;
-    state.q = family.query;
-    searchInput.value = family.query;
-    renderSidebar();
-    renderGrid();
-    renderActiveChips();
-    document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
+  const otherRail = document.getElementById("otherProductLineRail");
+  if (!otherRail) return;
+
+  otherRail.innerHTML = OTHER_PRODUCT_FAMILIES
+    .map(
+      (family) => `
+        <button type="button" class="product-family product-family--other reveal" data-other-product-family="${family.key}"
+          aria-label="Смотреть ${family.name} в каталоге">
+          <span class="product-family__stage product-family__stage--${family.visual}">
+            <span class="product-family__media product-family__media--concept">
+              ${otherFamilyVisual(family.visual)}
+            </span>
+          </span>
+          <span class="product-family__copy">
+            <strong>${family.name}</strong>
+            <small>${family.description}</small>
+            <span class="product-family__action">Смотреть <b aria-hidden="true">↗</b></span>
+          </span>
+        </button>`
+    )
+    .join("");
+
+  otherRail.addEventListener("click", (event) => {
+    const button = (event.target as HTMLElement).closest<HTMLElement>("[data-other-product-family]");
+    if (!button) return;
+    const family = OTHER_PRODUCT_FAMILIES.find((item) => item.key === button.dataset.otherProductFamily);
+    if (!family) return;
+    applyProductLineQuery(family.query);
   });
 }
 
+function conveyorButton(item: string, query: string, kind: "brand" | "gadget"): string {
+  return `<button type="button" data-conveyor-query="${query}" data-conveyor-kind="${kind}">${item}</button>`;
+}
+
+function renderConveyors(): void {
+  const gadgetTrack = document.getElementById("gadgetConveyorTrack");
+  if (gadgetTrack) {
+    const items = OTHER_PRODUCT_FAMILIES.map((family) => conveyorButton(family.name, family.query, "gadget"));
+    gadgetTrack.innerHTML = [...items, ...items, ...items].join("");
+  }
+
+  const brandTrack = document.getElementById("brandConveyorTrack");
+  if (!brandTrack) return;
+  const fallback = ["Apple", "Samsung", "Garmin", "Sony", "DJI", "Meta", "Nintendo", "Philips", "Amazon", "Valve"];
+  const brands = [...new Set(products.map((product) => product.brand).filter(Boolean))]
+    .sort((a, b) => (a as string).localeCompare(b as string, "ru")) as string[];
+  const items = (brands.length ? brands : fallback).map((brand) => conveyorButton(brand, brand, "brand"));
+  brandTrack.innerHTML = [...items, ...items, ...items].join("");
+}
+
+document.addEventListener("click", (event) => {
+  const button = (event.target as HTMLElement).closest<HTMLElement>("[data-conveyor-query]");
+  if (!button) return;
+  applyProductLineQuery(button.dataset.conveyorQuery || "");
+});
+
 // --- Поиск, сортировка, мобильный сайдбар ----------------------------------
 
-searchInput.addEventListener("input", (e) => {
-  state.q = (e.target as HTMLInputElement).value.trim();
-  renderGrid();
-});
+if (hasCatalog && grid && searchInput && sortSel) {
+  searchInput.addEventListener("input", (e) => {
+    state.q = (e.target as HTMLInputElement).value.trim();
+    renderGrid();
+  });
 
-sortSel.addEventListener("change", (e) => {
-  state.sort = (e.target as HTMLSelectElement).value as FilterState["sort"];
-  renderGrid();
-});
+  sortSel.addEventListener("change", (e) => {
+    state.sort = (e.target as HTMLSelectElement).value as FilterState["sort"];
+    renderGrid();
+  });
 
-document.getElementById("btnOpenFilters")!.addEventListener("click", () => openFilters(true));
-document.getElementById("headerFilters")!.addEventListener("click", () => openFilters(true));
-document.getElementById("btnCloseFilters")!.addEventListener("click", () => openFilters(false));
-document.getElementById("sidebarOverlay")!.addEventListener("click", () => openFilters(false));
+  document.getElementById("btnOpenFilters")?.addEventListener("click", () => openFilters(true));
+  document.getElementById("headerFilters")?.addEventListener("click", () => openFilters(true));
+  document.getElementById("btnCloseFilters")?.addEventListener("click", () => openFilters(false));
+  document.getElementById("sidebarOverlay")?.addEventListener("click", () => openFilters(false));
 
-// На телефоне фильтры доступны из шапки на всём протяжении каталога.
-const headerFilters = document.getElementById("headerFilters") as HTMLButtonElement;
-new IntersectionObserver(([entry]) => {
-  headerFilters.classList.toggle("visible", entry.isIntersecting);
-  headerFilters.tabIndex = entry.isIntersecting ? 0 : -1;
-}, { threshold: 0 }).observe(document.getElementById("catalog")!);
-
-grid.addEventListener("click", (e) => {
-  const target = e.target as HTMLElement;
-  // Смена цвета прямо в каталоге — без перехода на страницу товара.
-  const sw = target.closest<HTMLElement>("[data-sw]");
-  if (sw) {
-    e.preventDefault();
-    const id = sw.dataset.for as string;
-    cardColor.set(id, Number(sw.dataset.sw));
-    const p = products.find((x) => String(x.id) === String(id));
-    const card = grid.querySelector(`[data-card="${CSS.escape(id)}"]`);
-    if (p && card) {
-      // Перерисовываем только эту карточку, чтобы не дёргать весь список.
-      card.querySelector(".card__media")!.outerHTML = cardMedia(p);
-      card.querySelector(".card__sw")!.outerHTML = swatchesHTML(p);
-      card.querySelector(".card__spec")!.textContent =
-        (p.swatches as NonNullable<Product["swatches"]>)[cardColor.get(id) as number][0] + (p.available ? "" : " · нет в наличии");
-    }
-    return;
+  // На телефоне фильтры доступны из шапки на всём протяжении каталога.
+  const headerFilters = document.getElementById("headerFilters") as HTMLButtonElement | null;
+  const catalogSection = document.getElementById("catalog");
+  if (headerFilters && catalogSection) {
+    new IntersectionObserver(([entry]) => {
+      headerFilters.classList.toggle("visible", entry.isIntersecting);
+      headerFilters.tabIndex = entry.isIntersecting ? 0 : -1;
+    }, { threshold: 0 }).observe(catalogSection);
   }
-});
+
+  grid.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    // Смена цвета прямо в каталоге — без перехода на страницу товара.
+    const sw = target.closest<HTMLElement>("[data-sw]");
+    if (sw) {
+      e.preventDefault();
+      const id = sw.dataset.for as string;
+      cardColor.set(id, Number(sw.dataset.sw));
+      const p = products.find((x) => String(x.id) === String(id));
+      const card = grid.querySelector(`[data-card="${CSS.escape(id)}"]`);
+      if (p && card) {
+        // Перерисовываем только эту карточку, чтобы не дёргать весь список.
+        card.querySelector(".card__media")!.outerHTML = cardMedia(p);
+        card.querySelector(".card__sw")!.outerHTML = swatchesHTML(p);
+        card.querySelector(".card__spec")!.textContent =
+          (p.swatches as NonNullable<Product["swatches"]>)[cardColor.get(id) as number][0] + (p.available ? "" : " · нет в наличии");
+      }
+    }
+  });
+} else {
+  document.getElementById("headerFilters")?.addEventListener("click", () => {
+    window.location.href = "catalog.html#catalog";
+  });
+}
 
 const headerCart = document.getElementById("headerCart") as HTMLButtonElement;
 const headerCartLabel = document.getElementById("headerCartLabel") as HTMLSpanElement;
@@ -1045,11 +1240,20 @@ mountHeroRotation();
   }
   headerCart.addEventListener("click", () => openCart(true));
 
+  if (hasCatalog && searchInput) {
+    const initialQuery = new URLSearchParams(window.location.search).get("q")?.trim();
+    if (initialQuery) {
+      state.q = initialQuery;
+      searchInput.value = initialQuery;
+    }
+  }
+
   renderSidebar();
   renderGrid();
   renderActiveChips();
   renderSales();
   renderProductLine();
+  renderConveyors();
   fillCreditModels();
   calcTrade();
   calcCredit();

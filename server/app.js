@@ -19,9 +19,10 @@ const { createAmoCrmRouter } = require("./routes/amocrm");
 const { AmoCrmClient } = require("./services/amocrm");
 const { CrmService } = require("./services/crm");
 const { AzisCrmClient } = require("./services/azis-crm");
+const { CrmDealsClient } = require("./services/crm-deals");
 const { createAzisCrmRouter } = require("./routes/azis-crm");
 
-function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm } = {}) {
+function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, crmDeals } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
   const aiRouter = ai || new AiRouter({ deepseek: deepseekClient });
   const researchService =
@@ -35,12 +36,14 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm } =
   const syncQueue = queue || new SyncQueue({ db, syncService });
   const amoCrmClient = amocrm || new AmoCrmClient();
   const azisCrmClient = azisCrm || new AzisCrmClient();
+  const crmDealsClient = crmDeals || new CrmDealsClient();
   const crmService = crm || new CrmService({
     db,
     ai: aiRouter,
     deepseek: deepseekClient,
     amocrm: amoCrmClient,
     azisCrm: azisCrmClient,
+    crmDeals: crmDealsClient,
   });
 
   const app = express();

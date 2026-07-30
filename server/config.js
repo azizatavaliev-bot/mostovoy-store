@@ -57,6 +57,14 @@ const config = {
     timeoutMs: int(process.env.AZIS_CRM_TIMEOUT_MS, 10000),
   },
 
+  // MostovoyCRM: витрина сообщает ей о новом клиенте, чтобы там завелась
+  // сделка в воронке. Токен тот же, что у /api/internal/* в CRM.
+  crmDeals: {
+    baseUrl: (process.env.CRM_BASE_URL || "").replace(/\/+$/, ""),
+    internalToken: process.env.CRM_INTERNAL_TOKEN || "",
+    timeoutMs: int(process.env.CRM_TIMEOUT_MS, 5000),
+  },
+
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || "",
     baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, ""),
@@ -80,6 +88,12 @@ const config = {
     apiKey: process.env.GEMINI_API_KEY || "",
     baseUrl: (process.env.GEMINI_BASE_URL || "https://generativelanguage.googleapis.com/v1beta").replace(/\/+$/, ""),
     model: process.env.GEMINI_MODEL || "gemini-3.6-flash",
+  },
+
+  anthropic: {
+    apiKey: process.env.ANTHROPIC_API_KEY || "",
+    baseUrl: (process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com").replace(/\/+$/, ""),
+    model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5",
   },
 
   research: {
@@ -162,12 +176,14 @@ config.features = {
   deepseek: Boolean(config.deepseek.apiKey),
   openai: Boolean(config.openai.apiKey),
   gemini: Boolean(config.gemini.apiKey),
+  anthropic: Boolean(config.anthropic.apiKey),
   research: config.research.provider !== "none",
   contact: Boolean(config.contact.telegram),
   adminToken: Boolean(config.admin.token),
   adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
   amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
+  crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
 };
 config.features.admin = config.features.adminToken || config.features.adminLogin;
 

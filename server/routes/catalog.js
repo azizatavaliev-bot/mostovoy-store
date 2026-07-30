@@ -2,7 +2,7 @@
 const express = require("express");
 const config = require("../config");
 const { buildContactLink, buildWhatsappLink, GENERIC_MESSAGE } = require("../lib/contact");
-const { recordBuyClick } = require("../services/buy-analytics");
+const { recordBuyClick, recordProductView } = require("../services/buy-analytics");
 
 // Статусы, которые показываем на сайте. hidden и sync_error — не показываем.
 const VISIBLE_STATUSES = ["active", "needs_research"];
@@ -116,6 +116,18 @@ function createCatalogRouter({ db, azisCrm }) {
           visitorId: req.body?.visitorId,
         }).catch(() => {});
       }
+      res.status(202).json({ ok: true, recorded: result.recorded });
+    } catch (error) {
+      res.status(400).json({ ok: false, error: error.message });
+    }
+  });
+
+  // Просмотр карточки товара. Как и buy-click — без авторизации, отвечает
+  // сразу и никогда не роняет страницу: на любой мусор во входных данных
+  // просто 400 и ничего не записано.
+  router.post("/analytics/product-view", (req, res) => {
+    try {
+      const result = recordProductView(db, req.body || {});
       res.status(202).json({ ok: true, recorded: result.recorded });
     } catch (error) {
       res.status(400).json({ ok: false, error: error.message });

@@ -30,7 +30,7 @@
         <span class="home-logo__copy"><b>МОСТОВОЙ</b><small>магазин техники</small></span>
       </a>
       <nav class="nav" id="nav">
-        <a href="catalog.html#catalog">Каталог <span class="nav__chevron">⌄</span></a>
+        <a href="#catalog">Каталог <span class="nav__chevron">⌄</span></a>
         <a href="trade.html">Обмен</a>
         <a href="#credit">Рассрочка</a>
         <a href="news.html">Посты</a>
@@ -118,7 +118,7 @@
           </span>
         </p>
         <div class="hero__actions">
-          <a href="catalog.html#catalog" class="btn">Смотреть каталог <span aria-hidden="true">›</span></a>
+          <a href="#catalog" class="btn">Смотреть каталог <span aria-hidden="true">›</span></a>
           <a href="trade.html" class="btn btn--ghost">Обменять свой <span aria-hidden="true">›</span></a>
         </div>
         <div class="hero__quickfacts">
@@ -192,16 +192,53 @@
       </div>
       <div class="product-line__rail" id="productLineRail" aria-label="Категории техники"></div>
       <div class="product-line__head product-line__head--other reveal">
-        <p class="eyebrow">Другие гаджеты</p>
+        <p class="eyebrow">Другие продукты</p>
         <h2>Новые категории.</h2>
-        <p>Whoop, приставки, Garmin, очки Meta, фены и бритвы — рядом с Apple.</p>
+        <p>Whoop, приставки, Garmin и очки Meta — рядом с Apple.</p>
       </div>
       <div class="product-line__rail product-line__rail--other" id="otherProductLineRail" aria-label="Другие категории техники"></div>
-      <div class="gadget-conveyor reveal" aria-label="Другие гаджеты">
-        <div class="gadget-conveyor__track" id="gadgetConveyorTrack"></div>
+    </div>
+  </section>
+
+  <!-- Catalog -->
+  <section class="section" id="catalog">
+    <div class="container">
+      <div class="section__head reveal">
+        <div>
+          <p class="eyebrow">Каталог</p>
+          <h2 class="section__title">Товары</h2>
+        </div>
+        <button type="button" class="btn btn--ghost catalog__filtersBtn" id="btnOpenFilters">
+          Фильтры <span class="catalog__filtersCount" id="filtersCount" hidden>0</span>
+        </button>
       </div>
-      <div class="brand-conveyor reveal" aria-label="Бренды магазина">
-        <div class="brand-conveyor__track" id="brandConveyorTrack"></div>
+
+      <div class="catalog__layout">
+        <div class="catalog__sidebarOverlay" id="sidebarOverlay"></div>
+        <aside class="catalog__sidebar" id="sidebar">
+          <div class="catalog__sidebarHead">
+            <b>Фильтры</b>
+            <button type="button" class="catalog__sidebarClose" id="btnCloseFilters" aria-label="Закрыть">✕</button>
+          </div>
+          <div class="catalog__sidebarBody" id="sidebarBody"><!-- рендерится в main.ts --></div>
+        </aside>
+
+        <div class="catalog__main">
+          <div class="toolbar reveal">
+            <div class="search">
+              <span>🔍</span>
+              <input id="search" type="text" placeholder="Поиск товара..." />
+            </div>
+            <select id="sort" class="sortsel">
+              <option value="pop">По популярности</option>
+              <option value="asc">Сначала дешёвые</option>
+              <option value="desc">Сначала дорогие</option>
+            </select>
+          </div>
+          <div class="catalog__chips" id="activeChips"></div>
+          <div class="grid" id="grid"></div>
+          <p class="grid__empty" id="gridEmpty" hidden>Ничего не найдено 🙁</p>
+        </div>
       </div>
     </div>
   </section>
@@ -331,7 +368,7 @@
       </div>
       <div class="footer__col">
         <h4>Навигация</h4>
-        <a href="catalog.html#catalog">Каталог</a>
+        <a href="#catalog">Каталог</a>
         <a href="trade.html">Обмен</a>
         <a href="#credit">Доступ</a>
         <a href="news.html">Посты</a>

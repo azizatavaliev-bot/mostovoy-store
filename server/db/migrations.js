@@ -451,4 +451,26 @@ module.exports = [
         AND main_image_url LIKE '/images/products/apple/%.jpg';
     `,
   },
+  {
+    // Просмотры карточек товаров — «на что смотрят», в дополнение к buy_clicks
+    // («что собираются купить»). Конвенции те же: product_id обнуляется при
+    // удалении товара, имя и слаг дублируются, чтобы отчёт жил дольше товара.
+    name: "015_product_views",
+    sql: `
+      CREATE TABLE product_views (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id    INTEGER REFERENCES products(id) ON DELETE SET NULL,
+        product_slug  TEXT,
+        product_name  TEXT NOT NULL,
+        page_path     TEXT,
+        visitor_id    TEXT,
+        viewed_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_product_views_viewed ON product_views(viewed_at DESC);
+      CREATE INDEX idx_product_views_product ON product_views(product_id, product_slug);
+      -- Под проверку «этот посетитель уже смотрел этот товар недавно?»:
+      -- она выполняется на каждый публичный запрос записи просмотра.
+      CREATE INDEX idx_product_views_visitor ON product_views(visitor_id, product_id, viewed_at DESC);
+    `,
+  },
 ];

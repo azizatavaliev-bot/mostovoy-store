@@ -421,3 +421,150 @@ test("сбой агрессивного обучения не отменяет �
   assert.equal(crm.listApprovals("rejected").length, 1);
   assert.equal(crm.listEvents({ level: "error" })[0].event, "learning.failed");
 });
+
+// ─── Сделки в MostovoyCRM ────────────────────────────────────────────────────
+// Витрина только сообщает «пришёл новый клиент»; воронку ведёт CRM.
+
+function makeDealsSpy({ fail = false } = {}) {
+  const calls = [];
+  return {
+    calls,
+    enabled: true,
+    async createDeal(payload) {
+      calls.push(payload);
+      if (fail) throw new Error("CRM недоступна");
+      return { ok: true, created: true };
+    },
+  };
+}
+
+test("первое входящее заводит сделку в CRM, повторное — нет", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
+  const message = {
+    message_id: 501,
+    date: 1_700_000_000,
+    text: "Есть iPhone 17?",
+    chat: { id: 501, type: "private" },
+    from: { id: 501, first_name: "Азиз", username: "aziz" },
+  };
+
+  await crm.receiveTelegram(message);
+  await crm.receiveTelegram({ ...message, message_id: 502, text: "Сколько стоит?" });
+
+  assert.equal(crmDeals.calls.length, 1);
+  assert.deepEqual(crmDeals.calls[0], {
+    externalKey: "telegram:501",
+    source: "telegram",
+    customerName: "Азиз",
+    customerPhone: null,
+    customerUsername: "@aziz",
+  });
+  assert.equal(crm.listConversations()[0].externalKey, "telegram:501");
+});
+
+test("входящее из amoCRM заводит сделку с каналом Instagram", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
+
+  await crm.receiveAmo({
+    text: "Нужен MacBook",
+    direction: "incoming",
+    chatId: "ig-chat-77",
+    messageId: "ig-message-77",
+    customerName: "Клиент",
+    customerPhone: "996700000000",
+    source: "instagram",
+  });
+
+  assert.equal(crmDeals.calls.length, 1);
+  assert.equal(crmDeals.calls[0].externalKey, "amo:ig-chat-77");
+  assert.equal(crmDeals.calls[0].source, "instagram");
+  assert.equal(crmDeals.calls[0].customerPhone, "996700000000");
+});
+
+test("исходящее менеджера диалог создаёт, а сделку — нет", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: true, sendMessage: async () => {} },
+    crmDeals,
+  });
+
+  await crm.sendExternal({ source: "whatsapp", chatId: "wa-chat-31", text: "Здравствуйте!" });
+
+  assert.equal(crm.listConversations().length, 1);
+  assert.equal(crmDeals.calls.length, 0);
+});
+
+test("недоступная CRM не ломает приём сообщения", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy({ fail: true });
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
+
+  await crm.receiveTelegram({
+    message_id: 601,
+    text: "Здравствуйте",
+    chat: { id: 601, type: "private" },
+    from: { first_name: "Клиент" },
+  });
+  // Отказ CRM асинхронный — даём промису отработать и убеждаемся, что он не всплыл.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(crmDeals.calls.length, 1);
+  assert.equal(crm.listConversations().length, 1);
+  assert.equal(crm.getConversation(crm.listConversations()[0].id).messages.length, 1);
+});
+
+test("без настроенного адреса CRM сделки не публикуются", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const { CrmDealsClient } = require("../server/services/crm-deals");
+  const client = new CrmDealsClient({ baseUrl: "", internalToken: "" });
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals: client });
+
+  await crm.receiveTelegram({
+    message_id: 701,
+    text: "Привет",
+    chat: { id: 701, type: "private" },
+    from: { first_name: "Клиент" },
+  });
+
+  assert.equal(client.enabled, false);
+  assert.equal(crm.listConversations().length, 1);
+});
+
+test("клиент сделок шлёт внутренний токен и нормализует канал amocrm", async (t) => {
+  const { CrmDealsClient } = require("../server/services/crm-deals");
+  const seen = [];
+  const client = new CrmDealsClient({
+    baseUrl: "https://crm.example/",
+    internalToken: "secret-token",
+    fetchImpl: async (url, init) => {
+      seen.push({ url, init });
+      return { ok: true, status: 200, json: async () => ({ ok: true, created: true }) };
+    },
+  });
+
+  const result = await client.createDeal({
+    externalKey: "amo:chat-1",
+    source: "amocrm",
+    customerName: "Клиент",
+  });
+
+  assert.equal(result.created, true);
+  assert.equal(seen[0].url, "https://crm.example/api/internal/deals");
+  assert.equal(seen[0].init.headers["x-internal-token"], "secret-token");
+  const body = JSON.parse(seen[0].init.body);
+  assert.equal(body.source, "whatsapp");
+  assert.equal(body.externalKey, "amo:chat-1");
+  assert.equal(body.customerPhone, null);
+});

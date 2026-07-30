@@ -67,13 +67,13 @@ async function init(): Promise<void> {
       : `<div class="newsfeed__state">
           <h2>Пока без постов</h2>
           <p>Новые поступления, подборки и акции появятся здесь.</p>
-          <a class="btn" href="index.html#catalog">Смотреть каталог</a>
+          <a class="btn" href="catalog.html#catalog">Смотреть каталог</a>
         </div>`;
   } catch {
     feed.innerHTML = `<div class="newsfeed__state">
       <h2>Посты временно недоступны</h2>
       <p>Обновите страницу позже или перейдите в каталог.</p>
-      <a class="btn btn--ghost" href="index.html#catalog">В каталог</a>
+      <a class="btn btn--ghost" href="catalog.html#catalog">В каталог</a>
     </div>`;
   }
 }

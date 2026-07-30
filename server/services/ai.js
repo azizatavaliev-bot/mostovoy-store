@@ -4,7 +4,11 @@ const MODELS = [
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek" },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek" },
   { id: "gpt-5.6-sol", label: "ChatGPT 5.6", provider: "openai" },
+  { id: "gemini-3.6-pro", label: "Gemini 3.6 Pro", provider: "gemini" },
   { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", provider: "gemini" },
+  { id: "claude-sonnet-5", label: "Claude Sonnet 5", provider: "anthropic" },
+  { id: "claude-opus-5", label: "Claude Opus 5", provider: "anthropic" },
+  { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", provider: "anthropic" },
 ];
 
 function modelInfo(model) {
@@ -45,6 +49,16 @@ function usageFromGemini(usage = {}) {
   };
 }
 
+function usageFromAnthropic(usage = {}) {
+  const prompt = Number(usage.input_tokens || 0);
+  const completion = Number(usage.output_tokens || 0);
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+  };
+}
+
 function outputText(data) {
   if (data?.output_text) return String(data.output_text).trim();
   for (const item of data?.output || data?.steps || []) {
@@ -66,6 +80,7 @@ class AiRouter {
     if (provider === "deepseek") return Boolean(this.deepseek?.enabled);
     if (provider === "openai") return Boolean(config.openai.apiKey);
     if (provider === "gemini") return Boolean(config.gemini.apiKey);
+    if (provider === "anthropic") return Boolean(config.anthropic.apiKey);
     return false;
   }
 
@@ -86,6 +101,9 @@ class AiRouter {
     }
     if (info.provider === "openai") {
       return this._openAiText({ system, messages, user, model, maxTokens, onUsage });
+    }
+    if (info.provider === "anthropic") {
+      return this._anthropicText({ system, messages, user, model, maxTokens, onUsage });
     }
     return this._geminiText({ system, messages, user, model, maxTokens, onUsage });
   }
@@ -186,6 +204,36 @@ class AiRouter {
     const text = outputText(data);
     if (!text) throw new Error("Gemini вернул пустой ответ");
     onUsage?.(usageFromGemini(data.usage), data.model || model);
+    return text;
+  }
+
+  async _anthropicText({ system, messages, user, model, maxTokens, onUsage }) {
+    const chatMessages = [
+      ...messages
+        .filter((item) => item?.role === "user" || item?.role === "assistant")
+        .map((item) => ({ role: item.role, content: String(item.content) })),
+      ...(user ? [{ role: "user", content: String(user) }] : []),
+    ];
+    const data = await this._jsonRequest(`${config.anthropic.baseUrl}/v1/messages`, {
+      headers: {
+        "x-api-key": config.anthropic.apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: {
+        model,
+        system,
+        messages: chatMessages,
+        max_tokens: maxTokens,
+      },
+      provider: "Anthropic",
+    });
+    const text = (data?.content || [])
+      .filter((part) => part?.type === "text" && part.text)
+      .map((part) => String(part.text))
+      .join("\n")
+      .trim();
+    if (!text) throw new Error("Claude вернул пустой ответ");
+    onUsage?.(usageFromAnthropic(data.usage), data.model || model);
     return text;
   }
 

@@ -335,6 +335,30 @@ function trackBuyClick(items: BuyClickItem[], source: "product" | "cart" | "cred
   }).catch(() => {});
 }
 
+// Открытие карточки товара — «на что смотрят». Совсем как trackBuyClick:
+// beacon, если браузер умеет, иначе keepalive-fetch, и любая ошибка молча
+// игнорируется — аналитика никогда не должна ломать страницу.
+export function trackProductView(productId: string): void {
+  if (!productId) return;
+  const body = JSON.stringify({
+    productId,
+    pagePath: `${location.pathname}${location.search}`,
+    visitorId: buyVisitorId(),
+  });
+  try {
+    const blob = new Blob([body], { type: "application/json" });
+    if (navigator.sendBeacon?.("/api/analytics/product-view", blob)) return;
+    fetch("/api/analytics/product-view", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    /* localStorage недоступен или beacon бросил — просмотр просто не учтён */
+  }
+}
+
 export function handleOrderClick(text: string, items: BuyClickItem[], source: "product" | "cart" | "credit"): void {
   trackBuyClick(items, source);
   openWhatsApp(text);
@@ -406,23 +430,59 @@ export function mountHeaderControls(): void {
   syncCount();
 }
 
-// Плавающая кнопка WhatsApp — всегда видна справа, на любой странице.
+// Плавающее меню контактов — всегда видно справа, на любой странице.
 export function mountWhatsappFloat(): void {
-  if (document.querySelector(".wafloat")) return;
+  if (document.querySelector(".wafloat-hub")) return;
 
   const WA_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M12.04 2c-5.52 0-10 4.48-10 10 0 1.77.46 3.45 1.27 4.9L2 22l5.25-1.38A9.96 9.96 0 0 0 12.04 22c5.52 0 10-4.48 10-10s-4.48-10-10-10zm5.87 14.2c-.25.7-1.45 1.34-2 1.43-.5.08-1.15.11-1.86-.12-.43-.14-.98-.32-1.69-.63-2.97-1.28-4.9-4.27-5.05-4.47-.15-.2-1.2-1.6-1.2-3.05 0-1.45.76-2.16 1.03-2.46.27-.3.6-.37.8-.37h.57c.18 0 .43-.07.67.51.25.6.85 2.08.92 2.23.07.15.12.33.02.53-.1.2-.15.32-.3.5-.15.18-.32.4-.45.53-.15.15-.31.32-.13.63.18.3.79 1.3 1.7 2.1 1.17 1.04 2.15 1.37 2.46 1.52.31.15.49.13.67-.08.18-.2.77-.9.98-1.2.2-.31.4-.26.68-.16.27.1 1.75.82 2.05.97.3.15.5.23.57.35.08.13.08.73-.17 1.43z"/>
     </svg>`;
+  const PHONE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.12.9.32 1.77.58 2.61a2 2 0 0 1-.45 2.11L8 9.7a16 16 0 0 0 6.3 6.3l1.26-1.24a2 2 0 0 1 2.11-.45c.84.26 1.71.46 2.61.58A2 2 0 0 1 22 16.92z"/>
+    </svg>`;
+  const TG_ICON = `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M21.8 3.22 2.9 10.5c-1.29.52-1.28 1.24-.24 1.56l4.85 1.51 1.86 5.7c.23.64.12.89.78.89.51 0 .74-.23 1.03-.51l2.47-2.4 5.14 3.8c.95.52 1.63.25 1.87-.88L24 4.44c.34-1.36-.52-1.98-2.2-1.22ZM8.28 13.23l10.63-6.7c.53-.32 1.02-.15.62.2l-9.1 8.22-.35 3.72-1.8-5.44Z"/>
+    </svg>`;
+  const BELL_ICON = `<span class="wafloat__bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/>
+      <path d="M10 21h4"/>
+    </svg></span>`;
+  const CLOSE_ICON = `<span class="wafloat__close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18"/>
+    </svg></span>`;
 
-  const a = document.createElement("a");
-  a.className = "wafloat";
-  a.href = whatsappUrl("Здравствуйте! Хочу узнать про товар.");
-  a.target = "_blank";
-  a.rel = "noopener";
-  a.setAttribute("aria-label", "Написать в WhatsApp");
-  a.innerHTML = WA_ICON;
+  const phone = String(CATALOG.contact.whatsapp || "").replace(/\D/g, "");
+  const hub = document.createElement("div");
+  hub.className = "wafloat-hub";
+  hub.innerHTML = `
+    <a class="wafloat-action wafloat-action--phone" href="tel:+${phone}" aria-label="Позвонить" title="Позвонить">${PHONE_ICON}</a>
+    <a class="wafloat-action wafloat-action--wa" href="${whatsappUrl("Здравствуйте! Хочу узнать про товар.")}" target="_blank" rel="noopener" aria-label="Написать в WhatsApp" title="WhatsApp">${WA_ICON}</a>
+    <a class="wafloat-action wafloat-action--tg" href="${telegramContactUrl()}" target="_blank" rel="noopener" aria-label="Написать в Telegram" title="Telegram">${TG_ICON}</a>
+    <button class="wafloat" type="button" aria-label="Открыть контакты" aria-expanded="false">${BELL_ICON}${CLOSE_ICON}</button>
+  `;
 
-  document.body.appendChild(a);
+  const button = hub.querySelector<HTMLButtonElement>(".wafloat")!;
+  const close = () => {
+    hub.classList.remove("is-open");
+    button.setAttribute("aria-label", "Открыть контакты");
+    button.setAttribute("aria-expanded", "false");
+  };
+  const toggle = () => {
+    const opened = hub.classList.toggle("is-open");
+    button.setAttribute("aria-label", opened ? "Закрыть контакты" : "Открыть контакты");
+    button.setAttribute("aria-expanded", String(opened));
+  };
+
+  button.addEventListener("click", toggle);
+  hub.querySelectorAll("a").forEach((link) => link.addEventListener("click", close));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close();
+  });
+  document.addEventListener("click", (event) => {
+    if (!hub.contains(event.target as Node)) close();
+  });
+
+  document.body.appendChild(hub);
 }
 
 export function mountCartDrawer(): void {

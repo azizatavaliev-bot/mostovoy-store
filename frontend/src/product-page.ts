@@ -18,6 +18,7 @@ import {
   onCurrencyChange,
   productMessage,
   toast,
+  trackProductView,
 } from "./catalog";
 import { enhanceSelects, installment, INSTALLMENT_TERM_LIST, isInstallmentEligible, mediaHTML } from "./render";
 import type { Product } from "./types";
@@ -100,7 +101,7 @@ function renderProduct(p: Product, all: Product[]): void {
   root.innerHTML = `
   <div class="crumbs container">
     <a href="index.html">Главная</a> <span>/</span>
-    <a href="index.html#catalog">Каталог</a> <span>/</span>
+    <a href="catalog.html#catalog">Каталог</a> <span>/</span>
     <b>${p.name}</b>
   </div>
 
@@ -350,7 +351,10 @@ function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () =>
   const product = id ? getProduct(id) : null;
 
   if (!product) notFound();
-  else renderProduct(product, all);
+  else {
+    renderProduct(product, all);
+    trackProductView(product.id);
+  }
 
   enhanceSelects();
   window.scrollTo(0, 0);

@@ -1,6 +1,6 @@
 const config = require("../config");
 const logger = require("../logger");
-const { getBuyClickAnalytics } = require("./buy-analytics");
+const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
 
 function escapeTelegramHtml(value) {
@@ -101,6 +101,8 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 function toConversation(row) {
   return {
     id: Number(row.id),
+    // Ключ идемпотентности для внешних систем (в CRM это deals.external_key).
+    externalKey: row.external_key,
     source: row.source,
     externalChatId: row.external_chat_id,
     externalLeadId: row.external_lead_id,
@@ -117,13 +119,36 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, ai, deepseek, amocrm, azisCrm, fetchImpl } = {}) {
+  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, fetchImpl } = {}) {
     this.db = db;
     this.deepseek = deepseek;
     this.ai = ai || deepseek;
     this.amocrm = amocrm;
     this.azisCrm = azisCrm;
+    this.crmDeals = crmDeals;
     this.fetchImpl = fetchImpl || globalThis.fetch;
+  }
+
+  // Новый клиент → сделка в воронке MostovoyCRM.
+  // Ничего не ждём и не бросаем: недоступная CRM не должна ни задерживать
+  // ответ клиенту, ни ронять обработку сообщения. Пропуск не потеряется —
+  // CRM сверяется с /api/admin/crm/conversations.
+  _publishDeal(conversation) {
+    if (!this.crmDeals?.enabled) return;
+    void this.crmDeals
+      .createDeal({
+        externalKey: conversation.external_key,
+        source: conversation.source,
+        customerName: conversation.customer_name,
+        customerPhone: conversation.customer_phone,
+        customerUsername: conversation.customer_username,
+      })
+      .catch((error) =>
+        logger.error("crm_deals.publish_failed", {
+          externalKey: conversation.external_key,
+          error: error.message,
+        })
+      );
   }
 
   _publishAzis(type, payload) {
@@ -266,6 +291,8 @@ class CrmService {
        )`
     ).get(since, since);
     analytics.summary.handoffs = Number(row.count || 0);
+    // Просмотры карточек — отдельная метрика, не смешиваем с кликами «Купить».
+    analytics.views = getProductViewAnalytics(this.db, analytics.periodDays);
     return analytics;
   }
 
@@ -625,6 +652,10 @@ prompt_patch — не больше двух коротких предложен�
   }
 
   _upsertConversation(data) {
+    // Был ли диалог до этого — от этого зависит, сообщать ли CRM о новом клиенте.
+    const known = this.db
+      .prepare("SELECT 1 FROM crm_conversations WHERE external_key = ?")
+      .get(data.externalKey);
     this.db.prepare(
       `INSERT INTO crm_conversations
         (external_key, source, external_chat_id, external_lead_id, external_contact_id,
@@ -644,7 +675,13 @@ prompt_patch — не больше двух коротких предложен�
       data.externalKey, data.source, data.chatId, data.leadId || null, data.contactId || null,
       data.name || null, data.username || null, data.phone || null, data.createdAt || new Date().toISOString()
     );
-    return this.db.prepare("SELECT * FROM crm_conversations WHERE external_key = ?").get(data.externalKey);
+    const conversation = this.db
+      .prepare("SELECT * FROM crm_conversations WHERE external_key = ?")
+      .get(data.externalKey);
+    // Сделку заводим только на первое входящее от клиента: ручная отправка
+    // менеджером (sendExternal) диалог тоже создаёт, но это не заявка.
+    if (!known && data.inbound) this._publishDeal(conversation);
+    return conversation;
   }
 
   _storeMessage(conversationId, data) {
@@ -672,6 +709,7 @@ prompt_patch — не больше двух коротких предложен�
     const conversation = this._upsertConversation({
       externalKey: `telegram:${chatId}`,
       source: "telegram",
+      inbound: true,
       chatId,
       name,
       username: message.from?.username ? `@${message.from.username}` : null,
@@ -748,6 +786,7 @@ prompt_patch — не больше двух коротких предложен�
     const conversation = this._upsertConversation({
       externalKey: `amo:${incoming.chatId}`,
       source,
+      inbound: true,
       chatId: incoming.chatId,
       leadId: incoming.leadId,
       contactId: incoming.contactId,

@@ -37,6 +37,86 @@ function recordBuyClick(db, payload = {}) {
   return { clickGroup, recorded };
 }
 
+// Повторные открытия одной и той же карточки одним посетителем (F5, возврат
+// «назад», переключение памяти) — это не новый интерес. Пишем не чаще одного
+// раза в 30 минут на пару «посетитель + товар»: окно примерно равно живому
+// визиту, поэтому «сколько людей смотрели товар» остаётся честным, а накрутить
+// счётчик перезагрузками нельзя. Без visitor_id дедуп не работает — просмотр
+// пишется как есть (анонимно и без localStorage такого просто не бывает).
+const VIEW_DEDUPE_MINUTES = 30;
+
+// Просмотр карточки товара. Ручка публичная, поэтому: товар обязан существовать
+// в каталоге (иначе таблица растёт от произвольных строк), длины обрезаются,
+// на некорректном вводе бросаем — вызывающий отвечает 400 и ничего не пишет.
+function recordProductView(db, payload = {}) {
+  const slug = String(payload.productId || "").trim().slice(0, 200);
+  if (!slug) throw new Error("Товар не указан");
+  const product = db.prepare("SELECT id, slug, official_name FROM products WHERE slug = ?").get(slug);
+  if (!product) throw new Error("Товар не найден");
+
+  const visitorId = String(payload.visitorId || "").slice(0, 100) || null;
+  if (visitorId) {
+    const recent = db.prepare(
+      `SELECT 1 FROM product_views
+       WHERE product_id = ? AND visitor_id = ? AND viewed_at >= datetime('now', ?)
+       LIMIT 1`
+    ).get(product.id, visitorId, `-${VIEW_DEDUPE_MINUTES} minutes`);
+    if (recent) return { recorded: 0, deduped: true };
+  }
+
+  db.prepare(
+    `INSERT INTO product_views (product_id, product_slug, product_name, page_path, visitor_id)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(
+    product.id,
+    product.slug,
+    product.official_name,
+    String(payload.pagePath || "").slice(0, 300) || null,
+    visitorId
+  );
+  return { recorded: 1, deduped: false };
+}
+
+// Просмотры карточек за период: топ товаров и разбивка по дням.
+function getProductViewAnalytics(db, days = 30) {
+  const periodDays = [7, 30, 90, 365].includes(Number(days)) ? Number(days) : 30;
+  const since = `-${periodDays - 1} days`;
+  const summary = db.prepare(
+    `SELECT COUNT(*) AS views,
+            COUNT(DISTINCT NULLIF(visitor_id, '')) AS visitors,
+            COUNT(DISTINCT product_slug) AS products
+     FROM product_views WHERE viewed_at >= datetime('now', ?)`
+  ).get(since);
+  const topProducts = db.prepare(
+    `SELECT product_slug, product_name,
+            COUNT(*) AS views,
+            COUNT(DISTINCT NULLIF(visitor_id, '')) AS visitors
+     FROM product_views WHERE viewed_at >= datetime('now', ?)
+     GROUP BY product_slug, product_name
+     ORDER BY views DESC, product_name ASC LIMIT 12`
+  ).all(since).map((row) => ({
+    productSlug: row.product_slug,
+    productName: row.product_name,
+    views: Number(row.views),
+    visitors: Number(row.visitors),
+  }));
+  const trend = db.prepare(
+    `SELECT date(viewed_at) AS day, COUNT(*) AS views
+     FROM product_views WHERE viewed_at >= datetime('now', ?)
+     GROUP BY date(viewed_at) ORDER BY day ASC`
+  ).all(since).map((row) => ({ day: row.day, views: Number(row.views) }));
+  return {
+    periodDays,
+    summary: {
+      views: Number(summary.views),
+      visitors: Number(summary.visitors),
+      products: Number(summary.products),
+    },
+    topProducts,
+    trend,
+  };
+}
+
 function getBuyClickAnalytics(db, days = 30) {
   const periodDays = [7, 30, 90, 365].includes(Number(days)) ? Number(days) : 30;
   const since = `-${periodDays - 1} days`;
@@ -105,4 +185,10 @@ function getBuyClickAnalytics(db, days = 30) {
   };
 }
 
-module.exports = { recordBuyClick, getBuyClickAnalytics };
+module.exports = {
+  recordBuyClick,
+  getBuyClickAnalytics,
+  recordProductView,
+  getProductViewAnalytics,
+  VIEW_DEDUPE_MINUTES,
+};

@@ -121,7 +121,7 @@ interface BotSettings {
   models: {
     id: string;
     label: string;
-    provider: "deepseek" | "openai" | "gemini";
+    provider: "deepseek" | "openai" | "gemini" | "anthropic";
     enabled: boolean;
   }[];
   systemPrompt: string;
@@ -217,7 +217,7 @@ const btnToTop = document.getElementById("btnToTop") as HTMLButtonElement;
 const state = {
   authenticated: false,
   loginEnabled: true,
-  view: "products" as AdminView,
+  view: "crm" as AdminView,
   products: [] as AdminProduct[],
   groups: ["Гаджеты", "Игры", "Аксессуары", "Другое"],
   categorySuggestions: [] as string[],
@@ -404,8 +404,8 @@ function renderLogin(): void {
   btnLogout.hidden = true;
   if (!state.loginEnabled) {
     root.innerHTML = `<div class="admin__login">
-      <h1 class="section__title">Админка</h1>
-      <p class="lead">Вход по паролю не настроен на сервере. Задайте ADMIN_USERNAME, ADMIN_PASSWORD_HASH и SESSION_SECRET
+      <h1 class="section__title">CRM</h1>
+      <p class="lead">Вход для сотрудников не настроен на сервере. Задайте ADMIN_USERNAME, ADMIN_PASSWORD_HASH и SESSION_SECRET
       (командой <code>npm run admin:set-password</code>) — либо пользуйтесь <code>npm run admin</code> с терминала.</p>
     </div>`;
     return;
@@ -415,10 +415,10 @@ function renderLogin(): void {
     <div class="admin__login">
       <div class="admin__login-brand">
         <span class="logo__badge admin__login-badge" role="img" aria-label="Мостовой"></span>
-        <span class="admin__login-kicker">Панель управления</span>
+        <span class="admin__login-kicker">CRM для сотрудников</span>
       </div>
       <h1 class="section__title">С возвращением</h1>
-      <p class="admin__login-copy">Войдите, чтобы управлять товарами, ценами и новостями магазина.</p>
+      <p class="admin__login-copy">Войдите, чтобы работать с диалогами, товарами, ценами и новостями магазина.</p>
       ${state.loginError ? `<p class="admin__error">${esc(state.loginError)}</p>` : ""}
       <form id="loginForm" class="admin__login-form">
         <label>Логин

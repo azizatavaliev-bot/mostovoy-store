@@ -153,6 +153,7 @@ interface BotEvent {
   stage: string;
   event: string;
   message?: string;
+  details?: Record<string, unknown> | null;
   createdAt: string;
 }
 
@@ -1087,6 +1088,7 @@ function wireHistoryView(): void {
 // --- CRM inbox -------------------------------------------------------------
 
 let crmPoll: ReturnType<typeof setInterval> | undefined;
+let developerPoll: ReturnType<typeof setInterval> | undefined;
 
 function crmSourceLabel(source: string): string {
   return source === "telegram" ? "Telegram" : source === "whatsapp" ? "WhatsApp" : "amoCRM";
@@ -1638,6 +1640,43 @@ function renderAiUsage(): string {
     </section>`;
 }
 
+function terminalTime(iso: string): string {
+  const normalized = iso.includes("T") ? iso : iso.replace(" ", "T") + "Z";
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime())
+    ? "--:--:--"
+    : date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function terminalDetails(details: BotEvent["details"]): string {
+  if (!details || typeof details !== "object") return "";
+  return Object.entries(details)
+    .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+    .join(" ")
+    .slice(0, 420);
+}
+
+function renderBotTerminal(): string {
+  if (!state.botEvents.length) return `<div class="bot-terminal__empty">$ Ожидаем события бота…</div>`;
+  return [...state.botEvents].reverse().map((event) => {
+    const details = terminalDetails(event.details);
+    return `<div class="bot-terminal__line bot-terminal__line--${event.level}">
+      <time>${esc(terminalTime(event.createdAt))}</time><b>${esc(event.level.toUpperCase())}</b>
+      <span class="bot-terminal__stage">${esc(event.stage)}</span>
+      <span>${esc(event.message || event.event)}</span>
+      ${details ? `<code>${esc(details)}</code>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderBotTerminalMount(): void {
+  const terminal = document.getElementById("botTerminal");
+  if (!terminal) return;
+  const keepBottom = terminal.scrollHeight - terminal.scrollTop - terminal.clientHeight < 44;
+  terminal.innerHTML = renderBotTerminal();
+  if (keepBottom) terminal.scrollTop = terminal.scrollHeight;
+}
+
 function renderDeveloperMount(): void {
   const mount = document.getElementById("developerMount");
   const data = state.developerStatus;
@@ -1681,12 +1720,8 @@ function renderDeveloperMount(): void {
     ${renderAiUsage()}
     <section class="bot-panel bot-pipeline">
       <header><div><p class="eyebrow">Live log</p><h2>Пайплайн и ошибки</h2></div>
-        <button type="button" class="admin__link" id="refreshBotEvents">Обновить</button></header>
-      <div class="bot-events">${state.botEvents.map((event) => `
-        <article class="bot-event bot-event--${event.level}">
-          <time>${esc(fmtRelative(event.createdAt))}</time><b>${esc(event.stage)}</b>
-          <code>${esc(event.event)}</code><span>${esc(event.message || "")}</span>
-        </article>`).join("") || `<div class="bot-empty">Событий пока нет.</div>`}</div>
+        <div class="bot-terminal__actions"><span><i></i> LIVE · 3 сек</span><button type="button" class="admin__link" id="refreshBotEvents">Обновить</button></div></header>
+      <div class="bot-terminal" id="botTerminal" role="log" aria-live="polite">${renderBotTerminal()}</div>
     </section>`;
   wireDeveloperMount();
 }
@@ -1703,6 +1738,12 @@ async function loadDeveloper(): Promise<void> {
   renderDeveloperMount();
 }
 
+async function refreshDeveloperEvents(): Promise<void> {
+  const events = await api<{ events: BotEvent[] }>("GET", "/crm/developer/events?limit=150");
+  state.botEvents = events.events;
+  renderBotTerminalMount();
+}
+
 function wireDeveloperMount(): void {
   document.getElementById("saveBotSettings")?.addEventListener("click", async () => {
     const saved = await api<BotSettings>("PUT", "/crm/settings", currentBotSettings());
@@ -1714,7 +1755,7 @@ function wireDeveloperMount(): void {
     const messages = document.getElementById("botLabMessages");
     if (messages) messages.innerHTML = renderLabMessages();
   });
-  document.getElementById("refreshBotEvents")?.addEventListener("click", () => loadDeveloper().catch((error) => toast(error.message, false)));
+  document.getElementById("refreshBotEvents")?.addEventListener("click", () => refreshDeveloperEvents().catch((error) => toast(error.message, false)));
   document.getElementById("botLabForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target as HTMLFormElement;
@@ -1747,6 +1788,7 @@ function wireDeveloperMount(): void {
 
 function wireDeveloperView(): void {
   loadDeveloper().catch((error) => toast(error.message, false));
+  developerPoll = setInterval(() => refreshDeveloperEvents().catch(() => {}), 3000);
 }
 
 // --- Общий каркас: вкладки + рендер ------------------------------------
@@ -1782,6 +1824,10 @@ function renderView(): void {
   if (crmPoll) {
     clearInterval(crmPoll);
     crmPoll = undefined;
+  }
+  if (developerPoll) {
+    clearInterval(developerPoll);
+    developerPoll = undefined;
   }
   if (!state.authenticated) return renderLogin();
   btnLogout.hidden = false;

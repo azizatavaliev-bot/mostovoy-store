@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createConnection } = require("../server/db");
-const { CrmService, telegramHtml } = require("../server/services/crm");
+const { CrmService, buildTelegramCatalogForAssistant, telegramHtml } = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
 const config = require("../server/config");
 
@@ -14,6 +14,32 @@ test("Markdown-оформление ответа преобразуется в �
     telegramHtml("__Подчёркнуто__ и ~~зачёркнуто~~"),
     "<u>Подчёркнуто</u> и <s>зачёркнуто</s>",
   );
+});
+
+test("каталог для ИИ берёт цену только из Telegram и выбирает нужную валюту", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'active')"
+  );
+  const iphone = insertProduct.run("iphone-15-test", "iphone-15-test", "iPhone 15", 99999, "RUB").lastInsertRowid;
+  const premium = insertProduct.run("macbook-pro-test", "macbook-pro-test", "MacBook Pro 14", 99999, "RUB").lastInsertRowid;
+  insertProduct.run("legacy-test", "legacy-test", "Старый товар сайта", 1, "RUB");
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)"
+  );
+  link.run(message, iphone, 900, "USD");
+  link.run(message, premium, 1590, "USD");
+
+  const catalog = buildTelegramCatalogForAssistant(db);
+  assert.match(catalog, /iPhone 15: цена по умолчанию 78\s?800 с; USD 900 \$; RUB 71\s?100 ₽/);
+  assert.match(catalog, /MacBook Pro 14: цена по умолчанию 125\s?700 ₽; USD 1\s?590 \$; RUB 125\s?700 ₽/);
+  assert.doesNotMatch(catalog, /Старый товар сайта/);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

@@ -49,6 +49,54 @@ const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подх
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
+const PREMIUM_RUB_PRICE = /\b(?:macbook\s+pro|iphone\s+17\s+pro\s+max)\b/i;
+
+function roundAssistantPrice(amount, currency) {
+  const step = currency === "USD" ? 10 : 100;
+  return Math.ceil(Number(amount) / step) * step;
+}
+
+function convertAssistantPrice(amount, from, to) {
+  const sourceRate = Number(config.rates[String(from || "").toUpperCase()]) || 1;
+  const targetRate = Number(config.rates[String(to || "").toUpperCase()]) || 1;
+  return Number(amount) / sourceRate * targetRate;
+}
+
+function formatAssistantPrice(amount, from, to) {
+  const value = roundAssistantPrice(convertAssistantPrice(amount, from, to), to);
+  const suffix = to === "KGS" ? "с" : to === "RUB" ? "₽" : "$";
+  return `${value.toLocaleString("ru-RU")} ${suffix}`;
+}
+
+function buildTelegramCatalogForAssistant(db) {
+  const products = db.prepare(
+    `SELECT p.official_name, p.color, p.storage, mp.price, mp.currency, mp.available
+       FROM products p
+       JOIN message_products mp ON mp.product_id = p.id
+       JOIN telegram_messages tm ON tm.id = mp.message_id
+      WHERE p.status = 'active' AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL
+        AND tm.id = (
+          SELECT tm2.id
+            FROM message_products mp2
+            JOIN telegram_messages tm2 ON tm2.id = mp2.message_id
+           WHERE mp2.product_id = p.id AND mp2.active = 1 AND tm2.is_deleted = 0 AND mp2.price IS NOT NULL
+           ORDER BY COALESCE(tm2.telegram_message_updated_at, tm2.updated_at, tm2.created_at) DESC, tm2.id DESC
+           LIMIT 1
+        )
+      ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
+  ).all();
+  return products.map((p) => {
+    const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
+    const defaultCurrency = PREMIUM_RUB_PRICE.test(p.official_name) ? "RUB" : "KGS";
+    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, defaultCurrency)}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}${p.available ? "" : " (нет в наличии)"}`;
+  }).join("\n");
+}
+
+const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
+Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
+Для русскоязычных и кыргызскоязычных клиентов по умолчанию называй «цену по умолчанию»: это сомы. Исключение — MacBook Pro и iPhone 17 Pro Max: по умолчанию называй цену в рублях.
+Если клиент явно попросил USD, RUB или KGS — назови цену в этой валюте. Если клиент пишет по-английски — по умолчанию используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
+Цены в строках каталога уже округлены вверх для красивого показа. Если товара нет в этом каталоге, скажи, что менеджер уточнит актуальную цену в канале.`;
 
 function toConversation(row) {
   return {
@@ -551,6 +599,7 @@ prompt_patch — не больше двух коротких предложен�
       `ХАРАКТЕР:\n${settings.characterPrompt}`,
       `ПРАВИЛА:\n${settings.rulesPrompt}`,
       `ЗАДАЧА:\n${settings.taskPrompt}`,
+      ASSISTANT_PRICE_POLICY,
       catalog ? `АКТУАЛЬНЫЙ КАТАЛОГ:\n${catalog}` : "",
     ].filter(Boolean).join("\n\n");
   }
@@ -737,13 +786,7 @@ prompt_patch — не больше двух коротких предложен�
     const detail = this.getConversation(conversationId);
     if (!detail?.conversation.aiEnabled) return;
     const settings = this.getSettings();
-    const products = this.db.prepare(
-      `SELECT official_name, color, storage, price, currency, available
-       FROM products WHERE status = 'active' AND price IS NOT NULL ORDER BY updated_at DESC`
-    ).all();
-    const catalog = products.map((p) =>
-      `- ${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}: ${p.price} ${p.currency}${p.available ? "" : " (нет в наличии)"}`
-    ).join("\n");
+    const catalog = buildTelegramCatalogForAssistant(this.db);
     const history = detail.messages.slice(-14).map((m) => ({
       role: m.direction === "incoming" ? "user" : "assistant",
       content: m.text,
@@ -868,6 +911,8 @@ module.exports = {
   DEFAULT_CHARACTER_PROMPT,
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,
+  buildTelegramCatalogForAssistant,
+  formatAssistantPrice,
   telegramHtml,
   toConversation,
 };

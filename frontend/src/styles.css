@@ -2641,3 +2641,53 @@ body { letter-spacing: -.01em; }
 @media (prefers-reduced-motion: reduce) {
   .hero::before { display: none; }
 }
+
+/* Конвейеры не ограничиваются шириной контентного контейнера: лента идёт
+   от края до края экрана, а повторяющийся трек движется справа налево. */
+.product-line .gadget-conveyor,
+.product-line .brand-conveyor {
+  position: relative;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
+  margin-right: calc(50% - 50vw);
+  overflow: hidden;
+  border-inline: 0;
+}
+.product-line .gadget-conveyor::before,
+.product-line .gadget-conveyor::after,
+.product-line .brand-conveyor::before,
+.product-line .brand-conveyor::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  width: clamp(22px, 4vw, 90px);
+  pointer-events: none;
+}
+.product-line .gadget-conveyor::before { left: 0; background: linear-gradient(90deg, #111116, transparent); }
+.product-line .gadget-conveyor::after { right: 0; background: linear-gradient(-90deg, #111116, transparent); }
+.product-line .brand-conveyor::before { left: 0; background: linear-gradient(90deg, var(--red), transparent); }
+.product-line .brand-conveyor::after { right: 0; background: linear-gradient(-90deg, var(--red), transparent); }
+.product-line .gadget-conveyor__track,
+.product-line .brand-conveyor__track {
+  min-width: max-content;
+  gap: 18px;
+  padding: 18px max(24px, calc((100vw - 1372px) / 2));
+  animation-name: conveyor-right-to-left;
+  animation-timing-function: linear;
+  animation-direction: normal;
+}
+.product-line .gadget-conveyor__track { animation-duration: 32s; }
+.product-line .brand-conveyor__track { animation-duration: 38s; }
+@keyframes conveyor-right-to-left {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-33.333%, 0, 0); }
+}
+
+@media (max-width: 520px) {
+  .product-line .gadget-conveyor__track,
+  .product-line .brand-conveyor__track { gap: 10px; padding-block: 13px; }
+  .product-line .gadget-conveyor__track button,
+  .product-line .brand-conveyor__track button { min-width: 116px; padding: 9px 15px; font-size: 11px; }
+}

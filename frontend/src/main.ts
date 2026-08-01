@@ -745,6 +745,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "Whoop",
     description: "Трекер восстановления, сна и нагрузки.",
     visual: "video",
+    match: (product: Product) => /whoop/i.test(`${product.name} ${product.brand}`),
   },
   {
     key: "console",
@@ -752,6 +753,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "PlayStation Xbox Nintendo",
     description: "Игры, подписки и домашние развлечения.",
     visual: "console",
+    match: (product: Product) => /playstation|xbox|nintendo|switch|steam deck/i.test(`${product.name} ${product.brand} ${product.category}`),
   },
   {
     key: "garmin",
@@ -759,6 +761,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "Garmin",
     description: "Спорт, навигация и автономные часы.",
     visual: "garmin",
+    match: (product: Product) => /garmin/i.test(`${product.name} ${product.brand}`),
   },
   {
     key: "meta",
@@ -766,6 +769,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "Meta Ray-Ban",
     description: "Умные очки, камера и AI на каждый день.",
     visual: "meta",
+    match: (product: Product) => /meta.*ray-ban|ray-ban|oakley/i.test(`${product.name} ${product.brand}`),
   },
   {
     key: "hairdryer",
@@ -773,6 +777,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "Dyson фен",
     description: "Уход за волосами и компактный стайлинг.",
     visual: "hairdryer",
+    match: (product: Product) => /dyson/i.test(`${product.name} ${product.brand}`),
   },
   {
     key: "shaver",
@@ -780,6 +785,7 @@ const OTHER_PRODUCT_FAMILIES = [
     query: "Philips бритва триммер",
     description: "Электробритвы и триммеры для ухода.",
     visual: "shaver",
+    match: (product: Product) => /philips|oneblade|бритв|триммер/i.test(`${product.name} ${product.brand} ${product.category}`),
   },
 ] as const;
 
@@ -811,7 +817,12 @@ function applyProductLineQuery(query: string): void {
   document.getElementById("catalog")?.scrollIntoView({ behavior: "smooth" });
 }
 
-function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual"]): string {
+function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual"], product: Product | null): string {
+  const source = product?.image || product?.img;
+  if (source) {
+    return `<img class="product-family__image product-family__image--contain" src="${optimizedImageUrl(source, 640)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`;
+  }
+
   if (kind === "video") {
     return `
       <img class="product-family__image" src="/images/whoop.jpg" alt="" loading="lazy" decoding="async" />
@@ -893,12 +904,14 @@ function renderProductLine(): void {
 
   otherRail.innerHTML = OTHER_PRODUCT_FAMILIES
     .map(
-      (family) => `
+      (family) => {
+        const product = familyProduct(family.match);
+        return `
         <button type="button" class="product-family product-family--other reveal" data-other-product-family="${family.key}"
           aria-label="Смотреть ${family.name} в каталоге">
           <span class="product-family__stage product-family__stage--${family.visual}">
             <span class="product-family__media product-family__media--concept">
-              ${otherFamilyVisual(family.visual)}
+              ${otherFamilyVisual(family.visual, product)}
             </span>
           </span>
           <span class="product-family__copy">
@@ -906,7 +919,8 @@ function renderProductLine(): void {
             <small>${family.description}</small>
             <span class="product-family__action">Смотреть <b aria-hidden="true">↗</b></span>
           </span>
-        </button>`
+        </button>`;
+      }
     )
     .join("");
 

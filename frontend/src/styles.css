@@ -2685,6 +2685,16 @@ body { letter-spacing: -.01em; }
   to { transform: translate3d(-33.333%, 0, 0); }
 }
 
+/* Whoop — фотография высокая, поэтому не кадрируем ремешок по краям. */
+.product-family__stage--video .product-family__image {
+  width: 86%;
+  height: 86%;
+  inset: 7%;
+  object-fit: contain;
+  object-position: center;
+  mix-blend-mode: multiply;
+}
+
 @media (max-width: 520px) {
   .product-line .gadget-conveyor__track,
   .product-line .brand-conveyor__track { gap: 10px; padding-block: 13px; }

@@ -51,6 +51,14 @@ const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
 const PREMIUM_RUB_PRICE = /\b(?:macbook\s+pro|iphone\s+17\s+pro\s+max)\b/i;
+const INSTALLMENT_COEFFICIENTS = { 3: 0.94, 6: 0.89, 12: 0.84 };
+const TRADE_IN_OPTIONS = [
+  ["iphone 15 pro max", 900], ["iphone 15 pro", 800], ["iphone 15", 620],
+  ["iphone 14 pro", 600], ["iphone 14", 480], ["iphone 13", 360], ["iphone 12", 260],
+  ["galaxy s24 ultra", 740], ["galaxy s24", 520], ["galaxy s23", 380], ["galaxy s22", 260],
+  ["macbook air m1", 450], ["macbook air m2", 650], ["macbook air m3", 850], ["macbook air m4", 850],
+  ["macbook pro 14", 1050], ["macbook pro 16", 1250],
+];
 
 function roundAssistantPrice(amount, currency) {
   const step = currency === "USD" ? 10 : 100;
@@ -67,6 +75,51 @@ function formatAssistantPrice(amount, from, to) {
   const value = roundAssistantPrice(convertAssistantPrice(amount, from, to), to);
   const suffix = to === "KGS" ? "с" : to === "RUB" ? "₽" : "$";
   return `${value.toLocaleString("ru-RU")} ${suffix}`;
+}
+
+function tradeInEstimate(message) {
+  const normalized = String(message || "").toLowerCase().replace(/ё/g, "е");
+  const model = TRADE_IN_OPTIONS.find(([name]) => normalized.includes(name));
+  const generic = /(?:android.*флагман|флагман.*android)/.test(normalized) ? ["Другой Android (флагман)", 180]
+    : /(?:android.*бюджет|бюджет.*android)/.test(normalized) ? ["Другой Android (бюджет)", 65] : null;
+  const device = model || generic;
+  if (!device) return null;
+  const condition = /дефект|трещин|скол|не работает|плох/.test(normalized) ? ["С дефектами", 0.45]
+    : /хорош/.test(normalized) ? ["Хорошее", 0.7] : ["Отличное", 1];
+  return { device: device[0], condition: condition[0], usd: Number(device[1]) * Number(condition[1]) };
+}
+
+function selectedCatalogProduct(selection) {
+  const match = String(selection || "").match(/\{\s*"products"[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const products = JSON.parse(match[0]).products;
+    const product = Array.isArray(products) ? products.find((item) => item?.available && Number.isFinite(Number(item.price))) : null;
+    return product ? { ...product, price: Number(product.price), currency: String(product.currency).toUpperCase() } : null;
+  } catch { return null; }
+}
+
+function financeToolContext(request, selection) {
+  const text = String(request || "").toLowerCase();
+  const wantsInstallment = /рассроч|в кредит|платеж.*месяц|ежемесяч/.test(text);
+  const wantsTradeIn = /trade.?in|трейд.?ин|обменять|сдать.*(?:айфон|iphone|телефон|macbook|макбук)/.test(text);
+  if (!wantsInstallment && !wantsTradeIn) return "";
+  const product = selectedCatalogProduct(selection);
+  const trade = wantsTradeIn ? tradeInEstimate(request) : null;
+  const lines = ["ИНСТРУМЕНТЫ РАСЧЁТА САЙТА (данные уже рассчитаны, не меняй формулу):"];
+  if (trade) lines.push(`Trade-in: ${trade.device}, состояние «${trade.condition}» — предварительная оценка ${formatAssistantPrice(trade.usd, "USD", "KGS")} (точную подтвердит диагностика).`);
+  if (wantsInstallment && product) {
+    const months = Number((text.match(/\b(3|6|12)\s*(?:мес|месяц)/) || [])[1]) || 12;
+    const coefficient = INSTALLMENT_COEFFICIENTS[months];
+    const productKgs = convertAssistantPrice(product.price, product.currency, "KGS");
+    const tradeKgs = trade ? convertAssistantPrice(trade.usd, "USD", "KGS") : 0;
+    const principal = Math.max(productKgs - tradeKgs, 0);
+    const total = principal / coefficient;
+    const monthly = total / months;
+    lines.push(`Рассрочка: ${product.name}; ${months} мес.; стоимость ${formatAssistantPrice(productKgs, "KGS", "KGS")}; после Trade-in ${formatAssistantPrice(principal, "KGS", "KGS")}; платёж ${formatAssistantPrice(monthly, "KGS", "KGS")} в месяц; всего ${formatAssistantPrice(total, "KGS", "KGS")}; переплата ${formatAssistantPrice(total - principal, "KGS", "KGS")}.`);
+  } else if (wantsInstallment) lines.push("Для точного расчёта рассрочки сначала назови товар и срок: 3, 6 или 12 месяцев.");
+  lines.push("Используй расчёт в ответе. Если клиент подтвердил расчёт, попроси имя и телефон для оформления.");
+  return lines.join("\n");
 }
 
 function buildTelegramCatalogForAssistant(db) {
@@ -674,8 +727,9 @@ prompt_patch — не больше двух коротких предложен�
       customerRequest: text,
       catalog,
     });
+    const finance = financeToolContext(text, selection);
     const reply = await this.ai.chatText({
-      system: this._composePrompt(settings, selection),
+      system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
@@ -841,7 +895,13 @@ prompt_patch — не больше двух коротких предложен�
         messageId: inserted,
       });
     }
-    if (inserted && conversation.ai_enabled) await this._autoReply(conversation.id, inserted);
+    if (inserted && conversation.ai_enabled) {
+      if (this._isDuplicateInbound(conversation.id, inserted, text)) {
+        this._logEvent(conversation.id, "info", "inbox", "message.duplicate_suppressed", "Дубликат сообщения не запустил повторный ответ", { windowSeconds: 40 });
+      } else {
+        await this._autoReply(conversation.id, inserted);
+      }
+    }
   }
 
   async receiveAmo(incoming, raw) {
@@ -912,7 +972,9 @@ prompt_patch — не больше двух коротких предложен�
       customerRequest,
       catalog,
     });
-    const prompt = this._composePrompt(settings, selection);
+    const finance = financeToolContext(customerRequest, selection);
+    if (finance) this._recordFinanceRequest(conversationId, customerRequest, selection);
+    const prompt = this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n"));
     this._logEvent(conversationId, "info", "generation", "generation.started", "ИИ формирует черновик", {
       model: settings.model,
       incomingMessageId,
@@ -924,6 +986,18 @@ prompt_patch — не больше двух коротких предложен�
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
+      const newestInbound = this.db.prepare(
+        `SELECT id FROM crm_messages
+          WHERE conversation_id = ? AND direction = 'incoming'
+          ORDER BY id DESC LIMIT 1`
+      ).get(conversationId);
+      if (Number(newestInbound?.id) !== Number(incomingMessageId)) {
+        this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {
+          incomingMessageId,
+          newestIncomingMessageId: newestInbound?.id || null,
+        });
+        return;
+      }
       if (settings.approvalEnabled) {
         const summary = await this._summarizeConversation(conversationId, history, settings);
         const customerMessage = [...detail.messages].reverse().find((message) => message.direction === "incoming")?.text || "";
@@ -986,6 +1060,31 @@ prompt_patch — не больше двух коротких предложен�
       this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_failed", error.message);
       return "Товаровед временно не смог отобрать товары. Не называй неподтверждённую цену; попроси один конкретный критерий выбора и не упоминай менеджера.";
     }
+  }
+
+  _recordFinanceRequest(conversationId, request, selection) {
+    if (!conversationId) return;
+    const trade = tradeInEstimate(request);
+    const product = selectedCatalogProduct(selection);
+    const kind = /рассроч|в кредит|платеж.*месяц|ежемесяч/i.test(request) ? "Рассрочка" : "Trade-in";
+    const details = [kind, product?.name, trade && `${trade.device} (${trade.condition})`].filter(Boolean).join(": ");
+    const row = this.db.prepare("SELECT notes FROM crm_conversations WHERE id = ?").get(conversationId);
+    if (!row || String(row.notes || "").includes(details)) return;
+    const note = [String(row.notes || "").trim(), `Заявка: ${details}`].filter(Boolean).join("\n").slice(-4000);
+    this.db.prepare("UPDATE crm_conversations SET notes = ?, updated_at = datetime('now') WHERE id = ?").run(note, conversationId);
+    this._logEvent(conversationId, "info", "commerce", "commerce.calculated", `Рассчитано: ${details}`, { kind, product: product?.name || null, tradeIn: trade || null });
+  }
+
+  _isDuplicateInbound(conversationId, messageId, text) {
+    const value = String(text || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("ru");
+    if (!value) return false;
+    return Boolean(this.db.prepare(
+      `SELECT 1 FROM crm_messages
+        WHERE conversation_id = ? AND direction = 'incoming' AND id != ?
+          AND lower(trim(text)) = ?
+          AND created_at >= datetime('now', '-40 seconds')
+        LIMIT 1`
+    ).get(conversationId, messageId, value));
   }
 
   async sendManual(conversationId, text) {

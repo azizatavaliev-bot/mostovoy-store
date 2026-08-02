@@ -2578,8 +2578,8 @@ body { letter-spacing: -.01em; }
 .hero__quickicon { color: var(--red); background: rgba(255,255,255,.72); box-shadow: 0 8px 24px rgba(0,0,0,.055); }
 .hero__disc {
   right: 0; bottom: -27%;
-  background: radial-gradient(circle at 40% 34%, #fff 0 7%, #ffd6da 23%, #ff8b97 53%, #ff2437 100%);
-  box-shadow: inset 0 26px 70px rgba(255,255,255,.42), 0 24px 70px rgba(255,36,55,.12);
+  background: radial-gradient(circle at 38% 31%, #ffccd1 0 5%, #ff7785 28%, #ff263a 59%, #e6001b 100%);
+  box-shadow: inset 0 22px 58px rgba(255,255,255,.22), 0 26px 76px rgba(255,20,45,.28);
 }
 .hero__orbit { border-width: 1px; border-color: rgba(255,255,255,.82); box-shadow: 0 0 0 1px rgba(255,36,55,.08); }
 .hero__device { filter: drop-shadow(0 38px 30px rgba(29,29,31,.16)); }
@@ -2596,7 +2596,18 @@ body { letter-spacing: -.01em; }
 .product-line__head > p:last-child { color: #6e6e73; font-weight: 600; letter-spacing: -.05em; }
 .product-family { border-color: #e8e8ed; background: #fff; }
 .product-family:hover { border-color: rgba(255,36,55,.35); box-shadow: 0 25px 56px rgba(29,29,31,.12); }
-.product-family__stage { background: linear-gradient(145deg, #fbfbfd, #f1f1f4); }
+.product-family__stage,
+.product-family__stage--video,
+.product-family__stage--console,
+.product-family__stage--garmin,
+.product-family__stage--meta,
+.product-family__stage--hairdryer,
+.product-family__stage--shaver { background: #fff; }
+.product-family__media,
+.product-family__media--concept { background: #fff; }
+.product-family__media img,
+.product-family__image,
+.product-family__image--contain { mix-blend-mode: normal; filter: none; box-shadow: none; }
 .product-family__copy { min-height: 156px; padding: 24px 23px 22px; }
 .product-family__copy strong { letter-spacing: -.045em; }
 .product-family__action { background: var(--ink); }
@@ -2635,7 +2646,7 @@ body { letter-spacing: -.01em; }
   .hero__title { letter-spacing: -.07em; }
   .hero__sub { color: #6e6e73; }
   .product-line { padding-block: 74px; }
-  .product-family__stage { background: linear-gradient(145deg, #fbfbfd, #f1f1f4); }
+  .product-family__stage { background: #fff; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -782,7 +782,9 @@ const OTHER_PRODUCT_FAMILIES = [
   {
     key: "shaver",
     name: "Бритвы",
-    query: "Philips бритва триммер",
+    // В каталоге OneBlade размечен как «Триммеры», а не «Бритвы».
+    // Один бренд — надёжный поиск, тогда карточка не ведёт в пустую выдачу.
+    query: "Philips",
     description: "Электробритвы и триммеры для ухода.",
     visual: "shaver",
     match: (product: Product) => /philips|oneblade|бритв|триммер/i.test(`${product.name} ${product.brand} ${product.category}`),

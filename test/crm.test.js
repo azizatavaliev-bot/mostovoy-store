@@ -647,7 +647,7 @@ test("ответ бота с ценой переводит сделку в пе�
   });
   const conversation = crm.listConversations()[0];
 
-  await crm._send(conversation.id, "iPhone 17 Pro Max 1TB — 1 610 $. Оформить резерв?", "assistant");
+  await crm._send(conversation.id, "Заказ — **iPhone 17 Pro Max 1 ТБ за 140\u202f875 сом**. Оформить резерв?", "assistant");
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(crmDeals.advanceCalls, [{ externalKey: "telegram:490" }]);

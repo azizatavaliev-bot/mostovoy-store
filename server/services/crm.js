@@ -144,6 +144,10 @@ function pricesMentionedInReply(reply, currency) {
     .filter(Number.isFinite);
 }
 
+function hasPriceInReply(reply) {
+  return /(?:\$\s*\d|\d[\d\s\u00a0\u202f.,]*\s*(?:\$|сом(?:а|ов)?|с|₽|₸)(?=\s|$|[.,;!?*]))/iu.test(String(reply || ""));
+}
+
 function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
   const products = productsFromSelection(selection);
   if (!products.length) return reply;
@@ -1393,7 +1397,7 @@ prompt_patch — не больше двух коротких предложен�
       "UPDATE crm_conversations SET last_message_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
     ).run(c.id);
     this._logEvent(c.id, "info", "delivery", "message.sent", "Сообщение отправлено клиенту", { sender });
-    if (sender === "assistant" && /(?:\$\s*\d|\d[\d\s\u202f.,]*\s*(?:\$|сом\b|с\b|₽|₸))/iu.test(text)) {
+    if (sender === "assistant" && hasPriceInReply(text)) {
       this._publishPrimaryContact(c);
     }
     return { ...this.getConversation(c.id), messageId: externalMessageId };

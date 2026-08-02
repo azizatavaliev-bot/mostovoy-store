@@ -50,7 +50,7 @@ const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подх
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
-const EXPENSIVE_PRICE_KGS = 120_000;
+const EXPENSIVE_PRICE_KGS = 100_000;
 const INSTALLMENT_COEFFICIENTS = { 3: 0.94, 6: 0.89, 12: 0.84 };
 const TRADE_IN_OPTIONS = [
   ["iphone 15 pro max", 900], ["iphone 15 pro", 800], ["iphone 15", 620],

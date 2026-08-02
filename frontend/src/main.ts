@@ -595,8 +595,15 @@ function filtered(): Product[] {
   if (state.category) list = list.filter((p) => p.category === state.category);
   if (state.brands.size) list = list.filter((p) => p.brand != null && state.brands.has(p.brand));
   if (state.q) {
-    const q = state.q.toLowerCase();
-    list = list.filter((p) => `${p.name} ${p.brand || ""} ${p.category || ""}`.toLowerCase().includes(q));
+    const queries = state.q
+      .toLowerCase()
+      .split("|")
+      .map((query) => query.trim())
+      .filter(Boolean);
+    list = list.filter((p) => {
+      const haystack = `${p.name} ${p.brand || ""} ${p.category || ""}`.toLowerCase();
+      return queries.some((query) => haystack.includes(query));
+    });
   }
   list = list.filter(inPriceRange);
 
@@ -750,7 +757,9 @@ const OTHER_PRODUCT_FAMILIES = [
   {
     key: "console",
     name: "Приставки",
-    query: "PlayStation Xbox Nintendo",
+    // Символ | означает «любой из вариантов»: в каталоге нет одной общей
+    // строки с названиями всех консолей.
+    query: "PlayStation|Xbox|Nintendo|Switch|Steam Deck",
     description: "Игры, подписки и домашние развлечения.",
     visual: "console",
     match: (product: Product) => /playstation|xbox|nintendo|switch|steam deck/i.test(`${product.name} ${product.brand} ${product.category}`),
@@ -859,6 +868,62 @@ function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual
     </span>`;
 }
 
+// Карточка берёт мягкий акцент из реального фото товара. Белый/серый фон
+// пропускаем: он не должен становиться свечением. Изображения загружаются через
+// same-origin WebP-прокси, поэтому canvas доступен без передачи данных наружу.
+function applyProductFamilyImageTheme(root: ParentNode): void {
+  root.querySelectorAll<HTMLImageElement>(".product-family__stage img").forEach((image) => {
+    const setAccent = () => {
+      if (!image.naturalWidth || !image.naturalHeight) return;
+      const canvas = document.createElement("canvas");
+      const size = 48;
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) return;
+      try {
+        context.drawImage(image, 0, 0, size, size);
+        const pixels = context.getImageData(0, 0, size, size).data;
+        let red = 0;
+        let green = 0;
+        let blue = 0;
+        let weight = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          const r = pixels[i];
+          const g = pixels[i + 1];
+          const b = pixels[i + 2];
+          const max = Math.max(r, g, b);
+          const min = Math.min(r, g, b);
+          const saturation = max - min;
+          // Не учитываем почти белый фон, тени и нейтральный металл.
+          if (max > 236 || saturation < 44 || max < 36) continue;
+          const pixelWeight = saturation * (max / 255);
+          red += r * pixelWeight;
+          green += g * pixelWeight;
+          blue += b * pixelWeight;
+          weight += pixelWeight;
+        }
+        if (!weight) return;
+        const averageRed = Math.round(red / weight);
+        const averageGreen = Math.round(green / weight);
+        const averageBlue = Math.round(blue / weight);
+        // У чёрной и очень тёмной техники оставляем чистую карточку:
+        // затемнённое свечение выглядело бы как грязная тень.
+        const brightness = averageRed * 0.2126 + averageGreen * 0.7152 + averageBlue * 0.0722;
+        if (brightness < 82) return;
+        const stage = image.closest<HTMLElement>(".product-family__stage");
+        if (!stage) return;
+        stage.style.setProperty("--product-glow", `${averageRed}, ${averageGreen}, ${averageBlue}`);
+        stage.classList.add("product-family__stage--themed");
+      } catch {
+        // Внешняя картинка без CORS просто остаётся без цветового свечения.
+      }
+    };
+    if (image.complete) setAccent();
+    else image.addEventListener("load", setAccent, { once: true });
+  });
+}
+
 function appleFamilyVisual(family: (typeof PRODUCT_FAMILIES)[number], product: Product | null): string {
   if (product) return mediaHTML(product, "product-family__media");
   return `<span class="product-family__media">
@@ -933,6 +998,9 @@ function renderProductLine(): void {
     if (!family) return;
     applyProductLineQuery(family.query);
   });
+
+  applyProductFamilyImageTheme(rail);
+  applyProductFamilyImageTheme(otherRail);
 }
 
 function conveyorButton(item: string, query: string, kind: "brand" | "gadget"): string {

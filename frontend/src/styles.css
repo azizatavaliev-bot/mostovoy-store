@@ -2602,12 +2602,19 @@ body { letter-spacing: -.01em; }
 .product-family__stage--garmin,
 .product-family__stage--meta,
 .product-family__stage--hairdryer,
-.product-family__stage--shaver { background: #fff; }
+.product-family__stage--shaver { background: #f2f2f2; }
 .product-family__media,
-.product-family__media--concept { background: #fff; }
+.product-family__media--concept { background: #f2f2f2; }
 .product-family__media img,
 .product-family__image,
-.product-family__image--contain { mix-blend-mode: normal; filter: none; box-shadow: none; }
+.product-family__image--contain { mix-blend-mode: multiply; filter: none; box-shadow: none; }
+.product-family__stage--themed::after {
+  content: ""; position: absolute; z-index: 0; pointer-events: none;
+  inset: auto 7% -16%; height: 40%; border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(var(--product-glow), .30) 0%, rgba(var(--product-glow), .10) 46%, transparent 75%);
+  filter: blur(20px);
+}
+.product-family__stage--themed .product-family__media { z-index: 1; }
 .product-family__copy { min-height: 156px; padding: 24px 23px 22px; }
 .product-family__copy strong { letter-spacing: -.045em; }
 .product-family__action { background: var(--ink); }
@@ -2646,7 +2653,7 @@ body { letter-spacing: -.01em; }
   .hero__title { letter-spacing: -.07em; }
   .hero__sub { color: #6e6e73; }
   .product-line { padding-block: 74px; }
-  .product-family__stage { background: #fff; }
+  .product-family__stage { background: #f2f2f2; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -45,12 +45,12 @@ function args(argv) {
   return { maxPages: value("--max-pages", argv.includes("--all") ? 30 : 1) };
 }
 
-async function loadPosts(channel, maxPages) {
+async function loadPosts(channel, maxPages, fetchImpl = globalThis.fetch) {
   const posts = new Map();
   let before = null;
   for (let page = 0; page < maxPages; page++) {
     const url = `https://t.me/s/${channel}${before ? `?before=${before}` : ""}`;
-    const response = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 MostovoyCatalogSync/1.0" } });
+    const response = await fetchImpl(url, { headers: { "user-agent": "Mozilla/5.0 MostovoyCatalogSync/1.0" } });
     if (!response.ok) throw new Error(`Не удалось открыть публичный канал: HTTP ${response.status}`);
     const html = await response.text();
     const pagePosts = parsePosts(html, channel);
@@ -62,13 +62,19 @@ async function loadPosts(channel, maxPages) {
   return [...posts.values()].sort((a, b) => a.messageId - b.messageId);
 }
 
-async function main() {
-  const channel = config.contact.channel;
+// Сначала читаем сам публичный канал, сохраняем исходные сообщения в базу,
+// затем консультант ищет по этой локальной копии. Никакая модель ИИ не
+// извлекает и не пересказывает цены до подбора товара.
+async function syncPublicChannelPosts({
+  db,
+  channel = config.contact.channel,
+  channelId = config.telegram.channelId,
+  maxPages = 1,
+  fetchImpl = globalThis.fetch,
+} = {}) {
   if (!channel) throw new Error("TELEGRAM_CHANNEL_USERNAME не задан");
-  if (!config.telegram.channelId) throw new Error("TELEGRAM_CHANNEL_ID не задан");
-  const { maxPages } = args(process.argv.slice(2));
-  const db = getDb();
-  const posts = await loadPosts(channel, maxPages);
+  if (!channelId) throw new Error("TELEGRAM_CHANNEL_ID не задан");
+  const posts = await loadPosts(channel, maxPages, fetchImpl);
   const save = db.prepare(
     `INSERT INTO telegram_messages
        (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status, last_synced_at, is_deleted)
@@ -80,10 +86,17 @@ async function main() {
        last_sync_status = 'raw', last_sync_error = NULL, last_synced_at = datetime('now'), is_deleted = 0, updated_at = datetime('now')`
   );
   for (const post of posts) {
-    save.run(String(config.telegram.channelId), post.messageId, post.updatedAt, post.text,
+    save.run(String(channelId), post.messageId, post.updatedAt, post.text,
       crypto.createHash("sha256").update(post.text).digest("hex"));
   }
-  console.log(JSON.stringify({ channel, found: posts.length, saved: posts.length }));
+  return { channel, found: posts.length, saved: posts.length };
+}
+
+async function main() {
+  const { maxPages } = args(process.argv.slice(2));
+  const db = getDb();
+  const result = await syncPublicChannelPosts({ db, maxPages });
+  console.log(JSON.stringify(result));
   closeDb();
 }
 
@@ -95,4 +108,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { decodeHtml, parsePosts, loadPosts };
+module.exports = { decodeHtml, parsePosts, loadPosts, syncPublicChannelPosts };

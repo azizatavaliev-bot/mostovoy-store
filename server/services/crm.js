@@ -2,6 +2,7 @@ const config = require("../config");
 const logger = require("../logger");
 const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
+const { syncPublicChannelPosts } = require("../cli/import-public-channel");
 
 function escapeTelegramHtml(value) {
   return String(value || "")
@@ -844,6 +845,14 @@ prompt_patch — не больше двух коротких предложен�
     const detail = this.getConversation(conversationId);
     if (!detail?.conversation.aiEnabled) return;
     const settings = this.getSettings();
+    // Перед каждым ответом берём свежую витрину Telegram-канала. Это поиск
+    // по первоисточнику до вызова модели, а не ответ по памяти DeepSeek.
+    try {
+      const sync = await syncPublicChannelPosts({ db: this.db, maxPages: 1, fetchImpl: this.fetchImpl });
+      this._logEvent(conversationId, "info", "catalog", "catalog.channel_synced", "Перед ответом обновлены публикации канала", sync);
+    } catch (error) {
+      this._logEvent(conversationId, "warn", "catalog", "catalog.channel_sync_failed", error.message);
+    }
     const catalog = buildTelegramCatalogForAssistant(this.db);
     const history = detail.messages.slice(-14).map((m) => ({
       role: m.direction === "incoming" ? "user" : "assistant",

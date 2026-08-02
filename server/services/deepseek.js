@@ -162,6 +162,10 @@ class DeepSeekClient {
           ],
           // Единственный поддерживаемый DeepSeek режим структурированного вывода.
           response_format: { type: "json_object" },
+          // Извлечение каталога — детерминированная задача. В V4 thinking
+          // включён по умолчанию и на больших прайс-листах иногда съедает
+          // весь лимит до финального JSON, поэтому здесь его отключаем.
+          thinking: { type: "disabled" },
           temperature,
           max_tokens: maxTokens || this.maxTokens,
           stream: false,

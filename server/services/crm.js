@@ -118,6 +118,11 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
 После конкретных рекомендаций коротко объясни разницу и мягко предложи лучший вариант. Например: «Сейчас чаще берут iPhone 17 — это свежая модель. Если бюджет не позволяет, есть более доступный вариант». Уточняющий вопрос допустим только в конце, когда он помогает выбрать между уже названными моделями.`;
 
+const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны свежие исходные публикации Telegram-канала и последнее сообщение клиента.
+Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из публикаций. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
+Верни JSON строго такого вида:
+{"products":[{"name":"точное название","price":"цена как в посте","availability":"если указано","reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}`;
+
 function toConversation(row) {
   return {
     id: Number(row.id),
@@ -858,7 +863,13 @@ prompt_patch — не больше двух коротких предложен�
       role: m.direction === "incoming" ? "user" : "assistant",
       content: m.text,
     }));
-    const prompt = this._composePrompt(settings, catalog || "Каталог пока пуст.");
+    const customerRequest = [...history].reverse().find((message) => message.role === "user")?.content || "";
+    const selection = await this._selectCatalogProducts({
+      conversationId,
+      customerRequest,
+      catalog,
+    });
+    const prompt = this._composePrompt(settings, selection);
     this._logEvent(conversationId, "info", "generation", "generation.started", "ИИ формирует черновик", {
       model: settings.model,
       incomingMessageId,
@@ -890,6 +901,38 @@ prompt_patch — не больше двух коротких предложен�
       this._logEvent(conversationId, "error", "generation", "generation.failed", error.message, {
         incomingMessageId,
       });
+    }
+  }
+
+  async _selectCatalogProducts({ conversationId, customerRequest, catalog }) {
+    if (!catalog) return "Товаровед не нашёл свежих публикаций канала.";
+    if (!this.deepseek?.enabled || typeof this.deepseek.chatJson !== "function") {
+      this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_unavailable", "Товаровед DeepSeek недоступен");
+      return "Товаровед временно недоступен: не называй цену и честно предложи менеджера.";
+    }
+    try {
+      const result = await this.deepseek.chatJson({
+        system: CATALOG_SPECIALIST_PROMPT,
+        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nСВЕЖИЕ ПОСТЫ КАНАЛА:\n${catalog}`,
+        maxTokens: 900,
+        onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
+      });
+      const products = Array.isArray(result?.products)
+        ? result.products.slice(0, 5).map((item) => ({
+          name: String(item?.name || "").trim(),
+          price: String(item?.price || "").trim(),
+          availability: String(item?.availability || "").trim(),
+          reason: String(item?.reason || "").trim(),
+        })).filter((item) => item.name && item.price)
+        : [];
+      const selection = JSON.stringify({ products, note: String(result?.note || "").trim() });
+      this._logEvent(conversationId, "info", "catalog", "catalog.specialist_selected", "Товаровед отобрал товары из канала", {
+        productCount: products.length,
+      });
+      return `ПОДБОРКА ТОВАРОВЕДА ИЗ КАНАЛА:\n${selection}\n\nОтвечай только по этой подборке. Не говори, что обращался к товароведу или каналу.`;
+    } catch (error) {
+      this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_failed", error.message);
+      return "Товаровед временно не смог отобрать товары: не называй цену и честно предложи менеджера.";
     }
   }
 

@@ -42,6 +42,39 @@ test("каталог для ИИ берёт цену только из Telegram 
   assert.doesNotMatch(catalog, /Старый товар сайта/);
 });
 
+test("товаровед DeepSeek получает сырой канал, а менеджер — только короткую подборку", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 777, '2026-08-02T10:00:00.000Z', 'iPhone 17 256 GB — 87 000 с', 'hash-777', 'raw')`
+  ).run();
+  let payload;
+  const crm = new CrmService({
+    db,
+    deepseek: {
+      enabled: true,
+      chatJson: async (value) => {
+        payload = value;
+        return { products: [{ name: 'iPhone 17 256 GB', price: '87 000 с', reason: 'в бюджете' }] };
+      },
+    },
+    amocrm: { enabled: false },
+  });
+
+  const selection = await crm._selectCatalogProducts({
+    conversationId: null,
+    customerRequest: 'Посоветуй iPhone до 120 000 сомов',
+    catalog: buildTelegramCatalogForAssistant(db),
+  });
+
+  assert.match(payload.user, /iPhone 17 256 GB — 87 000 с/);
+  assert.match(selection, /ПОДБОРКА ТОВАРОВЕДА/);
+  assert.match(selection, /87 000 с/);
+  assert.doesNotMatch(selection, /\[Пост канала/);
+});
+
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

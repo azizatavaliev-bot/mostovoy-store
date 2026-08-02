@@ -16,7 +16,7 @@ test("Markdown-оформление ответа преобразуется в �
   );
 });
 
-test("каталог для ИИ берёт цену только из Telegram и выбирает нужную валюту", (t) => {
+test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insertProduct = db.prepare(
@@ -36,13 +36,17 @@ test("каталог для ИИ берёт цену только из Telegram 
   link.run(message, iphone, 900, "USD");
   link.run(message, premium, 1590, "USD");
 
-  const catalog = buildTelegramCatalogForAssistant(db);
-  assert.match(catalog, /iPhone 15: цена по умолчанию 78\s?800 с; USD 900 \$; RUB 71\s?100 ₽/);
-  assert.match(catalog, /MacBook Pro 14: цена по умолчанию 125\s?700 ₽; USD 1\s?590 \$; RUB 125\s?700 ₽/);
-  assert.doesNotMatch(catalog, /Старый товар сайта/);
+  const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
+  assert.equal(catalog.source, "telegram_channel");
+  assert.deepEqual(catalog.products.map(({ name, price, currency, available }) => ({ name, price, currency, available })), [
+    { name: "iPhone 15", price: 900, currency: "USD", available: true },
+    { name: "MacBook Pro 14", price: 1590, currency: "USD", available: true },
+  ]);
+  assert.deepEqual(catalog.pendingPosts, []);
+  assert.equal(catalog.products.some((product) => product.name === "Старый товар сайта"), false);
 });
 
-test("товаровед DeepSeek получает сырой канал, а менеджер — только короткую подборку", async (t) => {
+test("товаровед DeepSeek получает базу канала, а менеджер — только короткую подборку", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   db.prepare(

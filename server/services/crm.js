@@ -123,23 +123,13 @@ function financeToolContext(request, selection) {
 }
 
 function buildTelegramCatalogForAssistant(db) {
-  // Первичный источник для ассистента — сами публикации канала, без
-  // промежуточного пересказа/извлечения модели. Импортёр public-channel
-  // сохраняет их при первом запуске, webhook поддерживает их свежими далее.
-  const posts = db.prepare(
-    `SELECT telegram_message_id, telegram_message_updated_at, telegram_original_text
-       FROM telegram_messages
-      WHERE is_deleted = 0 AND last_sync_status = 'raw' AND trim(telegram_original_text) != ''
-      ORDER BY COALESCE(telegram_message_updated_at, updated_at, created_at) DESC, telegram_message_id DESC
-      LIMIT 60`
-  ).all();
-  if (posts.length) {
-    return posts.map((post) =>
-      `[Пост канала #${post.telegram_message_id}, ${post.telegram_message_updated_at || "дата не указана"}]\n${post.telegram_original_text}`
-    ).join("\n\n");
-  }
+  // Товаровед работает со структурированной базой, полученной только из
+  // публикаций канала. Для каждой позиции берём самое новое активное
+  // упоминание — старая цена той же модели в подсказку не попадёт.
   const products = db.prepare(
-    `SELECT p.official_name, p.color, p.storage, mp.price, mp.currency, mp.available
+    `SELECT p.official_name, p.brand, p.category, p.color, p.storage,
+            mp.price, mp.currency, mp.available,
+            tm.telegram_message_id, tm.telegram_message_updated_at
        FROM products p
        JOIN message_products mp ON mp.product_id = p.id
        JOIN telegram_messages tm ON tm.id = mp.message_id
@@ -154,11 +144,37 @@ function buildTelegramCatalogForAssistant(db) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
-  if (products.length) return products.map((p) => {
-    const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
-    const defaultCurrency = PREMIUM_RUB_PRICE.test(p.official_name) ? "RUB" : "KGS";
-    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, defaultCurrency)}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}${p.available ? "" : " (нет в наличии)"}`;
-  }).join("\n");
+  // Новый или отредактированный пост сначала имеет статус raw. Добавляем
+  // его в payload товароведа сразу: он новее структурированной карточки и
+  // должен иметь приоритет до фонового разбора всей истории.
+  const pendingPosts = db.prepare(
+    `SELECT telegram_message_id, telegram_message_updated_at, telegram_original_text
+       FROM telegram_messages
+      WHERE is_deleted = 0 AND last_sync_status IN ('raw', 'pending')
+        AND trim(telegram_original_text) != ''
+      ORDER BY COALESCE(telegram_message_updated_at, updated_at, created_at) DESC, telegram_message_id DESC`
+  ).all().map((post) => ({
+    telegramMessageId: Number(post.telegram_message_id),
+    updatedAt: post.telegram_message_updated_at || null,
+    text: post.telegram_original_text,
+  }));
+
+  if (products.length || pendingPosts.length) return JSON.stringify({
+    source: "telegram_channel",
+    products: products.map((p) => ({
+      name: p.official_name,
+      brand: p.brand || null,
+      category: p.category || null,
+      storage: p.storage || null,
+      color: p.color || null,
+      price: Number(p.price),
+      currency: p.currency,
+      available: Boolean(p.available),
+      telegramMessageId: Number(p.telegram_message_id),
+      updatedAt: p.telegram_message_updated_at || null,
+    })),
+    pendingPosts,
+  });
   // Старые импортированные позиции могут не иметь привязки message_products,
   // но их цена уже получена из канала и актуальна в таблице products.
   const snapshots = db.prepare(
@@ -179,14 +195,15 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
 Для русскоязычных и кыргызскоязычных клиентов по умолчанию называй «цену по умолчанию»: это сомы. Исключение — MacBook Pro и iPhone 17 Pro Max: по умолчанию называй цену в рублях.
 Если клиент явно попросил USD, RUB или KGS — назови цену в этой валюте. Если клиент пишет по-английски — по умолчанию используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
-Ниже могут быть исходные тексты публикаций канала. Это первоисточник: читай их напрямую. Если одна модель встречается несколько раз, используй цену из более нового поста. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие альтернативы из каталога; задай один конкретный вопрос только если альтернатив подобрать нельзя.
+Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
 
 ПРОДАЖА:
 Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
 Никогда не пиши «каталог не показывает актуальные модели», «подключу менеджера» или похожие фразы. Менеджера упоминай только если клиент сам просит оформить заказ, резерв или живой осмотр.`;
 
-const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны свежие исходные публикации Telegram-канала и последнее сообщение клиента.
-Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из публикаций. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
+const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последнее сообщение клиента.
+Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
+Поле products содержит уже разобранные позиции. Поле pendingPosts содержит новые или изменённые исходные посты, которые ещё обрабатываются; если они описывают тот же товар, данные из более нового pendingPosts имеют приоритет.
 Верни JSON строго такого вида:
 {"products":[{"name":"iPhone 15 Pro Max","brand":"Apple","category":"smartphone","storage":"256GB","color":"Natural Titanium","price":1099,"currency":"USD","available":true,"reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}
 price — число без пробелов и символов. currency — только USD, KGS или RUB. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.`;
@@ -1035,7 +1052,7 @@ prompt_patch — не больше двух коротких предложен�
     try {
       const result = await this.deepseek.chatJson({
         system: CATALOG_SPECIALIST_PROMPT,
-        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nСВЕЖИЕ ПОСТЫ КАНАЛА:\n${catalog}`,
+        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nАКТУАЛЬНАЯ БАЗА ИЗ TELEGRAM-КАНАЛА:\n${catalog}`,
         maxTokens: 900,
         onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
       });

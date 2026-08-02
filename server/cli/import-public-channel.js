@@ -56,7 +56,10 @@ async function loadPosts(channel, maxPages, fetchImpl = globalThis.fetch) {
     const pagePosts = parsePosts(html, channel);
     for (const post of pagePosts) posts.set(post.messageId, post);
     const next = html.match(new RegExp(`/s/${channel}\\?before=(\\d+)`));
-    if (!next || Number(next[1]) === before || pagePosts.length < PAGE_SIZE) break;
+    // В публичной ленте первая страница нередко содержит 18–19 текстовых
+    // публикаций (например, из-за поста только с медиа). Наличие ссылки
+    // `before` — единственный надёжный признак, что история продолжается.
+    if (!next || Number(next[1]) === before) break;
     before = Number(next[1]);
   }
   return [...posts.values()].sort((a, b) => a.messageId - b.messageId);
@@ -83,7 +86,19 @@ async function syncPublicChannelPosts({
        telegram_message_updated_at = excluded.telegram_message_updated_at,
        telegram_original_text = excluded.telegram_original_text,
        telegram_text_hash = excluded.telegram_text_hash,
-       last_sync_status = 'raw', last_sync_error = NULL, last_synced_at = datetime('now'), is_deleted = 0, updated_at = datetime('now')`
+       last_sync_status = CASE
+         WHEN telegram_messages.telegram_text_hash = excluded.telegram_text_hash
+          AND telegram_messages.last_sync_status = 'ok'
+         THEN 'ok'
+         ELSE 'raw'
+       END,
+       last_sync_error = CASE
+         WHEN telegram_messages.telegram_text_hash = excluded.telegram_text_hash
+          AND telegram_messages.last_sync_status = 'ok'
+         THEN telegram_messages.last_sync_error
+         ELSE NULL
+       END,
+       last_synced_at = datetime('now'), is_deleted = 0, updated_at = datetime('now')`
   );
   for (const post of posts) {
     save.run(String(channelId), post.messageId, post.updatedAt, post.text,

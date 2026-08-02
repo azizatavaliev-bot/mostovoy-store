@@ -121,7 +121,8 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны свежие исходные публикации Telegram-канала и последнее сообщение клиента.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из публикаций. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
 Верни JSON строго такого вида:
-{"products":[{"name":"точное название","price":"цена как в посте","availability":"если указано","reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}`;
+{"products":[{"name":"iPhone 15 Pro Max","brand":"Apple","category":"smartphone","storage":"256GB","color":"Natural Titanium","price":1099,"currency":"USD","available":true,"reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}
+price — число без пробелов и символов. currency — только USD, KGS или RUB. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.`;
 
 function toConversation(row) {
   return {
@@ -918,12 +919,21 @@ prompt_patch — не больше двух коротких предложен�
         onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
       });
       const products = Array.isArray(result?.products)
-        ? result.products.slice(0, 5).map((item) => ({
-          name: String(item?.name || "").trim(),
-          price: String(item?.price || "").trim(),
-          availability: String(item?.availability || "").trim(),
-          reason: String(item?.reason || "").trim(),
-        })).filter((item) => item.name && item.price)
+        ? result.products.slice(0, 5).map((item) => {
+          const price = Number(item?.price);
+          const currency = String(item?.currency || "").toUpperCase();
+          return {
+            name: String(item?.name || "").trim(),
+            brand: item?.brand ? String(item.brand).trim() : null,
+            category: item?.category ? String(item.category).trim() : null,
+            storage: item?.storage ? String(item.storage).trim() : null,
+            color: item?.color ? String(item.color).trim() : null,
+            price,
+            currency,
+            available: item?.available === true,
+            reason: String(item?.reason || "").trim(),
+          };
+        }).filter((item) => item.name && Number.isFinite(item.price) && ["USD", "KGS", "RUB"].includes(item.currency))
         : [];
       const selection = JSON.stringify({ products, note: String(result?.note || "").trim() });
       this._logEvent(conversationId, "info", "catalog", "catalog.specialist_selected", "Товаровед отобрал товары из канала", {

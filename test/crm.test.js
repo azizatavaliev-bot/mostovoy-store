@@ -57,7 +57,12 @@ test("товаровед DeepSeek получает сырой канал, а м�
       enabled: true,
       chatJson: async (value) => {
         payload = value;
-        return { products: [{ name: 'iPhone 17 256 GB', price: '87 000 с', reason: 'в бюджете' }] };
+        return {
+          products: [{
+            name: 'iPhone 17', brand: 'Apple', category: 'smartphone', storage: '256GB', color: null,
+            price: 87000, currency: 'KGS', available: true, reason: 'в бюджете',
+          }],
+        };
       },
     },
     amocrm: { enabled: false },
@@ -71,7 +76,8 @@ test("товаровед DeepSeek получает сырой канал, а м�
 
   assert.match(payload.user, /iPhone 17 256 GB — 87 000 с/);
   assert.match(selection, /ПОДБОРКА ТОВАРОВЕДА/);
-  assert.match(selection, /87 000 с/);
+  assert.match(selection, /"price":87000/);
+  assert.match(selection, /"currency":"KGS"/);
   assert.doesNotMatch(selection, /\[Пост канала/);
 });
 

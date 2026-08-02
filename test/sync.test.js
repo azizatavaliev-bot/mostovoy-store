@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { SyncService } = require("../server/services/sync");
+const { SyncService, priceAppearsInText } = require("../server/services/sync");
 const { makeDb, FakeDeepSeek, StubResearchService, extractedProduct } = require("./helpers");
 
 // Реальный пример поста из канала магазина.
@@ -28,6 +28,12 @@ dji mic mini 95$
 Amazon Kindle 16GB Black $135
 Kindle PaperWhite 16GB Jade $195
 Kindle PaperWhite 16GB Raspberry $195`;
+
+test("цена с точкой-разделителем тысяч считается ценой из Telegram", () => {
+  assert.equal(priceAppearsInText(30000, "Размер 50 - 30.000с"), true);
+  assert.equal(priceAppearsInText(37500, "Размер 53 - 37.500с"), true);
+  assert.equal(priceAppearsInText(39000, "Размер 53 - 37.500с"), false);
+});
 
 const SAMPLE_EXTRACTION = {
   products: [

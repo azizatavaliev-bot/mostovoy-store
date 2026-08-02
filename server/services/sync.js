@@ -24,8 +24,11 @@ const hashText = (text) => crypto.createHash("sha256").update(String(text ?? "")
 function priceAppearsInText(price, text) {
   if (price == null) return false;
   const haystack = String(text).replace(/[\s '`]/g, "");
+  // В канале тысячи часто разделены точкой: 30.000с, 37.500с. Это не
+  // десятичная часть, а та же целая цена, которую модель вернёт как 30000.
+  const compactThousands = haystack.replace(/(?<=\d)[.,](?=\d{3}(?:\D|$))/g, "");
   const asInt = String(Math.round(price));
-  if (haystack.includes(asInt)) return true;
+  if (haystack.includes(asInt) || compactThousands.includes(asInt)) return true;
   const asFloat = String(price);
   if (haystack.includes(asFloat)) return true;
   return haystack.includes(asFloat.replace(".", ","));

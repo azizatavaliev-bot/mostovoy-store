@@ -69,12 +69,27 @@ function formatAssistantPrice(amount, from, to) {
 }
 
 function buildTelegramCatalogForAssistant(db) {
+  // Первичный источник для ассистента — сами публикации канала, без
+  // промежуточного пересказа/извлечения модели. Импортёр public-channel
+  // сохраняет их при первом запуске, webhook поддерживает их свежими далее.
+  const posts = db.prepare(
+    `SELECT telegram_message_id, telegram_message_updated_at, telegram_original_text
+       FROM telegram_messages
+      WHERE is_deleted = 0 AND last_sync_status = 'raw' AND trim(telegram_original_text) != ''
+      ORDER BY COALESCE(telegram_message_updated_at, updated_at, created_at) DESC, telegram_message_id DESC
+      LIMIT 60`
+  ).all();
+  if (posts.length) {
+    return posts.map((post) =>
+      `[Пост канала #${post.telegram_message_id}, ${post.telegram_message_updated_at || "дата не указана"}]\n${post.telegram_original_text}`
+    ).join("\n\n");
+  }
   const products = db.prepare(
     `SELECT p.official_name, p.color, p.storage, mp.price, mp.currency, mp.available
        FROM products p
        JOIN message_products mp ON mp.product_id = p.id
        JOIN telegram_messages tm ON tm.id = mp.message_id
-      WHERE p.status = 'active' AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL
+      WHERE p.status != 'hidden' AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL
         AND tm.id = (
           SELECT tm2.id
             FROM message_products mp2
@@ -96,7 +111,11 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
 Для русскоязычных и кыргызскоязычных клиентов по умолчанию называй «цену по умолчанию»: это сомы. Исключение — MacBook Pro и iPhone 17 Pro Max: по умолчанию называй цену в рублях.
 Если клиент явно попросил USD, RUB или KGS — назови цену в этой валюте. Если клиент пишет по-английски — по умолчанию используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
-Цены в строках каталога уже округлены вверх для красивого показа. Если товара нет в этом каталоге, скажи, что менеджер уточнит актуальную цену в канале.`;
+Ниже могут быть исходные тексты публикаций канала. Это первоисточник: читай их напрямую, не пересказывай, что «уточнишь». Если одна модель встречается несколько раз, используй цену из более нового поста. Если товара нет в этих публикациях, скажи, что менеджер уточнит актуальную цену в канале.
+
+ПРОДАЖА:
+Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
+После конкретных рекомендаций коротко объясни разницу и мягко предложи лучший вариант. Например: «Сейчас чаще берут iPhone 17 — это свежая модель. Если бюджет не позволяет, есть более доступный вариант». Уточняющий вопрос допустим только в конце, когда он помогает выбрать между уже названными моделями.`;
 
 function toConversation(row) {
   return {
@@ -897,6 +916,28 @@ prompt_patch — не больше двух коротких предложен�
     return { messageId: detail.messageId, conversationId: Number(conversation.id) };
   }
 
+  _recommendedProductImage(text) {
+    const reply = String(text || "").toLocaleLowerCase("ru-RU");
+    if (!reply) return null;
+    const products = this.db.prepare(
+      `SELECT official_name, main_image_url FROM products
+       WHERE status != 'hidden' AND main_image_url IS NOT NULL AND main_image_url != ''
+       ORDER BY length(official_name) DESC`
+    ).all();
+    return products.find((product) => reply.includes(String(product.official_name).toLocaleLowerCase("ru-RU"))) || null;
+  }
+
+  async _sendTelegramProductPhoto(conversation, product) {
+    if (!config.publicUrl || !product?.main_image_url) return;
+    const photo = `${config.publicUrl}/api/images/webp?src=${encodeURIComponent(product.main_image_url)}&w=1200`;
+    const res = await this.fetchImpl(`${config.telegram.apiBase}/bot${config.telegram.botToken}/sendPhoto`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: conversation.external_chat_id, photo }),
+    });
+    if (!res.ok) throw new Error(`Telegram photo: HTTP ${res.status}`);
+  }
+
   async _send(conversationId, text, sender) {
     const c = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
     if (!c) throw new Error("Диалог не найден");
@@ -912,6 +953,16 @@ prompt_patch — не больше двух коротких предложен�
         }),
       });
       if (!res.ok) throw new Error(`Telegram: HTTP ${res.status}`);
+      if (sender === "assistant") {
+        const product = this._recommendedProductImage(text);
+        if (product) {
+          try {
+            await this._sendTelegramProductPhoto(c, product);
+          } catch (error) {
+            this._logEvent(c.id, "warn", "delivery", "product_photo.failed", error.message, { product: product.official_name });
+          }
+        }
+      }
     } else {
       await this.amocrm.sendMessage({
         chatId: c.external_chat_id,

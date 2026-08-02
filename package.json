@@ -10,6 +10,7 @@
     "build": "npm ci --prefix frontend && npm run build --prefix frontend",
     "migrate": "node server/cli/migrate.js",
     "resync": "node server/cli/resync.js",
+    "import-channel": "node server/cli/import-public-channel.js",
     "detect-chat": "node server/cli/detect-chat.js",
     "set-webhook": "node server/cli/set-webhook.js",
     "admin": "node server/cli/admin.js",

@@ -94,7 +94,7 @@ test("товаровед DeepSeek получает базу канала, а м�
   assert.doesNotMatch(selection, /\[Пост канала/);
 });
 
-test("валюта ответа по умолчанию — сомы, для дорогой техники — доллары", (t) => {
+test("валюта ответа по умолчанию — сомы для любой стоимости", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insert = db.prepare(
@@ -105,12 +105,13 @@ test("валюта ответа по умолчанию — сомы, для д�
 
   const catalog = buildTelegramCatalogForAssistant(db);
   assert.match(catalog, /iPhone 15: цена по умолчанию 78\s800 с/);
-  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 1\s600 \$/);
+  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 140\s000 с/);
 
   const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
   const prompt = crm._composePrompt(crm.getSettings(), "");
-  assert.match(prompt, /прямо сказал, что он из России/);
-  assert.match(prompt, /Для клиента из Казахстана называй цену в тенге \(priceKzt\)/);
+  assert.match(prompt, /прямо сообщил, что он находится в России/);
+  assert.match(prompt, /независимо от стоимости товара/);
+  assert.match(prompt, /сообщил, что он из Казахстана[^.]*цену в тенге \(priceKzt\)/);
   assert.match(prompt, /по умолчанию называй цену в сомах|называй цену в сомах/);
 });
 
@@ -179,6 +180,23 @@ test("отказ назвать цену из подборки заменяет�
   });
   assert.match(wrongKgs, /108\s100 с/);
   assert.doesNotMatch(wrongKgs, /94\s800/);
+
+  const rubWithoutRussia = enforceCatalogPriceReply({
+    reply: "iPhone 17 Pro Max 256 ГБ — 97 600 ₽.",
+    request: "А в рублях?",
+    selection,
+  });
+  assert.match(rubWithoutRussia, /108\s100 с/);
+  assert.doesNotMatch(rubWithoutRussia, /₽/);
+
+  const rubForRussia = enforceCatalogPriceReply({
+    reply: "iPhone 17 Pro Max 256 ГБ — 97 600 ₽. В наличии.",
+    request: "Сколько стоит?",
+    context: "КЛИЕНТ: Я живу в России\nКЛИЕНТ: Сколько стоит?",
+    selection,
+  });
+  assert.match(rubForRussia, /97\s600 ₽/);
+  assert.doesNotMatch(rubForRussia, /108\s100 с/);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

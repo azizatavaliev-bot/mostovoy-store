@@ -50,7 +50,6 @@ const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подх
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
-const EXPENSIVE_PRICE_KGS = 100_000;
 const INSTALLMENT_COEFFICIENTS = { 3: 0.94, 6: 0.89, 12: 0.84 };
 const TRADE_IN_OPTIONS = [
   ["iphone 15 pro max", 900], ["iphone 15 pro", 800], ["iphone 15", 620],
@@ -118,12 +117,16 @@ function productsFromSelection(selection) {
   }
 }
 
-function requestedReplyCurrency(request) {
+function requestedReplyCurrency(request, context = request) {
   const text = String(request || "").toLowerCase().replace(/ё/g, "е");
+  const dialog = String(context || request || "").toLowerCase().replace(/ё/g, "е");
   if (/(?:\bkgs\b|сом(?:ах|ы|ов)?|(?:^|\s)с\s*\?*$)/iu.test(text)) return "KGS";
   if (/(?:\busd\b|доллар|\$)/iu.test(text)) return "USD";
-  if (/(?:\brub\b|рубл|₽)/iu.test(text)) return "RUB";
   if (/(?:\bkzt\b|тенге|₸)/iu.test(text)) return "KZT";
+  const isFromRussia = /(?:я|мы)\s+(?:из|в)\s+росси|жив[а-яё]*\s+в\s+росси|нахож[а-яё]*\s+в\s+росси|достав[а-яё]*[^\n]{0,30}\s(?:в|до)\s+росси/iu.test(dialog);
+  if (isFromRussia) return "RUB";
+  const isFromKazakhstan = /(?:я|мы)\s+(?:из|в)\s+казахстан|жив[а-яё]*\s+в\s+казахстан|нахож[а-яё]*\s+в\s+казахстан|достав[а-яё]*[^\n]{0,30}\s(?:в|до)\s+казахстан/iu.test(dialog);
+  if (isFromKazakhstan) return "KZT";
   return null;
 }
 
@@ -141,25 +144,24 @@ function pricesMentionedInReply(reply, currency) {
     .filter(Number.isFinite);
 }
 
-function enforceCatalogPriceReply({ reply, request, selection }) {
+function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
   const products = productsFromSelection(selection);
   if (!products.length) return reply;
 
   const text = String(request || "");
-  const explicitCurrency = requestedReplyCurrency(text);
+  const explicitCurrency = requestedReplyCurrency(text, context);
   const asksPrice = /сколько|скок|почем|цена|стоит|в\s+(?:сом|доллар|рубл|тенге|\$)|\b(?:kgs|usd|rub|kzt)\b/iu.test(text);
   if (!asksPrice) return reply;
 
   const first = products[0];
-  const defaultCurrency = Number(first.priceKgs) >= EXPENSIVE_PRICE_KGS ? "USD" : "KGS";
-  const currency = explicitCurrency || defaultCurrency;
+  const currency = explicitCurrency || "KGS";
   const output = String(reply || "");
   const valueField = { KGS: "priceKgs", USD: "priceUsd", RUB: "priceRub", KZT: "priceKzt" }[currency];
   const expectedPrices = products.map((product) => roundAssistantPrice(Number(product[valueField]), currency));
   const mentionedPrices = pricesMentionedInReply(output, currency);
   const hasCatalogPrice = mentionedPrices.some((price) => expectedPrices.includes(price));
   const refusesPrice = /(?:не\s+могу|не\s+смогу|не\s+назову|нет|отсутствует)[^.!?\n]{0,90}(?:точн\w*\s+)?(?:цен\w*|сумм\w*)|(?:точн\w*\s+)?(?:цен\w*|сумм\w*)[^.!?\n]{0,90}(?:нет|не\s+могу|не\s+смогу)|пересч[её]т[^.!?\n]{0,60}не\s+буду/iu.test(output);
-  const wrongDefaultRub = !explicitCurrency && /(?:₽|\brub\b|рубл)/iu.test(output);
+  const wrongDefaultRub = currency !== "RUB" && /(?:₽|\brub\b|рубл)/iu.test(output);
   if (!refusesPrice && hasCatalogPrice && !wrongDefaultRub) return reply;
 
   const suffix = { KGS: "с", USD: "$", RUB: "₽", KZT: "₸" }[currency];
@@ -258,8 +260,7 @@ function buildTelegramCatalogForAssistant(db) {
   ).all();
   return snapshots.map((p) => {
     const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
-    const defaultCurrency = convertAssistantPrice(p.price, p.currency, "KGS") >= EXPENSIVE_PRICE_KGS ? "USD" : "KGS";
-    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, defaultCurrency)}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
+    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, "KGS")}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
   }).join("\n");
 }
 
@@ -307,8 +308,8 @@ function narrowCatalogForRequest(catalog, request) {
 
 const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
-Если клиент не назвал страну и не попросил валюту, называй цену в сомах (priceKgs). Если priceKgs равна или выше ${EXPENSIVE_PRICE_KGS}, называй цену в долларах (priceUsd), потому что это дорогое устройство.
-Рубли (priceRub) называй только если клиент прямо сказал, что он из России, доставка нужна в Россию, либо сам попросил RUB/рубли. Для клиента из Казахстана называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Если клиент явно попросил USD или KGS — назови цену в этой валюте. Если клиент пишет по-английски и страну не назвал — используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
+Всегда называй цену в сомах (priceKgs) по умолчанию — независимо от стоимости товара, языка сообщения и исходной валюты публикации.
+Доллары (priceUsd) называй только если клиент прямо попросил USD/доллары/$. Рубли (priceRub) называй только если клиент прямо сообщил, что он находится в России, живёт в России или доставка нужна в Россию. Одной просьбы «в рублях?» без сообщения о России недостаточно: отвечай в сомах. Для клиента, который прямо сообщил, что он из Казахстана, называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Не называй несколько валют сразу, если клиент не просит сравнение.
 Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
 Если клиент коротко уточняет валюту («в сомах?», «в $?», «а в тенге?»), товар уже указан в контексте диалога и его надо взять из подборки. Никогда не отвечай, что точной суммы в другой валюте нет: готовые priceKgs, priceUsd, priceRub и priceKzt уже являются подтверждённым пересчётом цены канала.
 
@@ -908,13 +909,14 @@ prompt_patch — не больше двух коротких предложен�
       .map((message) => message.content)
       .join("\n");
     const finance = financeToolContext(financeRequest, selection);
-    const reply = await this.ai.chatText({
+    let reply = await this.ai.chatText({
       system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
       onUsage: this._usageRecorder("laboratory", null, selectedModel),
     });
+    reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
       latencyMs: Date.now() - startedAt,
@@ -1168,7 +1170,7 @@ prompt_patch — не больше двух коротких предложен�
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
-      reply = enforceCatalogPriceReply({ reply, request: customerRequest, selection });
+      reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
       const newestInbound = this.db.prepare(
         `SELECT id FROM crm_messages
           WHERE conversation_id = ? AND direction = 'incoming'

@@ -668,8 +668,14 @@ prompt_patch — не больше двух коротких предложен�
     const settings = { ...this.getSettings(), ...prompts };
     const selectedModel = ALLOWED_MODELS.includes(model) ? model : settings.model;
     const startedAt = Date.now();
+    const catalog = buildTelegramCatalogForAssistant(this.db);
+    const selection = await this._selectCatalogProducts({
+      conversationId: null,
+      customerRequest: text,
+      catalog,
+    });
     const reply = await this.ai.chatText({
-      system: this._composePrompt(settings, ""),
+      system: this._composePrompt(settings, selection),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
@@ -945,7 +951,7 @@ prompt_patch — не больше двух коротких предложен�
     if (!catalog) return "Товаровед не нашёл свежих публикаций канала.";
     if (!this.deepseek?.enabled || typeof this.deepseek.chatJson !== "function") {
       this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_unavailable", "Товаровед DeepSeek недоступен");
-      return "Товаровед временно недоступен: не называй цену и честно предложи менеджера.";
+      return "Товаровед временно недоступен. Не называй неподтверждённую цену; предложи только товары с известными данными или попроси один конкретный критерий выбора.";
     }
     try {
       const result = await this.deepseek.chatJson({
@@ -978,7 +984,7 @@ prompt_patch — не больше двух коротких предложен�
       return `ПОДБОРКА ТОВАРОВЕДА ИЗ КАНАЛА:\n${selection}\n\nОтвечай только по этой подборке. Не говори, что обращался к товароведу или каналу.`;
     } catch (error) {
       this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_failed", error.message);
-      return "Товаровед временно не смог отобрать товары: не называй цену и честно предложи менеджера.";
+      return "Товаровед временно не смог отобрать товары. Не называй неподтверждённую цену; попроси один конкретный критерий выбора и не упоминай менеджера.";
     }
   }
 

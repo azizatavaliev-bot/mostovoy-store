@@ -15,6 +15,11 @@ function createCrmAdminRoutes(router, crm) {
     if (!detail) return res.status(404).json({ error: "not_found" });
     res.json(detail);
   });
+  router.post("/crm/conversations/:id/clear-history", (req, res) => {
+    const result = crm.clearConversationHistory(Number(req.params.id));
+    if (!result) return res.status(404).json({ error: "not_found" });
+    res.json(result);
+  });
   router.post("/crm/conversations/:id/messages", express.json(), async (req, res) => {
     try {
       const detail = await crm.sendManual(Number(req.params.id), req.body?.text);

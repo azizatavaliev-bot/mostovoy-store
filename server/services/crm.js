@@ -240,6 +240,28 @@ class CrmService {
     return this.getConversation(id);
   }
 
+  // Сбрасывает только переписку лида. Контакт, сделка, привязка к каналу,
+  // продажи и аналитика остаются — новый диалог начинается с чистого листа.
+  clearConversationHistory(id) {
+    const conversation = this.db.prepare("SELECT id, created_at FROM crm_conversations WHERE id = ?").get(id);
+    if (!conversation) return null;
+    this.db.exec("BEGIN");
+    try {
+      const approvals = this.db.prepare("DELETE FROM bot_approvals WHERE conversation_id = ?").run(id).changes;
+      const messages = this.db.prepare("DELETE FROM crm_messages WHERE conversation_id = ?").run(id).changes;
+      this.db.prepare(
+        "UPDATE crm_conversations SET unread_count = 0, last_message_at = created_at, updated_at = datetime('now') WHERE id = ?"
+      ).run(id);
+      this.db.exec("COMMIT");
+      const removed = { messages: Number(messages), approvals: Number(approvals) };
+      this._logEvent(id, "warn", "inbox", "conversation.history_cleared", "История лида очищена", removed);
+      return { ...removed, conversation: this.getConversation(id) };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   getStatus() {
     const base = config.publicUrl || "https://mostovoy-store-production.up.railway.app";
     const secretPath = config.amocrm.webhookSecret

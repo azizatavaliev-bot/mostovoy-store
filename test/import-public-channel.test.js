@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("crypto");
 const { createConnection } = require("../server/db");
-const { loadPosts, syncPublicChannelPosts } = require("../server/cli/import-public-channel");
+const { decodeHtml, loadPosts, syncPublicChannelPosts } = require("../server/cli/import-public-channel");
 
 function page(channel, ids, before) {
   const posts = ids.map((id) => `
@@ -35,6 +35,10 @@ test("loadPosts follows before link even when a page has fewer than 20 text post
   assert.equal(posts.length, 21);
   assert.equal(posts[0].messageId, 61);
   assert.equal(posts.at(-1).messageId, 99);
+});
+
+test("decodeHtml restores numeric currency entities from Telegram", () => {
+  assert.equal(decodeHtml("iPhone 17 — 840&#036;"), "iPhone 17 — 840$");
 });
 
 test("syncPublicChannelPosts does not downgrade an unchanged parsed post", async () => {

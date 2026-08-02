@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createConnection } = require("../server/db");
-const { CrmService, buildTelegramCatalogForAssistant, telegramHtml } = require("../server/services/crm");
+const { CrmService, buildTelegramCatalogForAssistant, narrowCatalogForRequest, telegramHtml } = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
 const config = require("../server/config");
 
@@ -83,6 +83,19 @@ test("товаровед DeepSeek получает базу канала, а м�
   assert.match(selection, /"price":87000/);
   assert.match(selection, /"currency":"KGS"/);
   assert.doesNotMatch(selection, /\[Пост канала/);
+});
+
+test("поиск для товароведа оставляет посты только нужной категории", () => {
+  const catalog = JSON.stringify({
+    source: "telegram_channel",
+    products: [],
+    pendingPosts: [
+      { telegramMessageId: 1, text: "iPhone 17 256 GB — 840$" },
+      { telegramMessageId: 2, text: "Dyson Airwrap — 500$" },
+    ],
+  });
+  const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Посоветуй айфон до 120000 сом"));
+  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [1]);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

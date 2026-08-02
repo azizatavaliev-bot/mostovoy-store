@@ -191,11 +191,46 @@ function buildTelegramCatalogForAssistant(db) {
   }).join("\n");
 }
 
+const CATALOG_FAMILIES = [
+  { request: /айфон|iphone/i, terms: ["iphone"] },
+  { request: /макбук|macbook/i, terms: ["macbook"] },
+  { request: /айпад|ipad/i, terms: ["ipad"] },
+  { request: /airpods|аирпод|эирпод/i, terms: ["airpods"] },
+  { request: /apple watch|эпл вотч|часы apple/i, terms: ["apple watch"] },
+  { request: /samsung|самсунг/i, terms: ["samsung", "galaxy"] },
+  { request: /xiaomi|сяоми|poco/i, terms: ["xiaomi", "poco"] },
+  { request: /dyson|дайсон|фен|стайлер/i, terms: ["dyson", "airwrap", "airstrait"] },
+  { request: /garmin|гармин/i, terms: ["garmin"] },
+  { request: /whoop|вуп/i, terms: ["whoop"] },
+  { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray•ban", "meta oakley"] },
+  { request: /пристав|playstation|xbox|nintendo|steam deck/i, terms: ["playstation", "sony 5", "xbox", "nintendo", "steam deck"] },
+  { request: /бритв|триммер|oneblade|philips/i, terms: ["oneblade", "one blade", "philips"] },
+];
+
+function narrowCatalogForRequest(catalog, request) {
+  try {
+    const data = JSON.parse(catalog);
+    if (!Array.isArray(data.pendingPosts)) return catalog;
+    const family = CATALOG_FAMILIES.find((item) => item.request.test(String(request || "")));
+    if (!family) return JSON.stringify({ ...data, pendingPosts: data.pendingPosts.slice(0, 40) });
+    const matches = (value) => family.terms.some((term) => String(value || "").toLowerCase().includes(term));
+    return JSON.stringify({
+      ...data,
+      products: Array.isArray(data.products)
+        ? data.products.filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
+        : [],
+      pendingPosts: data.pendingPosts.filter((post) => matches(post.text)).slice(0, 30),
+    });
+  } catch {
+    return catalog;
+  }
+}
+
 const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
 Для русскоязычных и кыргызскоязычных клиентов по умолчанию называй «цену по умолчанию»: это сомы. Исключение — MacBook Pro и iPhone 17 Pro Max: по умолчанию называй цену в рублях.
 Если клиент явно попросил USD, RUB или KGS — назови цену в этой валюте. Если клиент пишет по-английски — по умолчанию используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
-Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
+Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd и priceRub — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
 
 ПРОДАЖА:
 Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
@@ -204,6 +239,7 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последнее сообщение клиента.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
 Поле products содержит уже разобранные позиции. Поле pendingPosts содержит новые или изменённые исходные посты, которые ещё обрабатываются; если они описывают тот же товар, данные из более нового pendingPosts имеют приоритет.
+Для сравнения с бюджетом используй курсы магазина: 1 USD = ${config.rates.KGS} KGS, 1 USD = ${config.rates.RUB} RUB. В JSON всё равно верни исходную цену и валюту из канала, не пересчитывай поле price.
 Верни JSON строго такого вида:
 {"products":[{"name":"iPhone 15 Pro Max","brand":"Apple","category":"smartphone","storage":"256GB","color":"Natural Titanium","price":1099,"currency":"USD","available":true,"reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}
 price — число без пробелов и символов. currency — только USD, KGS или RUB. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.`;
@@ -1052,7 +1088,7 @@ prompt_patch — не больше двух коротких предложен�
     try {
       const result = await this.deepseek.chatJson({
         system: CATALOG_SPECIALIST_PROMPT,
-        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nАКТУАЛЬНАЯ БАЗА ИЗ TELEGRAM-КАНАЛА:\n${catalog}`,
+        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nАКТУАЛЬНАЯ БАЗА ИЗ TELEGRAM-КАНАЛА:\n${narrowCatalogForRequest(catalog, customerRequest)}`,
         maxTokens: 900,
         onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
       });
@@ -1068,6 +1104,9 @@ prompt_patch — не больше двух коротких предложен�
             color: item?.color ? String(item.color).trim() : null,
             price,
             currency,
+            priceKgs: Math.ceil(convertAssistantPrice(price, currency, "KGS")),
+            priceUsd: Math.ceil(convertAssistantPrice(price, currency, "USD")),
+            priceRub: Math.ceil(convertAssistantPrice(price, currency, "RUB")),
             available: item?.available === true,
             reason: String(item?.reason || "").trim(),
           };
@@ -1227,6 +1266,7 @@ module.exports = {
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,
   buildTelegramCatalogForAssistant,
+  narrowCatalogForRequest,
   formatAssistantPrice,
   telegramHtml,
   toConversation,

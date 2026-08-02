@@ -171,6 +171,14 @@ test("отказ назвать цену из подборки заменяет�
   });
   assert.match(usd, /1\s240 \$/);
   assert.doesNotMatch(usd, /цены.*нет/i);
+
+  const wrongKgs = enforceCatalogPriceReply({
+    reply: "iPhone 17 Pro Max 256 ГБ — 94 800 сом. В наличии.",
+    request: "А в сомах?",
+    selection,
+  });
+  assert.match(wrongKgs, /108\s100 с/);
+  assert.doesNotMatch(wrongKgs, /94\s800/);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

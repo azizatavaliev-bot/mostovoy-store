@@ -127,6 +127,20 @@ function requestedReplyCurrency(request) {
   return null;
 }
 
+function pricesMentionedInReply(reply, currency) {
+  const text = String(reply || "");
+  const pattern = currency === "KGS"
+    ? /(\d[\d \u00a0\u202f.,]*)\s*(?:сом\w*|с)(?=\s|$|[.,;!?])/giu
+    : currency === "USD"
+      ? /\$\s*(\d[\d \u00a0\u202f.,]*)|(\d[\d \u00a0\u202f.,]*)\s*(?:\$|usd\b|доллар\w*)/giu
+      : currency === "RUB"
+        ? /(\d[\d \u00a0\u202f.,]*)\s*(?:₽|rub\b|рубл\w*)/giu
+        : /(\d[\d \u00a0\u202f.,]*)\s*(?:₸|kzt\b|тенге)/giu;
+  return [...text.matchAll(pattern)]
+    .map((match) => Number(String(match[1] || match[2] || "").replace(/\D/g, "")))
+    .filter(Number.isFinite);
+}
+
 function enforceCatalogPriceReply({ reply, request, selection }) {
   const products = productsFromSelection(selection);
   if (!products.length) return reply;
@@ -140,15 +154,14 @@ function enforceCatalogPriceReply({ reply, request, selection }) {
   const defaultCurrency = Number(first.priceKgs) >= EXPENSIVE_PRICE_KGS ? "USD" : "KGS";
   const currency = explicitCurrency || defaultCurrency;
   const output = String(reply || "");
-  const hasRequestedCurrency = currency === "KGS" ? /(?:\bсом|\d\s*с\b)/iu.test(output)
-    : currency === "USD" ? /(?:\$|\busd\b|доллар)/iu.test(output)
-      : currency === "RUB" ? /(?:₽|\brub\b|рубл)/iu.test(output)
-        : /(?:₸|\bkzt\b|тенге)/iu.test(output);
+  const valueField = { KGS: "priceKgs", USD: "priceUsd", RUB: "priceRub", KZT: "priceKzt" }[currency];
+  const expectedPrices = products.map((product) => roundAssistantPrice(Number(product[valueField]), currency));
+  const mentionedPrices = pricesMentionedInReply(output, currency);
+  const hasCatalogPrice = mentionedPrices.some((price) => expectedPrices.includes(price));
   const refusesPrice = /(?:не\s+могу|не\s+смогу|не\s+назову|нет|отсутствует)[^.!?\n]{0,90}(?:точн\w*\s+)?(?:цен\w*|сумм\w*)|(?:точн\w*\s+)?(?:цен\w*|сумм\w*)[^.!?\n]{0,90}(?:нет|не\s+могу|не\s+смогу)|пересч[её]т[^.!?\n]{0,60}не\s+буду/iu.test(output);
   const wrongDefaultRub = !explicitCurrency && /(?:₽|\brub\b|рубл)/iu.test(output);
-  if (!refusesPrice && hasRequestedCurrency && !wrongDefaultRub) return reply;
+  if (!refusesPrice && hasCatalogPrice && !wrongDefaultRub) return reply;
 
-  const valueField = { KGS: "priceKgs", USD: "priceUsd", RUB: "priceRub", KZT: "priceKzt" }[currency];
   const suffix = { KGS: "с", USD: "$", RUB: "₽", KZT: "₸" }[currency];
   const lines = products.slice(0, 3).map((product) => {
     const details = [product.storage, product.color].filter(Boolean).join(", ");

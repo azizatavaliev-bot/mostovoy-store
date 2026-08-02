@@ -99,6 +99,65 @@ function selectedCatalogProduct(selection) {
   } catch { return null; }
 }
 
+function catalogRequestFromHistory(history) {
+  return (Array.isArray(history) ? history : [])
+    .slice(-8)
+    .filter((message) => message && message.content)
+    .map((message) => `${message.role === "assistant" ? "КОНСУЛЬТАНТ" : "КЛИЕНТ"}: ${String(message.content).trim()}`)
+    .join("\n");
+}
+
+function productsFromSelection(selection) {
+  const match = String(selection || "").match(/\{\s*"products"[\s\S]*\}/);
+  if (!match) return [];
+  try {
+    const products = JSON.parse(match[0]).products;
+    return Array.isArray(products) ? products.filter((item) => item?.available && item?.name) : [];
+  } catch {
+    return [];
+  }
+}
+
+function requestedReplyCurrency(request) {
+  const text = String(request || "").toLowerCase().replace(/ё/g, "е");
+  if (/(?:\bkgs\b|сом(?:ах|ы|ов)?|(?:^|\s)с\s*\?*$)/iu.test(text)) return "KGS";
+  if (/(?:\busd\b|доллар|\$)/iu.test(text)) return "USD";
+  if (/(?:\brub\b|рубл|₽)/iu.test(text)) return "RUB";
+  if (/(?:\bkzt\b|тенге|₸)/iu.test(text)) return "KZT";
+  return null;
+}
+
+function enforceCatalogPriceReply({ reply, request, selection }) {
+  const products = productsFromSelection(selection);
+  if (!products.length) return reply;
+
+  const text = String(request || "");
+  const explicitCurrency = requestedReplyCurrency(text);
+  const asksPrice = /сколько|скок|почем|цена|стоит|в\s+(?:сом|доллар|рубл|тенге|\$)|\b(?:kgs|usd|rub|kzt)\b/iu.test(text);
+  if (!asksPrice) return reply;
+
+  const first = products[0];
+  const defaultCurrency = Number(first.priceKgs) >= EXPENSIVE_PRICE_KGS ? "USD" : "KGS";
+  const currency = explicitCurrency || defaultCurrency;
+  const output = String(reply || "");
+  const hasRequestedCurrency = currency === "KGS" ? /(?:\bсом|\d\s*с\b)/iu.test(output)
+    : currency === "USD" ? /(?:\$|\busd\b|доллар)/iu.test(output)
+      : currency === "RUB" ? /(?:₽|\brub\b|рубл)/iu.test(output)
+        : /(?:₸|\bkzt\b|тенге)/iu.test(output);
+  const refusesPrice = /(?:не\s+могу|не\s+смогу|не\s+назову|нет|отсутствует)[^.!?\n]{0,90}(?:точн\w*\s+)?(?:цен\w*|сумм\w*)|(?:точн\w*\s+)?(?:цен\w*|сумм\w*)[^.!?\n]{0,90}(?:нет|не\s+могу|не\s+смогу)|пересч[её]т[^.!?\n]{0,60}не\s+буду/iu.test(output);
+  const wrongDefaultRub = !explicitCurrency && /(?:₽|\brub\b|рубл)/iu.test(output);
+  if (!refusesPrice && hasRequestedCurrency && !wrongDefaultRub) return reply;
+
+  const valueField = { KGS: "priceKgs", USD: "priceUsd", RUB: "priceRub", KZT: "priceKzt" }[currency];
+  const suffix = { KGS: "с", USD: "$", RUB: "₽", KZT: "₸" }[currency];
+  const lines = products.slice(0, 3).map((product) => {
+    const details = [product.storage, product.color].filter(Boolean).join(", ");
+    const value = roundAssistantPrice(Number(product[valueField]), currency);
+    return `• ${product.name}${details ? `, ${details}` : ""} — ${value.toLocaleString("ru-RU")} ${suffix}`;
+  });
+  return `${lines.join("\n")}\n\nВ наличии. Могу сразу оформить заказ или рассчитать Trade-in/рассрочку.`;
+}
+
 function financeToolContext(request, selection) {
   const text = String(request || "").toLowerCase();
   const wantsInstallment = /рассроч|в кредит|платеж.*месяц|ежемесяч/.test(text);
@@ -238,14 +297,16 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Если клиент не назвал страну и не попросил валюту, называй цену в сомах (priceKgs). Если priceKgs равна или выше ${EXPENSIVE_PRICE_KGS}, называй цену в долларах (priceUsd), потому что это дорогое устройство.
 Рубли (priceRub) называй только если клиент прямо сказал, что он из России, доставка нужна в Россию, либо сам попросил RUB/рубли. Для клиента из Казахстана называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Если клиент явно попросил USD или KGS — назови цену в этой валюте. Если клиент пишет по-английски и страну не назвал — используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
 Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
+Если клиент коротко уточняет валюту («в сомах?», «в $?», «а в тенге?»), товар уже указан в контексте диалога и его надо взять из подборки. Никогда не отвечай, что точной суммы в другой валюте нет: готовые priceKgs, priceUsd, priceRub и priceKzt уже являются подтверждённым пересчётом цены канала.
 
 ПРОДАЖА:
 Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
 Никогда не пиши «каталог не показывает актуальные модели», «подключу менеджера» или похожие фразы. Менеджера упоминай только если клиент сам просит оформить заказ, резерв или живой осмотр.
 После любой названной цены или подборки обязательно продолжи продажу одним коротким призывом: предложи оформить заказ, зарезервировать конкретную модель либо рассчитать Trade-in или рассрочку. Не заканчивай сообщение последней строкой прайса.`;
 
-const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последнее сообщение клиента.
+const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последние реплики диалога.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
+Короткое уточнение клиента о валюте, цвете или памяти относится к последнему названному в диалоге товару. Найди этот товар по предыдущим репликам и не возвращай пустой массив только из-за того, что в последней строке нет названия модели.
 Поле products содержит уже разобранные позиции. Поле pendingPosts содержит новые или изменённые исходные посты, которые ещё обрабатываются; если они описывают тот же товар, данные из более нового pendingPosts имеют приоритет.
 Для сравнения с бюджетом используй курсы магазина: 1 USD = ${config.rates.KGS} KGS, 1 USD = ${config.rates.RUB} RUB, 1 USD = ${config.rates.KZT} KZT. В JSON всё равно верни исходную цену и валюту из канала, не пересчитывай поле price.
 Не добавляй к цене наценку, комиссию, налог или запас: переданная цена и её пересчёт по указанному курсу уже являются ценой магазина. Если пересчитанная цена не превышает бюджет клиента, товар подходит и должен быть возвращён в products.
@@ -568,9 +629,30 @@ class CrmService {
         (SELECT COUNT(*) FROM bot_approvals WHERE status = 'approved' AND edited_reply IS NULL) AS withoutEdits,
         (SELECT COUNT(*) FROM bot_approvals WHERE status = 'rejected') AS rejected`
     ).get();
+    const customers = this.db.prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM crm_conversations) AS total,
+        (SELECT COUNT(*) FROM crm_conversations WHERE date(created_at) = date('now')) AS newToday,
+        (SELECT COUNT(DISTINCT conversation_id) FROM crm_messages
+          WHERE direction = 'incoming' AND date(created_at) = date('now')) AS activeToday,
+        (SELECT COUNT(DISTINCT conversation_id) FROM crm_messages
+          WHERE direction = 'incoming' AND created_at >= datetime('now', '-7 days')) AS active7d,
+        (SELECT COUNT(*) FROM (
+          SELECT conversation_id FROM crm_messages
+           WHERE direction = 'incoming' GROUP BY conversation_id HAVING COUNT(*) >= 2
+        )) AS returningCustomers,
+        (SELECT COUNT(*) FROM crm_conversations WHERE source = 'telegram') AS telegram,
+        (SELECT COUNT(*) FROM crm_conversations WHERE source = 'whatsapp') AS whatsapp,
+        (SELECT COUNT(*) FROM crm_conversations WHERE source = 'instagram') AS instagram`
+    ).get();
     const normalize = (row) => ({ tokens: Number(row.tokens || 0), costUsd: Number(row.cost || 0) });
+    const { returningCustomers, ...customerCounts } = customers;
     return {
       overview: Object.fromEntries(Object.entries(overview).map(([key, value]) => [key, Number(value || 0)])),
+      customers: {
+        ...Object.fromEntries(Object.entries(customerCounts).map(([key, value]) => [key, Number(value || 0)])),
+        returning: Number(returningCustomers || 0),
+      },
       periods: {
         today: normalize(today),
         averageDay: {
@@ -802,9 +884,10 @@ prompt_patch — не больше двух коротких предложен�
     const selectedModel = ALLOWED_MODELS.includes(model) ? model : settings.model;
     const startedAt = Date.now();
     const catalog = buildTelegramCatalogForAssistant(this.db);
+    const catalogRequest = catalogRequestFromHistory([...(Array.isArray(history) ? history : []), { role: "user", content: text }]);
     const selection = await this._selectCatalogProducts({
       conversationId: null,
-      customerRequest: text,
+      customerRequest: catalogRequest,
       catalog,
     });
     const financeRequest = [...(Array.isArray(history) ? history : []), { role: "user", content: text }]
@@ -1051,9 +1134,10 @@ prompt_patch — не больше двух коротких предложен�
       content: m.text,
     }));
     const customerRequest = [...history].reverse().find((message) => message.role === "user")?.content || "";
+    const catalogRequest = catalogRequestFromHistory(history);
     const selection = await this._selectCatalogProducts({
       conversationId,
-      customerRequest,
+      customerRequest: catalogRequest,
       catalog,
     });
     const financeRequest = history.filter((message) => message.role === "user").map((message) => message.content).join("\n");
@@ -1065,12 +1149,13 @@ prompt_patch — не больше двух коротких предложен�
       incomingMessageId,
     });
     try {
-      const reply = await this.ai.chatText({
+      let reply = await this.ai.chatText({
         system: prompt,
         messages: history,
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
+      reply = enforceCatalogPriceReply({ reply, request: customerRequest, selection });
       const newestInbound = this.db.prepare(
         `SELECT id FROM crm_messages
           WHERE conversation_id = ? AND direction = 'incoming'
@@ -1230,6 +1315,14 @@ prompt_patch — не больше двух коротких предложен�
     if (!res.ok) throw new Error(`Telegram photo: HTTP ${res.status}`);
   }
 
+  _hasSentProductPhoto(conversationId, productName) {
+    return Boolean(this.db.prepare(
+      `SELECT 1 FROM bot_events
+        WHERE conversation_id = ? AND event = 'product_photo.sent' AND details = ?
+        LIMIT 1`
+    ).get(Number(conversationId), JSON.stringify({ product: String(productName) })));
+  }
+
   async _send(conversationId, text, sender) {
     const c = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
     if (!c) throw new Error("Диалог не найден");
@@ -1247,9 +1340,12 @@ prompt_patch — не больше двух коротких предложен�
       if (!res.ok) throw new Error(`Telegram: HTTP ${res.status}`);
       if (sender === "assistant") {
         const product = this._recommendedProductImage(text);
-        if (product) {
+        if (product && !this._hasSentProductPhoto(c.id, product.official_name)) {
           try {
             await this._sendTelegramProductPhoto(c, product);
+            this._logEvent(c.id, "info", "delivery", "product_photo.sent", "Фото товара отправлено", {
+              product: product.official_name,
+            });
           } catch (error) {
             this._logEvent(c.id, "warn", "delivery", "product_photo.failed", error.message, { product: product.official_name });
           }
@@ -1299,6 +1395,8 @@ module.exports = {
   buildTelegramCatalogForAssistant,
   narrowCatalogForRequest,
   formatAssistantPrice,
+  catalogRequestFromHistory,
+  enforceCatalogPriceReply,
   telegramHtml,
   toConversation,
 };

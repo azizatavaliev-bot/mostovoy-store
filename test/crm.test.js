@@ -1,7 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createConnection } = require("../server/db");
-const { CrmService, buildTelegramCatalogForAssistant, narrowCatalogForRequest, telegramHtml } = require("../server/services/crm");
+const {
+  CrmService,
+  buildTelegramCatalogForAssistant,
+  narrowCatalogForRequest,
+  catalogRequestFromHistory,
+  enforceCatalogPriceReply,
+  telegramHtml,
+} = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
 const config = require("../server/config");
 
@@ -119,6 +126,51 @@ test("поиск для товароведа оставляет посты то�
   });
   const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Посоветуй айфон до 120000 сом"));
   assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3]);
+});
+
+test("короткое уточнение валюты сохраняет модель из контекста диалога", () => {
+  const request = catalogRequestFromHistory([
+    { role: "user", content: "Скок стоит iPhone 17 Pro Max 256" },
+    { role: "assistant", content: "iPhone 17 Pro Max 256 ГБ — 1 235 $." },
+    { role: "user", content: "А в сомах?" },
+  ]);
+
+  assert.match(request, /iPhone 17 Pro Max 256/);
+  assert.match(request, /КЛИЕНТ: А в сомах\?/);
+});
+
+test("отказ назвать цену из подборки заменяется проверенной ценой в нужной валюте", () => {
+  const selection = `ПОДБОРКА ТОВАРОВЕДА ИЗ КАНАЛА:\n${JSON.stringify({
+    products: [{
+      name: "iPhone 17 Pro Max",
+      storage: "256 ГБ",
+      color: "Синий",
+      price: 1235,
+      currency: "USD",
+      priceKgs: 108063,
+      priceUsd: 1235,
+      priceRub: 97565,
+      priceKzt: 629850,
+      available: true,
+    }],
+  })}`;
+
+  const kgs = enforceCatalogPriceReply({
+    reply: "Точной цены в сомах нет, поэтому назвать сумму не смогу.",
+    request: "А в сомах?",
+    selection,
+  });
+  assert.match(kgs, /108\s100 с/);
+  assert.match(kgs, /Могу сразу оформить заказ/);
+  assert.doesNotMatch(kgs, /не смогу|цены.*нет/i);
+
+  const usd = enforceCatalogPriceReply({
+    reply: "Подтверждённой цены в долларах нет.",
+    request: "В $?",
+    selection,
+  });
+  assert.match(usd, /1\s240 \$/);
+  assert.doesNotMatch(usd, /цены.*нет/i);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {
@@ -489,6 +541,9 @@ test("агрессивное обучение сохраняет отклоне�
   assert.equal(usage.tasks.find((item) => item.task === "sales_agent").tokens, 120);
   assert.equal(usage.tasks.find((item) => item.task === "aggressive_learning").tokens, 90);
   assert.ok(usage.periods.all.costUsd > 0);
+  assert.equal(usage.customers.total, 1);
+  assert.equal(usage.customers.telegram, 1);
+  assert.equal(usage.customers.returning, 0);
 });
 
 test("сбой агрессивного обучения не отменяет отклонение ответа", async (t) => {
@@ -570,6 +625,48 @@ test("ответ бота с ценой переводит сделку в пе�
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.deepEqual(crmDeals.advanceCalls, [{ externalKey: "telegram:490" }]);
+});
+
+test("фото одного товара отправляется только один раз за диалог", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  const previousPublicUrl = config.publicUrl;
+  config.telegram.botToken = "test-token";
+  config.publicUrl = "https://store.example";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    config.publicUrl = previousPublicUrl;
+    db.close();
+  });
+  db.prepare(
+    `INSERT INTO products
+      (slug, normalized_key, official_name, price, currency, status, main_image_url)
+     VALUES ('iphone-17-pro-max-photo', 'iphone-17-pro-max-photo', 'iPhone 17 Pro Max', 1235, 'USD', 'active', '/iphone.webp')`
+  ).run();
+  const requests = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      requests.push(url);
+      return { ok: true, status: 200 };
+    },
+  });
+  await crm.receiveTelegram({
+    message_id: 491,
+    text: "Покажите iPhone 17 Pro Max",
+    chat: { id: 491, type: "private" },
+    from: { id: 491, first_name: "Клиент" },
+  });
+  const conversation = crm.listConversations()[0];
+
+  await crm._send(conversation.id, "iPhone 17 Pro Max — 1 235 $. В наличии.", "assistant");
+  await crm._send(conversation.id, "Оформим iPhone 17 Pro Max?", "assistant");
+
+  assert.equal(requests.filter((url) => url.includes("/sendMessage")).length, 2);
+  assert.equal(requests.filter((url) => url.includes("/sendPhoto")).length, 1);
+  assert.equal(crm.listEvents().filter((event) => event.event === "product_photo.sent").length, 1);
 });
 
 test("первое входящее заводит сделку в CRM, повторное — нет", async (t) => {

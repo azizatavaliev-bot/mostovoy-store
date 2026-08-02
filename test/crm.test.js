@@ -92,10 +92,11 @@ test("поиск для товароведа оставляет посты то�
     pendingPosts: [
       { telegramMessageId: 1, text: "iPhone 17 256 GB — 840$" },
       { telegramMessageId: 2, text: "Dyson Airwrap — 500$" },
+      { telegramMessageId: 3, text: "iPhone 16 128 GB — 700$" },
     ],
   });
   const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Посоветуй айфон до 120000 сом"));
-  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [1]);
+  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3]);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

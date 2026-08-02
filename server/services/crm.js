@@ -214,6 +214,13 @@ function narrowCatalogForRequest(catalog, request) {
     const family = CATALOG_FAMILIES.find((item) => item.request.test(String(request || "")));
     if (!family) return JSON.stringify({ ...data, pendingPosts: data.pendingPosts.slice(0, 40) });
     const matches = (value) => family.terms.some((term) => String(value || "").toLowerCase().includes(term));
+    const pricedPosts = data.pendingPosts
+      .filter((post) => matches(post.text) && /\d[\d\s.,]*\s*(?:\$|с(?:\s|$)|сом|usd|kgs)/i.test(post.text))
+      .sort((a, b) => Number(b.telegramMessageId) - Number(a.telegramMessageId));
+    // Канал публикует новый полный прайс категории отдельным постом. Старые
+    // прайсы остаются в истории, поэтому для ответа используем только самый
+    // новый ценовой пост этой категории.
+    if (pricedPosts.length) return JSON.stringify({ ...data, products: [], pendingPosts: pricedPosts.slice(0, 1) });
     return JSON.stringify({
       ...data,
       products: Array.isArray(data.products)

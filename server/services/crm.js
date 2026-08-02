@@ -50,7 +50,7 @@ const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подх
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
-const PREMIUM_RUB_PRICE = /\b(?:macbook\s+pro|iphone\s+17\s+pro\s+max)\b/i;
+const EXPENSIVE_PRICE_KGS = 120_000;
 const INSTALLMENT_COEFFICIENTS = { 3: 0.94, 6: 0.89, 12: 0.84 };
 const TRADE_IN_OPTIONS = [
   ["iphone 15 pro max", 900], ["iphone 15 pro", 800], ["iphone 15", 620],
@@ -73,7 +73,7 @@ function convertAssistantPrice(amount, from, to) {
 
 function formatAssistantPrice(amount, from, to) {
   const value = roundAssistantPrice(convertAssistantPrice(amount, from, to), to);
-  const suffix = to === "KGS" ? "с" : to === "RUB" ? "₽" : "$";
+  const suffix = to === "KGS" ? "с" : to === "RUB" ? "₽" : to === "KZT" ? "₸" : "$";
   return `${value.toLocaleString("ru-RU")} ${suffix}`;
 }
 
@@ -186,8 +186,8 @@ function buildTelegramCatalogForAssistant(db) {
   ).all();
   return snapshots.map((p) => {
     const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
-    const defaultCurrency = PREMIUM_RUB_PRICE.test(p.official_name) ? "RUB" : "KGS";
-    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, defaultCurrency)}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}${p.available ? "" : " (нет в наличии)"}`;
+    const defaultCurrency = convertAssistantPrice(p.price, p.currency, "KGS") >= EXPENSIVE_PRICE_KGS ? "USD" : "KGS";
+    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, defaultCurrency)}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
   }).join("\n");
 }
 
@@ -235,9 +235,9 @@ function narrowCatalogForRequest(catalog, request) {
 
 const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
-Для русскоязычных и кыргызскоязычных клиентов по умолчанию называй «цену по умолчанию»: это сомы. Исключение — MacBook Pro и iPhone 17 Pro Max: по умолчанию называй цену в рублях.
-Если клиент явно попросил USD, RUB или KGS — назови цену в этой валюте. Если клиент пишет по-английски — по умолчанию используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
-Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd и priceRub — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
+Если клиент не назвал страну и не попросил валюту, называй цену в сомах (priceKgs). Если priceKgs равна или выше ${EXPENSIVE_PRICE_KGS}, называй цену в долларах (priceUsd), потому что это дорогое устройство.
+Рубли (priceRub) называй только если клиент прямо сказал, что он из России, доставка нужна в Россию, либо сам попросил RUB/рубли. Для клиента из Казахстана называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Если клиент явно попросил USD или KGS — назови цену в этой валюте. Если клиент пишет по-английски и страну не назвал — используй USD. Не называй несколько валют сразу, если клиент не просит сравнение.
+Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
 
 ПРОДАЖА:
 Если клиент просит посоветовать товар, называет бюджет или категорию, сразу предложи 2–3 наиболее подходящих товара из актуального каталога с ценами. Не отвечай «сейчас уточню», «уточню у менеджера» и не перекладывай подбор на клиента, пока в каталоге есть подходящие варианты.
@@ -246,10 +246,10 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последнее сообщение клиента.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки. Если подходящих товаров нет — верни пустой массив.
 Поле products содержит уже разобранные позиции. Поле pendingPosts содержит новые или изменённые исходные посты, которые ещё обрабатываются; если они описывают тот же товар, данные из более нового pendingPosts имеют приоритет.
-Для сравнения с бюджетом используй курсы магазина: 1 USD = ${config.rates.KGS} KGS, 1 USD = ${config.rates.RUB} RUB. В JSON всё равно верни исходную цену и валюту из канала, не пересчитывай поле price.
+Для сравнения с бюджетом используй курсы магазина: 1 USD = ${config.rates.KGS} KGS, 1 USD = ${config.rates.RUB} RUB, 1 USD = ${config.rates.KZT} KZT. В JSON всё равно верни исходную цену и валюту из канала, не пересчитывай поле price.
 Верни JSON строго такого вида:
 {"products":[{"name":"iPhone 15 Pro Max","brand":"Apple","category":"smartphone","storage":"256GB","color":"Natural Titanium","price":1099,"currency":"USD","available":true,"reason":"кратко почему подходит"}],"note":"одно короткое уточнение только если товаров нет"}
-price — число без пробелов и символов. currency — только USD, KGS или RUB. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.`;
+price — число без пробелов и символов. currency — только USD, KGS, RUB или KZT. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.`;
 
 function toConversation(row) {
   return {
@@ -1114,10 +1114,11 @@ prompt_patch — не больше двух коротких предложен�
             priceKgs: Math.ceil(convertAssistantPrice(price, currency, "KGS")),
             priceUsd: Math.ceil(convertAssistantPrice(price, currency, "USD")),
             priceRub: Math.ceil(convertAssistantPrice(price, currency, "RUB")),
+            priceKzt: Math.ceil(convertAssistantPrice(price, currency, "KZT")),
             available: item?.available === true,
             reason: String(item?.reason || "").trim(),
           };
-        }).filter((item) => item.name && Number.isFinite(item.price) && ["USD", "KGS", "RUB"].includes(item.currency))
+        }).filter((item) => item.name && Number.isFinite(item.price) && ["USD", "KGS", "RUB", "KZT"].includes(item.currency))
         : [];
       const selection = JSON.stringify({ products, note: String(result?.note || "").trim() });
       this._logEvent(conversationId, "info", "catalog", "catalog.specialist_selected", "Товаровед отобрал товары из канала", {

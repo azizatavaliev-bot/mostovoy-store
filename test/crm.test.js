@@ -82,7 +82,28 @@ test("товаровед DeepSeek получает базу канала, а м�
   assert.match(selection, /ПОДБОРКА ТОВАРОВЕДА/);
   assert.match(selection, /"price":87000/);
   assert.match(selection, /"currency":"KGS"/);
+  assert.match(selection, /"priceKzt":507086/);
   assert.doesNotMatch(selection, /\[Пост канала/);
+});
+
+test("валюта ответа по умолчанию — сомы, для дорогой техники — доллары", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, 'USD', 'active')"
+  );
+  insert.run("iphone-15-snapshot", "iphone-15-snapshot", "iPhone 15", 900);
+  insert.run("macbook-pro-snapshot", "macbook-pro-snapshot", "MacBook Pro 16", 1600);
+
+  const catalog = buildTelegramCatalogForAssistant(db);
+  assert.match(catalog, /iPhone 15: цена по умолчанию 78\s800 с/);
+  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 1\s600 \$/);
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const prompt = crm._composePrompt(crm.getSettings(), "");
+  assert.match(prompt, /прямо сказал, что он из России/);
+  assert.match(prompt, /Для клиента из Казахстана называй цену в тенге \(priceKzt\)/);
+  assert.match(prompt, /по умолчанию называй цену в сомах|называй цену в сомах/);
 });
 
 test("поиск для товароведа оставляет посты только нужной категории", () => {

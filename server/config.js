@@ -146,6 +146,7 @@ const config = {
     USD: 1,
     KGS: Number(process.env.RATE_USD_KGS) || 87.5,
     RUB: Number(process.env.RATE_USD_RUB) || 79,
+    KZT: Number(process.env.RATE_USD_KZT) || 510,
   },
 
   // Админка (/admin.html и /api/admin/*): ручное добавление и правка товаров.

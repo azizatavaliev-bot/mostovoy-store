@@ -122,7 +122,7 @@ test("/api/catalog отдаёт товары, контакты и курсы", a
   assert.equal(data.contact.channelUrl, "https://t.me/mostovoyshopp");
   assert.equal(data.contact.whatsappUrl, "https://wa.me/996999110110");
   assert.equal(data.rates.USD, 1);
-  assert.ok(data.rates.KGS > 1 && data.rates.RUB > 1);
+  assert.ok(data.rates.KGS > 1 && data.rates.RUB > 1 && data.rates.KZT > 1);
 });
 
 test("/api/products/:slug отдаёт товар и готовое сообщение для Telegram", async (t) => {

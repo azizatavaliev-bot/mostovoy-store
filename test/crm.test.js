@@ -79,6 +79,7 @@ test("товаровед DeepSeek получает базу канала, а м�
   });
 
   assert.match(payload.user, /iPhone 17 256 GB — 87 000 с/);
+  assert.match(payload.system, /Не добавляй к цене наценку/);
   assert.match(selection, /ПОДБОРКА ТОВАРОВЕДА/);
   assert.match(selection, /"price":87000/);
   assert.match(selection, /"currency":"KGS"/);
@@ -523,16 +524,53 @@ test("сбой агрессивного обучения не отменяет �
 
 function makeDealsSpy({ fail = false } = {}) {
   const calls = [];
+  const advanceCalls = [];
   return {
     calls,
+    advanceCalls,
     enabled: true,
     async createDeal(payload) {
       calls.push(payload);
       if (fail) throw new Error("CRM недоступна");
       return { ok: true, created: true };
     },
+    async advanceToPrimaryContact(payload) {
+      advanceCalls.push(payload);
+      if (fail) throw new Error("CRM недоступна");
+      return { ok: true, moved: true, stageName: "Заявка получена" };
+    },
   };
 }
+
+test("ответ бота с ценой переводит сделку в первичный контакт", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    crmDeals,
+    fetchImpl: async () => ({ ok: true, status: 200 }),
+  });
+  await crm.receiveTelegram({
+    message_id: 490,
+    text: "Сколько стоит iPhone?",
+    chat: { id: 490, type: "private" },
+    from: { id: 490, first_name: "Клиент" },
+  });
+  const conversation = crm.listConversations()[0];
+
+  await crm._send(conversation.id, "iPhone 17 Pro Max 1TB — 1 610 $. Оформить резерв?", "assistant");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(crmDeals.advanceCalls, [{ externalKey: "telegram:490" }]);
+});
 
 test("первое входящее заводит сделку в CRM, повторное — нет", async (t) => {
   const db = createConnection(":memory:");
@@ -646,7 +684,13 @@ test("клиент сделок шлёт внутренний токен и но
     internalToken: "secret-token",
     fetchImpl: async (url, init) => {
       seen.push({ url, init });
-      return { ok: true, status: 200, json: async () => ({ ok: true, created: true }) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => init.method === "PATCH"
+          ? ({ ok: true, moved: true, stageName: "Заявка получена" })
+          : ({ ok: true, created: true }),
+      };
     },
   });
 
@@ -663,4 +707,13 @@ test("клиент сделок шлёт внутренний токен и но
   assert.equal(body.source, "whatsapp");
   assert.equal(body.externalKey, "amo:chat-1");
   assert.equal(body.customerPhone, null);
+
+  const advanced = await client.advanceToPrimaryContact({ externalKey: "amo:chat-1" });
+  assert.equal(advanced.moved, true);
+  assert.equal(seen[1].url, "https://crm.example/api/internal/deals");
+  assert.equal(seen[1].init.method, "PATCH");
+  assert.deepEqual(JSON.parse(seen[1].init.body), {
+    externalKey: "amo:chat-1",
+    action: "primary_contact",
+  });
 });

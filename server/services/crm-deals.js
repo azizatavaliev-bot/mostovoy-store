@@ -54,6 +54,28 @@ class CrmDealsClient {
       clearTimeout(timer);
     }
   }
+
+  async advanceToPrimaryContact({ externalKey }) {
+    if (!this.enabled) return { skipped: true };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/internal/deals`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-internal-token": this.internalToken,
+        },
+        body: JSON.stringify({ externalKey, action: "primary_contact" }),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `CRM: HTTP ${response.status}`);
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 module.exports = { CrmDealsClient };

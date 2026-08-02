@@ -727,7 +727,11 @@ prompt_patch — не больше двух коротких предложен�
       customerRequest: text,
       catalog,
     });
-    const finance = financeToolContext(text, selection);
+    const financeRequest = [...(Array.isArray(history) ? history : []), { role: "user", content: text }]
+      .filter((message) => message?.role === "user")
+      .map((message) => message.content)
+      .join("\n");
+    const finance = financeToolContext(financeRequest, selection);
     const reply = await this.ai.chatText({
       system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
@@ -972,8 +976,9 @@ prompt_patch — не больше двух коротких предложен�
       customerRequest,
       catalog,
     });
-    const finance = financeToolContext(customerRequest, selection);
-    if (finance) this._recordFinanceRequest(conversationId, customerRequest, selection);
+    const financeRequest = history.filter((message) => message.role === "user").map((message) => message.content).join("\n");
+    const finance = financeToolContext(financeRequest, selection);
+    if (finance) this._recordFinanceRequest(conversationId, financeRequest, selection);
     const prompt = this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n"));
     this._logEvent(conversationId, "info", "generation", "generation.started", "ИИ формирует черновик", {
       model: settings.model,

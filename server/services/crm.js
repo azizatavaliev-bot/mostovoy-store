@@ -426,18 +426,32 @@ class CrmService {
 
   _publishOrderIfConfirmed(conversation, history, selection) {
     if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return;
-    const customerText = (Array.isArray(history) ? history : [])
+    const messages = Array.isArray(history) ? history : [];
+    const customerText = messages
       .filter((message) => message?.role === "user")
       .map((message) => String(message.content || ""))
       .join("\n");
+    const latestUserIndex = messages.findLastIndex((message) => message?.role === "user");
+    const latestCustomerText = latestUserIndex >= 0 ? String(messages[latestUserIndex].content || "") : "";
+    const previousAssistantText = latestUserIndex > 0 && messages[latestUserIndex - 1]?.role === "assistant"
+      ? String(messages[latestUserIndex - 1].content || "")
+      : "";
     // Заказ появляется после явного подтверждения клиента. Сообщения вроде
     // «сколько стоит» или обычная подборка заказом не считаются.
-    if (!/(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(customerText)) return;
+    const explicitOrder = /(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(latestCustomerText);
+    const confirmedOffer = /^(?:да|давайте|конечно|хорошо|согласен|согласна|беру|оформляйте)[.!\s]*$/iu.test(latestCustomerText.trim())
+      && /(?:оформ|заказ|резерв|покуп)/iu.test(previousAssistantText);
+    if (!explicitOrder && !confirmedOffer) return;
     const product = selectedCatalogProduct(selection);
     if (!product) return;
 
     const externalKey = conversation.external_key || conversation.externalKey;
     if (!externalKey) return;
+    const externalChatId = conversation.external_chat_id || conversation.externalChatId;
+    if (conversation.source === "telegram" && externalChatId && externalKey !== `telegram:${externalChatId}`) {
+      logger.error("crm_deals.order_identity_mismatch", { externalKey, externalChatId });
+      return;
+    }
     const phone = conversation.customer_phone || conversation.customerPhone
       || (customerText.match(/(?:\+?\d[\d\s()\-]{7,}\d)/u) || [])[0]
       || null;

@@ -650,9 +650,11 @@ test("сбой агрессивного обучения не отменяет �
 function makeDealsSpy({ fail = false } = {}) {
   const calls = [];
   const advanceCalls = [];
+  const orderCalls = [];
   return {
     calls,
     advanceCalls,
+    orderCalls,
     enabled: true,
     async createDeal(payload) {
       calls.push(payload);
@@ -664,8 +666,41 @@ function makeDealsSpy({ fail = false } = {}) {
       if (fail) throw new Error("CRM недоступна");
       return { ok: true, moved: true, stageName: "Заявка получена" };
     },
+    async createOrder(payload) {
+      orderCalls.push(payload);
+      if (fail) throw new Error("CRM недоступна");
+      return { ok: true, id: "order-1" };
+    },
   };
 }
+
+test("заказ записывается только в сделку текущего Telegram-клиента", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
+  const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"iPhone 17 Pro Max","storage":"1 TB","color":"Синий","price":1610,"priceKgs":140875,"currency":"USD","available":true}]}';
+
+  crm._publishOrderIfConfirmed(
+    { id: 10, source: "telegram", externalKey: "telegram:111", externalChatId: "111", customerName: "Первый" },
+    [{ role: "user", content: "Оформляйте этот iPhone" }],
+    selection
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(crmDeals.orderCalls.length, 1);
+  assert.equal(crmDeals.orderCalls[0].externalKey, "telegram:111");
+  assert.equal(crmDeals.orderCalls[0].customerName, "Первый");
+
+  crm._publishOrderIfConfirmed(
+    { id: 11, source: "telegram", externalKey: "telegram:111", externalChatId: "222", customerName: "Второй" },
+    [{ role: "user", content: "Оформляйте этот iPhone" }],
+    selection
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(crmDeals.orderCalls.length, 1);
+});
 
 test("ответ бота с ценой переводит сделку в первичный контакт", async (t) => {
   const db = createConnection(":memory:");

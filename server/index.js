@@ -5,6 +5,7 @@ const { getDb, closeDb } = require("./db");
 const { seedLegacyProducts } = require("./services/seed");
 const { createApp } = require("./app");
 const { syncPublicChannelPosts } = require("./cli/import-public-channel");
+const { startFxRateUpdater } = require("./services/fx-rates");
 
 const db = getDb();
 seedLegacyProducts(db);
@@ -35,6 +36,7 @@ const server = app.listen(config.port, () => {
   void syncFullChannelCatalog();
   fullCatalogSyncTimer = setInterval(syncFullChannelCatalog, 6 * 60 * 60 * 1000);
   fullCatalogSyncTimer.unref();
+  startFxRateUpdater();
 });
 
 queue.start();

@@ -237,39 +237,9 @@ function buildTelegramCatalogForAssistant(db) {
     text: post.telegram_original_text,
   }));
 
-  // Часть карточек была создана в админке по публикациям канала до появления
-  // message_products. Они видны на витрине, но без этого резерва исчезали для
-  // бота, как Whoop. Демо-товары origin=legacy сюда намеренно не попадают.
-  const snapshots = db.prepare(
-    `SELECT official_name, brand, category, color, storage, price, currency, available, origin, updated_at
-       FROM products
-      WHERE status != 'hidden' AND price IS NOT NULL AND origin IN ('telegram', 'manual')
-      ORDER BY updated_at DESC, id DESC
-      LIMIT 300`
-  ).all();
-  const productRows = products.map((p) => ({
-    name: p.official_name,
-    brand: p.brand || null,
-    category: p.category || null,
-    storage: p.storage || null,
-    color: p.color || null,
-    price: Number(p.price),
-    currency: p.currency,
-    available: Boolean(p.available),
-    telegramMessageId: Number(p.telegram_message_id),
-    updatedAt: p.telegram_message_updated_at || null,
-    source: "telegram_post",
-  }));
-  const productIdentity = (p) => [p.name, p.storage, p.color]
-    .map((value) => String(value || "").trim().toLowerCase())
-    .join("|");
-  const snapshotIdentity = (p) => [productIdentity(p), p.price, p.currency]
-    .map((value) => String(value || "").trim().toLowerCase())
-    .join("|");
-  const linkedProducts = new Set(productRows.map(productIdentity));
-  const seenSnapshots = new Set();
-  for (const p of snapshots) {
-    const snapshot = {
+  if (products.length || pendingPosts.length) return JSON.stringify({
+    source: "telegram_channel",
+    products: products.map((p) => ({
       name: p.official_name,
       brand: p.brand || null,
       category: p.category || null,
@@ -278,32 +248,21 @@ function buildTelegramCatalogForAssistant(db) {
       price: Number(p.price),
       currency: p.currency,
       available: Boolean(p.available),
-      updatedAt: p.updated_at || null,
-      source: p.origin === "telegram" ? "telegram_snapshot" : "catalog_snapshot",
-    };
-    const key = snapshotIdentity(snapshot);
-    // Свежая цена конкретной Telegram-позиции важнее сохранённого снимка.
-    if (!linkedProducts.has(productIdentity(snapshot)) && !seenSnapshots.has(key)) {
-      productRows.push(snapshot);
-      seenSnapshots.add(key);
-    }
-  }
-
-  if (productRows.length || pendingPosts.length) return JSON.stringify({
-    source: "telegram_channel",
-    products: productRows,
+      telegramMessageId: Number(p.telegram_message_id),
+      updatedAt: p.telegram_message_updated_at || null,
+    })),
     pendingPosts,
   });
   // Старые импортированные позиции могут не иметь привязки message_products,
   // но их цена уже получена из канала и актуальна в таблице products.
-  const legacySnapshots = db.prepare(
+  const snapshots = db.prepare(
     `SELECT official_name, color, storage, price, currency, available
        FROM products
       WHERE status != 'hidden' AND price IS NOT NULL
       ORDER BY updated_at DESC, id DESC
       LIMIT 180`
   ).all();
-  return legacySnapshots.map((p) => {
+  return snapshots.map((p) => {
     const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
     return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, "KGS")}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
   }).join("\n");

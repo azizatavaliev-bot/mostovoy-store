@@ -23,7 +23,7 @@ test("Markdown-оформление ответа преобразуется в �
   );
 });
 
-test("каталог для ИИ объединяет Telegram-связи и активные карточки без legacy-демо", (t) => {
+test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insertProduct = db.prepare(
@@ -51,10 +51,10 @@ test("каталог для ИИ объединяет Telegram-связи и а�
   assert.deepEqual(catalog.products.map(({ name, price, currency, available }) => ({ name, price, currency, available })), [
     { name: "iPhone 15", price: 900, currency: "USD", available: true },
     { name: "MacBook Pro 14", price: 1590, currency: "USD", available: true },
-    { name: "Whoop 5.0 Peak", price: 255, currency: "USD", available: true },
   ]);
   assert.deepEqual(catalog.pendingPosts, []);
   assert.equal(catalog.products.some((product) => product.name === "Старый товар сайта"), false);
+  assert.equal(catalog.products.some((product) => product.name === "Whoop 5.0 Peak"), false);
 });
 
 test("товаровед DeepSeek получает базу канала, а менеджер — только короткую подборку", async (t) => {
@@ -107,11 +107,9 @@ test("валюта ответа по умолчанию — сомы для лю
   insert.run("iphone-15-snapshot", "iphone-15-snapshot", "iPhone 15", 900);
   insert.run("macbook-pro-snapshot", "macbook-pro-snapshot", "MacBook Pro 16", 1600);
 
-  const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
-  assert.deepEqual(catalog.products.map(({ name, price, currency }) => ({ name, price, currency })), [
-    { name: "MacBook Pro 16", price: 1600, currency: "USD" },
-    { name: "iPhone 15", price: 900, currency: "USD" },
-  ]);
+  const catalog = buildTelegramCatalogForAssistant(db);
+  assert.match(catalog, /iPhone 15: цена по умолчанию 78\s800 с/);
+  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 140\s000 с/);
 
   const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
   const prompt = crm._composePrompt(crm.getSettings(), "");

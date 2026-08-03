@@ -133,6 +133,21 @@ test("поиск для товароведа оставляет посты то�
   assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3]);
 });
 
+test("старый raw-прайс не перебивает более новый разобранный пост канала", () => {
+  const catalog = JSON.stringify({
+    source: "telegram_channel",
+    products: [
+      { name: "PlayStation 5 Slim", brand: "Sony", category: "Игровые приставки", price: 620, currency: "USD", telegramMessageId: 777 },
+    ],
+    pendingPosts: [
+      { telegramMessageId: 452, text: "Sony 5 slim 650$" },
+    ],
+  });
+  const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Какие приставки есть?"));
+  assert.deepEqual(narrowed.products.map((product) => product.price), [620]);
+  assert.deepEqual(narrowed.pendingPosts, []);
+});
+
 test("новая категория клиента не перехватывается старым iPhone из истории", () => {
   const catalog = JSON.stringify({
     source: "telegram_channel",

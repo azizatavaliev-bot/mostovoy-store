@@ -305,8 +305,17 @@ function narrowCatalogForRequest(catalog, request) {
     const matchingProducts = Array.isArray(data.products)
       ? data.products.filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
       : [];
-    const pricedPosts = data.pendingPosts
-      .filter((post) => matches(post.text) && /\d[\d\s.,]*\s*(?:\$|с(?:\s|$)|сом|usd|kgs)/i.test(post.text))
+    const newestStructuredMessageId = matchingProducts.reduce(
+      (latest, product) => Math.max(latest, Number(product.telegramMessageId) || 0),
+      0,
+    );
+    const matchingPendingPosts = data.pendingPosts
+      .filter((post) => matches(post.text))
+      // raw/pending означает «ещё не разобран», а не «обязательно новее».
+      // Старый raw-пост не должен перебивать уже разобранный свежий прайс.
+      .filter((post) => Number(post.telegramMessageId) > newestStructuredMessageId);
+    const pricedPosts = matchingPendingPosts
+      .filter((post) => /\d[\d\s.,]*\s*(?:\$|с(?:\s|$)|сом|usd|kgs)/i.test(post.text))
       .sort((a, b) => Number(b.telegramMessageId) - Number(a.telegramMessageId));
     // Канал публикует новый полный прайс категории отдельным постом. Старые
     // прайсы остаются в истории, поэтому для ответа используем только самый
@@ -315,7 +324,7 @@ function narrowCatalogForRequest(catalog, request) {
     return JSON.stringify({
       ...data,
       products: matchingProducts,
-      pendingPosts: data.pendingPosts.filter((post) => matches(post.text)).slice(0, 30),
+      pendingPosts: matchingPendingPosts.slice(0, 30),
     });
   } catch {
     return catalog;

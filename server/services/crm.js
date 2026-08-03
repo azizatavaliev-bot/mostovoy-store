@@ -148,6 +148,20 @@ function hasPriceInReply(reply) {
   return /(?:\$\s*\d|\d[\d\s\u00a0\u202f.,]*\s*(?:\$|сом(?:а|ов)?|с|₽|₸)(?=\s|$|[.,;!?*]))/iu.test(String(reply || ""));
 }
 
+function stageActionForInbound(text) {
+  const value = String(text || "").toLowerCase().replace(/ё/g, "е");
+  if (/(?:оформ(?:ить|ляйте)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(value)) {
+    return "ready_to_buy";
+  }
+  if (/(?:хочу\b|подходит|устраивает|интересует|готов\s+(?:взять|купить)|давайте\s+(?:этот|эту|его|ее))/iu.test(value)) {
+    return "interest_confirmed";
+  }
+  if (/(?:iphone|айфон|macbook|макбук|airpods|наушник|dyson|дайсон|whoop|garmin|samsung|playstation|xbox|nintendo|бюджет|до\s+\d|цвет|памят|trade.?in|трейд.?ин|обмен|рассроч)/iu.test(value)) {
+    return "need_identified";
+  }
+  return null;
+}
+
 function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
   const products = productsFromSelection(selection);
   if (!products.length) return reply;
@@ -406,12 +420,20 @@ class CrmService {
       );
   }
 
-  _publishPrimaryContact(conversation) {
-    if (!this.crmDeals?.enabled || typeof this.crmDeals.advanceToPrimaryContact !== "function") return;
+  _publishStage(conversation, action) {
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.advanceStage !== "function") return;
     void this.crmDeals
-      .advanceToPrimaryContact({ externalKey: conversation.external_key })
+      .createDeal({
+        externalKey: conversation.external_key,
+        source: conversation.source,
+        customerName: conversation.customer_name,
+        customerPhone: conversation.customer_phone,
+        customerUsername: conversation.customer_username,
+      })
+      .then(() => this.crmDeals.advanceStage({ externalKey: conversation.external_key, action }))
       .then((result) => {
-        this._logEvent(conversation.id, "info", "crm", "deal.primary_contact", "Сделка переведена в первичный контакт", {
+        this._logEvent(conversation.id, "info", "crm", "deal.stage_advanced", "Этап сделки синхронизирован", {
+          action,
           moved: Boolean(result?.moved),
           stageName: result?.stageName || null,
         });
@@ -419,6 +441,7 @@ class CrmService {
       .catch((error) =>
         logger.error("crm_deals.advance_failed", {
           externalKey: conversation.external_key,
+          action,
           error: error.message,
         })
       );
@@ -1162,6 +1185,8 @@ prompt_patch — не больше двух коротких предложен�
       this._logEvent(conversation.id, "info", "inbox", "message.received", "Получено сообщение из Telegram", {
         messageId: inserted,
       });
+      const stageAction = stageActionForInbound(text);
+      if (stageAction) this._publishStage(conversation, stageAction);
     }
     if (inserted && conversation.ai_enabled) {
       if (this._isDuplicateInbound(conversation.id, inserted, text)) {
@@ -1211,6 +1236,8 @@ prompt_patch — не больше двух коротких предложен�
       this._logEvent(conversation.id, "info", "inbox", "message.received", `Получено сообщение из ${source}`, {
         messageId: inserted,
       });
+      const stageAction = stageActionForInbound(incoming.text);
+      if (stageAction) this._publishStage(conversation, stageAction);
     }
     if (inserted && conversation.ai_enabled) await this._autoReply(conversation.id, inserted);
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
@@ -1480,8 +1507,8 @@ prompt_patch — не больше двух коротких предложен�
       "UPDATE crm_conversations SET last_message_at = datetime('now'), updated_at = datetime('now') WHERE id = ?"
     ).run(c.id);
     this._logEvent(c.id, "info", "delivery", "message.sent", "Сообщение отправлено клиенту", { sender });
-    if (sender === "assistant" && hasPriceInReply(text)) {
-      this._publishPrimaryContact(c);
+    if (sender === "assistant") {
+      this._publishStage(c, hasPriceInReply(text) ? "options_offered" : "primary_contact");
     }
     return { ...this.getConversation(c.id), messageId: externalMessageId };
   }
@@ -1499,6 +1526,7 @@ module.exports = {
   formatAssistantPrice,
   catalogRequestFromHistory,
   enforceCatalogPriceReply,
+  stageActionForInbound,
   telegramHtml,
   toConversation,
 };

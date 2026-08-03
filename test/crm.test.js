@@ -7,6 +7,7 @@ const {
   narrowCatalogForRequest,
   catalogRequestFromHistory,
   enforceCatalogPriceReply,
+  stageActionForInbound,
   telegramHtml,
 } = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
@@ -21,6 +22,13 @@ test("Markdown-оформление ответа преобразуется в �
     telegramHtml("__Подчёркнуто__ и ~~зачёркнуто~~"),
     "<u>Подчёркнуто</u> и <s>зачёркнуто</s>",
   );
+});
+
+test("намерение клиента преобразуется в этап воронки", () => {
+  assert.equal(stageActionForInbound("Нужен MacBook до 140000 сом"), "need_identified");
+  assert.equal(stageActionForInbound("Этот вариант меня устраивает"), "interest_confirmed");
+  assert.equal(stageActionForInbound("Оформляйте заказ"), "ready_to_buy");
+  assert.equal(stageActionForInbound("Привет"), null);
 });
 
 test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
@@ -661,10 +669,10 @@ function makeDealsSpy({ fail = false } = {}) {
       if (fail) throw new Error("CRM недоступна");
       return { ok: true, created: true };
     },
-    async advanceToPrimaryContact(payload) {
+    async advanceStage(payload) {
       advanceCalls.push(payload);
       if (fail) throw new Error("CRM недоступна");
-      return { ok: true, moved: true, stageName: "Заявка получена" };
+      return { ok: true, moved: true, stageName: payload.action };
     },
     async createOrder(payload) {
       orderCalls.push(payload);
@@ -702,7 +710,7 @@ test("заказ записывается только в сделку теку�
   assert.equal(crmDeals.orderCalls.length, 1);
 });
 
-test("ответ бота с ценой переводит сделку в первичный контакт", async (t) => {
+test("входящая потребность и ответ с ценой двигают сделку вперёд", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
   config.telegram.botToken = "test-token";
@@ -729,7 +737,10 @@ test("ответ бота с ценой переводит сделку в пе�
   await crm._send(conversation.id, "Заказ — **iPhone 17 Pro Max 1 ТБ за 140\u202f875 сом**. Оформить резерв?", "assistant");
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(crmDeals.advanceCalls, [{ externalKey: "telegram:490" }]);
+  assert.deepEqual(crmDeals.advanceCalls, [
+    { externalKey: "telegram:490", action: "need_identified" },
+    { externalKey: "telegram:490", action: "options_offered" },
+  ]);
 });
 
 test("фото одного товара отправляется только один раз за диалог", async (t) => {
@@ -774,7 +785,7 @@ test("фото одного товара отправляется только �
   assert.equal(crm.listEvents().filter((event) => event.event === "product_photo.sent").length, 1);
 });
 
-test("первое входящее заводит сделку в CRM, повторное — нет", async (t) => {
+test("первое входящее заводит сделку, а смена этапа делает безопасный upsert", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const crmDeals = makeDealsSpy();
@@ -790,7 +801,7 @@ test("первое входящее заводит сделку в CRM, повт
   await crm.receiveTelegram(message);
   await crm.receiveTelegram({ ...message, message_id: 502, text: "Сколько стоит?" });
 
-  assert.equal(crmDeals.calls.length, 1);
+  assert.equal(crmDeals.calls.length, 2);
   assert.deepEqual(crmDeals.calls[0], {
     externalKey: "telegram:501",
     source: "telegram",
@@ -798,6 +809,10 @@ test("первое входящее заводит сделку в CRM, повт
     customerPhone: null,
     customerUsername: "@aziz",
   });
+  assert.deepEqual(crmDeals.calls[1], crmDeals.calls[0]);
+  assert.deepEqual(crmDeals.advanceCalls, [
+    { externalKey: "telegram:501", action: "need_identified" },
+  ]);
   assert.equal(crm.listConversations()[0].externalKey, "telegram:501");
 });
 
@@ -817,10 +832,14 @@ test("входящее из amoCRM заводит сделку с каналом
     source: "instagram",
   });
 
-  assert.equal(crmDeals.calls.length, 1);
+  assert.equal(crmDeals.calls.length, 2);
   assert.equal(crmDeals.calls[0].externalKey, "amo:ig-chat-77");
   assert.equal(crmDeals.calls[0].source, "instagram");
   assert.equal(crmDeals.calls[0].customerPhone, "996700000000");
+  assert.deepEqual(crmDeals.calls[1], crmDeals.calls[0]);
+  assert.deepEqual(crmDeals.advanceCalls, [
+    { externalKey: "amo:ig-chat-77", action: "need_identified" },
+  ]);
 });
 
 test("исходящее менеджера диалог создаёт, а сделку — нет", async (t) => {
@@ -919,6 +938,12 @@ test("клиент сделок шлёт внутренний токен и но
     action: "primary_contact",
   });
 
+  await client.advanceStage({ externalKey: "amo:chat-1", action: "interest_confirmed" });
+  assert.deepEqual(JSON.parse(seen[2].init.body), {
+    externalKey: "amo:chat-1",
+    action: "interest_confirmed",
+  });
+
   const order = await client.createOrder({
     externalKey: "amo:chat-1",
     productName: "iPhone 17 Pro Max, 256 GB",
@@ -928,8 +953,8 @@ test("клиент сделок шлёт внутренний токен и но
     customerPhone: "+996700000000",
   });
   assert.equal(order.ok, true);
-  assert.equal(seen[2].init.method, "PATCH");
-  assert.deepEqual(JSON.parse(seen[2].init.body), {
+  assert.equal(seen[3].init.method, "PATCH");
+  assert.deepEqual(JSON.parse(seen[3].init.body), {
     action: "order",
     externalKey: "amo:chat-1",
     productName: "iPhone 17 Pro Max, 256 GB",

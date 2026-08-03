@@ -55,7 +55,7 @@ class CrmDealsClient {
     }
   }
 
-  async advanceToPrimaryContact({ externalKey }) {
+  async advanceStage({ externalKey, action = "primary_contact" }) {
     if (!this.enabled) return { skipped: true };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -66,7 +66,7 @@ class CrmDealsClient {
           "content-type": "application/json",
           "x-internal-token": this.internalToken,
         },
-        body: JSON.stringify({ externalKey, action: "primary_contact" }),
+        body: JSON.stringify({ externalKey, action }),
         signal: controller.signal,
       });
       const data = await response.json().catch(() => ({}));
@@ -75,6 +75,10 @@ class CrmDealsClient {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async advanceToPrimaryContact({ externalKey }) {
+    return this.advanceStage({ externalKey, action: "primary_contact" });
   }
 
   async createOrder({ externalKey, productName, amount, currency, orderType, customerName, customerPhone, note }) {

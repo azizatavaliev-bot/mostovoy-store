@@ -883,4 +883,26 @@ test("клиент сделок шлёт внутренний токен и но
     externalKey: "amo:chat-1",
     action: "primary_contact",
   });
+
+  const order = await client.createOrder({
+    externalKey: "amo:chat-1",
+    productName: "iPhone 17 Pro Max, 256 GB",
+    amount: 108063,
+    currency: "KGS",
+    orderType: "trade_in",
+    customerPhone: "+996700000000",
+  });
+  assert.equal(order.ok, true);
+  assert.equal(seen[2].init.method, "PATCH");
+  assert.deepEqual(JSON.parse(seen[2].init.body), {
+    action: "order",
+    externalKey: "amo:chat-1",
+    productName: "iPhone 17 Pro Max, 256 GB",
+    amount: 108063,
+    currency: "KGS",
+    orderType: "trade_in",
+    customerName: null,
+    customerPhone: "+996700000000",
+    note: null,
+  });
 });

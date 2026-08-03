@@ -424,6 +424,53 @@ class CrmService {
       );
   }
 
+  _publishOrderIfConfirmed(conversation, history, selection) {
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return;
+    const customerText = (Array.isArray(history) ? history : [])
+      .filter((message) => message?.role === "user")
+      .map((message) => String(message.content || ""))
+      .join("\n");
+    // Заказ появляется после явного подтверждения клиента. Сообщения вроде
+    // «сколько стоит» или обычная подборка заказом не считаются.
+    if (!/(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(customerText)) return;
+    const product = selectedCatalogProduct(selection);
+    if (!product) return;
+
+    const externalKey = conversation.external_key || conversation.externalKey;
+    if (!externalKey) return;
+    const phone = conversation.customer_phone || conversation.customerPhone
+      || (customerText.match(/(?:\+?\d[\d\s()\-]{7,}\d)/u) || [])[0]
+      || null;
+    const orderType = /рассроч|в\s+кредит|плат[её]ж.*месяц/iu.test(customerText)
+      ? "installment"
+      : /trade.?in|трейд.?ин|обмен(?:ять|а)|сдать.*(?:телефон|iphone|айфон|macbook|макбук)/iu.test(customerText)
+        ? "trade_in"
+        : "standard";
+    const amount = Number.isFinite(Number(product.priceKgs))
+      ? Math.ceil(Number(product.priceKgs))
+      : Math.ceil(convertAssistantPrice(product.price, product.currency, "KGS"));
+
+    void this.crmDeals.createOrder({
+      externalKey,
+      productName: [product.name, product.storage, product.color].filter(Boolean).join(", "),
+      amount,
+      currency: "KGS",
+      orderType,
+      customerName: conversation.customer_name || conversation.customerName,
+      customerPhone: phone,
+      note: `Источник: ${conversation.source}`,
+    }).then((result) => {
+      this._logEvent(conversation.id, "info", "commerce", "order.published", "Заказ передан в CRM", {
+        orderId: result?.id || null,
+        product: product.name,
+        orderType,
+      });
+    }).catch((error) => logger.error("crm_deals.order_failed", {
+      externalKey,
+      error: error.message,
+    }));
+  }
+
   _publishAzis(type, payload) {
     if (!this.azisCrm?.enabled) return;
     void this.azisCrm.publishEvent(type, payload).catch((error) =>
@@ -1221,6 +1268,7 @@ prompt_patch — не больше двух коротких предложен�
         });
       } else {
         await this._send(conversationId, reply, "assistant");
+        this._publishOrderIfConfirmed(detail.conversation, history, selection);
         this._logEvent(conversationId, "info", "delivery", "reply.sent", "Автоответ отправлен без подтверждения");
       }
     } catch (error) {

@@ -76,6 +76,38 @@ class CrmDealsClient {
       clearTimeout(timer);
     }
   }
+
+  async createOrder({ externalKey, productName, amount, currency, orderType, customerName, customerPhone, note }) {
+    if (!this.enabled) return { skipped: true };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/internal/deals`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          "x-internal-token": this.internalToken,
+        },
+        body: JSON.stringify({
+          action: "order",
+          externalKey,
+          productName,
+          amount: amount ?? null,
+          currency: currency || "KGS",
+          orderType: orderType || "standard",
+          customerName: customerName || null,
+          customerPhone: customerPhone || null,
+          note: note || null,
+        }),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `CRM: HTTP ${response.status}`);
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 module.exports = { CrmDealsClient };

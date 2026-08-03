@@ -23,7 +23,7 @@ test("Markdown-оформление ответа преобразуется в �
   );
 });
 
-test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
+test("каталог для ИИ объединяет Telegram-связи и активные карточки без legacy-демо", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insertProduct = db.prepare(
@@ -32,6 +32,9 @@ test("каталог для ИИ отдаёт структурированные
   const iphone = insertProduct.run("iphone-15-test", "iphone-15-test", "iPhone 15", 99999, "RUB").lastInsertRowid;
   const premium = insertProduct.run("macbook-pro-test", "macbook-pro-test", "MacBook Pro 14", 99999, "RUB").lastInsertRowid;
   insertProduct.run("legacy-test", "legacy-test", "Старый товар сайта", 1, "RUB");
+  db.prepare("UPDATE products SET origin = 'legacy' WHERE slug = 'legacy-test'").run();
+  const whoop = insertProduct.run("whoop-test", "whoop-test", "Whoop 5.0 Peak", 255, "USD").lastInsertRowid;
+  db.prepare("UPDATE products SET origin = 'manual', brand = 'Whoop', category = 'Фитнес-трекеры' WHERE id = ?").run(whoop);
   const message = db.prepare(
     `INSERT INTO telegram_messages
       (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
@@ -48,6 +51,7 @@ test("каталог для ИИ отдаёт структурированные
   assert.deepEqual(catalog.products.map(({ name, price, currency, available }) => ({ name, price, currency, available })), [
     { name: "iPhone 15", price: 900, currency: "USD", available: true },
     { name: "MacBook Pro 14", price: 1590, currency: "USD", available: true },
+    { name: "Whoop 5.0 Peak", price: 255, currency: "USD", available: true },
   ]);
   assert.deepEqual(catalog.pendingPosts, []);
   assert.equal(catalog.products.some((product) => product.name === "Старый товар сайта"), false);
@@ -103,9 +107,11 @@ test("валюта ответа по умолчанию — сомы для лю
   insert.run("iphone-15-snapshot", "iphone-15-snapshot", "iPhone 15", 900);
   insert.run("macbook-pro-snapshot", "macbook-pro-snapshot", "MacBook Pro 16", 1600);
 
-  const catalog = buildTelegramCatalogForAssistant(db);
-  assert.match(catalog, /iPhone 15: цена по умолчанию 78\s800 с/);
-  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 140\s000 с/);
+  const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
+  assert.deepEqual(catalog.products.map(({ name, price, currency }) => ({ name, price, currency })), [
+    { name: "MacBook Pro 16", price: 1600, currency: "USD" },
+    { name: "iPhone 15", price: 900, currency: "USD" },
+  ]);
 
   const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
   const prompt = crm._composePrompt(crm.getSettings(), "");
@@ -127,6 +133,31 @@ test("поиск для товароведа оставляет посты то�
   });
   const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Посоветуй айфон до 120000 сом"));
   assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3]);
+});
+
+test("новая категория клиента не перехватывается старым iPhone из истории", () => {
+  const catalog = JSON.stringify({
+    source: "telegram_channel",
+    products: [
+      { name: "iPhone 17", brand: "Apple", category: "Смартфоны", price: 87000, currency: "KGS" },
+      { name: "Whoop 5.0 Peak", brand: "Whoop", category: "Фитнес-трекеры", price: 255, currency: "USD" },
+      { name: "Philips OneBlade", brand: "Philips", category: "Триммеры", price: 2500, currency: "KGS" },
+      { name: "Meta Ray-Ban Wayfarer Gen 2", brand: "Meta", category: "Смарт-очки", price: 42000, currency: "KGS" },
+      { name: "Dyson Airwrap HS09", brand: "Dyson", category: "Фены и стайлеры", price: 610, currency: "USD" },
+    ],
+    pendingPosts: [],
+  });
+  const whoop = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Сколько стоит iPhone 17?\nКОНСУЛЬТАНТ: 87 000 сом\nКЛИЕНТ: А Whoop есть?"));
+  assert.deepEqual(whoop.products.map((product) => product.name), ["Whoop 5.0 Peak"]);
+
+  const razor = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: А бритва есть?"));
+  assert.deepEqual(razor.products.map((product) => product.name), ["Philips OneBlade"]);
+
+  const glasses = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: Ray-Ban есть?"));
+  assert.deepEqual(glasses.products.map((product) => product.name), ["Meta Ray-Ban Wayfarer Gen 2"]);
+
+  const dyson = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: Какие Dyson есть?"));
+  assert.deepEqual(dyson.products.map((product) => product.name), ["Dyson Airwrap HS09"]);
 });
 
 test("короткое уточнение валюты сохраняет модель из контекста диалога", () => {

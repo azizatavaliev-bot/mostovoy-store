@@ -237,9 +237,39 @@ function buildTelegramCatalogForAssistant(db) {
     text: post.telegram_original_text,
   }));
 
-  if (products.length || pendingPosts.length) return JSON.stringify({
-    source: "telegram_channel",
-    products: products.map((p) => ({
+  // Часть карточек была создана в админке по публикациям канала до появления
+  // message_products. Они видны на витрине, но без этого резерва исчезали для
+  // бота, как Whoop. Демо-товары origin=legacy сюда намеренно не попадают.
+  const snapshots = db.prepare(
+    `SELECT official_name, brand, category, color, storage, price, currency, available, origin, updated_at
+       FROM products
+      WHERE status != 'hidden' AND price IS NOT NULL AND origin IN ('telegram', 'manual')
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 300`
+  ).all();
+  const productRows = products.map((p) => ({
+    name: p.official_name,
+    brand: p.brand || null,
+    category: p.category || null,
+    storage: p.storage || null,
+    color: p.color || null,
+    price: Number(p.price),
+    currency: p.currency,
+    available: Boolean(p.available),
+    telegramMessageId: Number(p.telegram_message_id),
+    updatedAt: p.telegram_message_updated_at || null,
+    source: "telegram_post",
+  }));
+  const productIdentity = (p) => [p.name, p.storage, p.color]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join("|");
+  const snapshotIdentity = (p) => [productIdentity(p), p.price, p.currency]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .join("|");
+  const linkedProducts = new Set(productRows.map(productIdentity));
+  const seenSnapshots = new Set();
+  for (const p of snapshots) {
+    const snapshot = {
       name: p.official_name,
       brand: p.brand || null,
       category: p.category || null,
@@ -248,21 +278,32 @@ function buildTelegramCatalogForAssistant(db) {
       price: Number(p.price),
       currency: p.currency,
       available: Boolean(p.available),
-      telegramMessageId: Number(p.telegram_message_id),
-      updatedAt: p.telegram_message_updated_at || null,
-    })),
+      updatedAt: p.updated_at || null,
+      source: p.origin === "telegram" ? "telegram_snapshot" : "catalog_snapshot",
+    };
+    const key = snapshotIdentity(snapshot);
+    // Свежая цена конкретной Telegram-позиции важнее сохранённого снимка.
+    if (!linkedProducts.has(productIdentity(snapshot)) && !seenSnapshots.has(key)) {
+      productRows.push(snapshot);
+      seenSnapshots.add(key);
+    }
+  }
+
+  if (productRows.length || pendingPosts.length) return JSON.stringify({
+    source: "telegram_channel",
+    products: productRows,
     pendingPosts,
   });
   // Старые импортированные позиции могут не иметь привязки message_products,
   // но их цена уже получена из канала и актуальна в таблице products.
-  const snapshots = db.prepare(
+  const legacySnapshots = db.prepare(
     `SELECT official_name, color, storage, price, currency, available
        FROM products
       WHERE status != 'hidden' AND price IS NOT NULL
       ORDER BY updated_at DESC, id DESC
       LIMIT 180`
   ).all();
-  return snapshots.map((p) => {
+  return legacySnapshots.map((p) => {
     const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
     return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, "KGS")}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
   }).join("\n");
@@ -279,7 +320,7 @@ const CATALOG_FAMILIES = [
   { request: /dyson|дайсон|фен|стайлер/i, terms: ["dyson", "airwrap", "airstrait"] },
   { request: /garmin|гармин/i, terms: ["garmin"] },
   { request: /whoop|вуп/i, terms: ["whoop"] },
-  { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray•ban", "meta oakley"] },
+  { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray-ban", "rayban", "ray•ban", "meta oakley"] },
   { request: /пристав|playstation|xbox|nintendo|steam deck/i, terms: ["playstation", "sony 5", "xbox", "nintendo", "steam deck"] },
   { request: /бритв|триммер|oneblade|philips/i, terms: ["oneblade", "one blade", "philips"] },
 ];
@@ -288,21 +329,33 @@ function narrowCatalogForRequest(catalog, request) {
   try {
     const data = JSON.parse(catalog);
     if (!Array.isArray(data.pendingPosts)) return catalog;
-    const family = CATALOG_FAMILIES.find((item) => item.request.test(String(request || "")));
+    const requestText = String(request || "");
+    // История нужна для уточнений вроде «а в сомах?», но новую категорию
+    // определяем по последней реплике клиента. Иначе старое слово «iPhone»
+    // перехватывало последующий запрос «покажи Whoop/бритвы/Dyson».
+    const customerMessages = requestText.split("\n")
+      .filter((line) => line.startsWith("КЛИЕНТ:"))
+      .map((line) => line.slice("КЛИЕНТ:".length).trim())
+      .reverse();
+    const family = customerMessages
+      .map((message) => CATALOG_FAMILIES.find((item) => item.request.test(message)))
+      .find(Boolean)
+      || CATALOG_FAMILIES.find((item) => item.request.test(requestText));
     if (!family) return JSON.stringify({ ...data, pendingPosts: data.pendingPosts.slice(0, 40) });
     const matches = (value) => family.terms.some((term) => String(value || "").toLowerCase().includes(term));
+    const matchingProducts = Array.isArray(data.products)
+      ? data.products.filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
+      : [];
     const pricedPosts = data.pendingPosts
       .filter((post) => matches(post.text) && /\d[\d\s.,]*\s*(?:\$|с(?:\s|$)|сом|usd|kgs)/i.test(post.text))
       .sort((a, b) => Number(b.telegramMessageId) - Number(a.telegramMessageId));
     // Канал публикует новый полный прайс категории отдельным постом. Старые
     // прайсы остаются в истории, поэтому для ответа используем только самый
     // новый ценовой пост этой категории.
-    if (pricedPosts.length) return JSON.stringify({ ...data, products: [], pendingPosts: pricedPosts.slice(0, 1) });
+    if (pricedPosts.length) return JSON.stringify({ ...data, products: matchingProducts, pendingPosts: pricedPosts.slice(0, 1) });
     return JSON.stringify({
       ...data,
-      products: Array.isArray(data.products)
-        ? data.products.filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
-        : [],
+      products: matchingProducts,
       pendingPosts: data.pendingPosts.filter((post) => matches(post.text)).slice(0, 30),
     });
   } catch {

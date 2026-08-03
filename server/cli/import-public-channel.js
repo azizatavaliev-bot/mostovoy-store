@@ -44,7 +44,7 @@ function args(argv) {
     const index = argv.indexOf(name);
     return index === -1 ? fallback : Number(argv[index + 1]) || fallback;
   };
-  return { maxPages: value("--max-pages", argv.includes("--all") ? 30 : 1) };
+  return { maxPages: argv.includes("--all") ? Infinity : value("--max-pages", 1) };
 }
 
 async function loadPosts(channel, maxPages, fetchImpl = globalThis.fetch) {

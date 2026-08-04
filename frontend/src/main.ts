@@ -389,8 +389,15 @@ homeSearchInput.addEventListener("keydown", (event) => {
   }
   if (event.key === "Enter" && homeSearchMatches.length) {
     event.preventDefault();
-    const target = homeSearchMatches[homeSearchActive >= 0 ? homeSearchActive : 0];
-    window.location.href = `product.html?id=${encodeURIComponent(target.id)}`;
+    // Стрелками выбрали конкретный товар — открываем его. Просто набрали
+    // текст и нажали Enter — остаёмся на каталоге и показываем все совпадения,
+    // а не угадываем один товар и не уводим полной перезагрузкой страницы.
+    if (homeSearchActive >= 0) {
+      const target = homeSearchMatches[homeSearchActive];
+      window.location.href = `product.html?id=${encodeURIComponent(target.id)}`;
+    } else {
+      showAllSearchResults();
+    }
   }
 });
 

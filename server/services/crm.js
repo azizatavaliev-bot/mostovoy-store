@@ -510,10 +510,18 @@ class CrmService {
   // Вызывается периодически из index.js. Не бросает исключение наружу —
   // сбой одного напоминания не должен останавливать остальные в очереди.
   async processDueOrderFollowUps() {
+    // UPDATE...RETURNING захватывает строки атомарно одним запросом — если
+    // два прохода воркера (например старый и новый инстанс на рестарте
+    // деплоя) пересекутся по времени, они не смогут выбрать одни и те же
+    // due-строки и отправить клиенту дублирующее напоминание.
     const due = this.db.prepare(
-      `SELECT id, conversation_id, kind FROM order_follow_ups
-        WHERE sent_at IS NULL AND due_at <= datetime('now')
-        ORDER BY due_at LIMIT 20`
+      `UPDATE order_follow_ups SET sent_at = datetime('now')
+        WHERE id IN (
+          SELECT id FROM order_follow_ups
+           WHERE sent_at IS NULL AND due_at <= datetime('now')
+           ORDER BY due_at LIMIT 20
+        )
+       RETURNING id, conversation_id, kind`
     ).all();
     for (const row of due) {
       try {
@@ -530,7 +538,6 @@ class CrmService {
       } catch (error) {
         logger.error("crm.order_care_failed", { id: row.id, conversationId: row.conversation_id, error: error.message });
       }
-      this.db.prepare(`UPDATE order_follow_ups SET sent_at = datetime('now') WHERE id = ?`).run(row.id);
     }
   }
 

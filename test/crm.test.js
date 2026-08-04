@@ -440,10 +440,15 @@ test("ответ бота ждёт подтверждения и отправл�
       chatText: async () => "Да, iPhone 17 есть в наличии.",
     },
     amocrm: { enabled: false },
-    fetchImpl: async () => {
+    // _autoReply перед каждым ответом синхронизирует публикации канала
+    // (t.me/s/...) — считаем только реальную отправку клиенту через Bot API,
+    // а не эту фоновую синхронизацию.
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
       sent += 1;
       return { ok: true, status: 200 };
     },
+    autoReplyDebounceMs: 0,
   });
 
   await crm.receiveTelegram({
@@ -453,6 +458,7 @@ test("ответ бота ждёт подтверждения и отправл�
     chat: { id: 991, type: "private" },
     from: { id: 991, first_name: "Клиент" },
   });
+  await new Promise((resolve) => setTimeout(resolve, 10));
 
   const [draft] = crm.listApprovals("pending");
   assert.equal(sent, 0);
@@ -499,6 +505,7 @@ test("Telegram-фото анализируется и попадает в кон
         arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer,
       };
     },
+    autoReplyDebounceMs: 0,
   });
 
   await crm.receiveTelegram({
@@ -509,6 +516,7 @@ test("Telegram-фото анализируется и попадает в кон
     chat: { id: 992, type: "private" },
     from: { id: 992, first_name: "Клиент" },
   });
+  await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.equal(analyzed.kind, "image");
   assert.equal(analyzed.mimeType, "image/jpeg");
@@ -557,7 +565,11 @@ test("гипервизор получает только историю диал
         : "Да, iPhone 17 есть в наличии.";
     },
   };
-  const crm = new CrmService({ db, ai, amocrm: { enabled: false } });
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    // Без мока _autoReply бил бы в реальную сеть на синхронизации канала.
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "" }),
+  });
   crm.saveSettings({ hypervisorPrompt: "Только факты из истории. Не оценивай ответ." });
 
   await crm.receiveTelegram({
@@ -566,6 +578,7 @@ test("гипервизор получает только историю диал
     chat: { id: 122, type: "private" },
     from: { first_name: "Клиент" },
   });
+  await new Promise((resolve) => setTimeout(resolve, 10));
 
   const draft = crm.listApprovals("pending")[0];
   assert.equal(calls.length, 2);
@@ -594,7 +607,10 @@ test("агрессивное обучение сохраняет отклоне�
       };
     },
   };
-  const crm = new CrmService({ db, deepseek, amocrm: { enabled: false } });
+  const crm = new CrmService({
+    db, deepseek, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "" }),
+  });
   crm.saveSettings({ aggressiveLearning: true, systemPrompt: "Базовый промпт." });
 
   await crm.receiveTelegram({
@@ -604,6 +620,7 @@ test("агрессивное обучение сохраняет отклоне�
     chat: { id: 120, type: "private" },
     from: { id: 120, first_name: "Клиент" },
   });
+  await new Promise((resolve) => setTimeout(resolve, 10));
   const draft = crm.listApprovals("pending")[0];
   await crm.rejectReply(draft.id, "Бот придумал скидку");
 
@@ -639,6 +656,8 @@ test("сбой агрессивного обучения не отменяет �
       },
     },
     amocrm: { enabled: false },
+    autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "" }),
   });
   crm.saveSettings({ aggressiveLearning: true });
   await crm.receiveTelegram({
@@ -647,6 +666,7 @@ test("сбой агрессивного обучения не отменяет �
     chat: { id: 121, type: "private" },
     from: { first_name: "Клиент" },
   });
+  await new Promise((resolve) => setTimeout(resolve, 10));
   const draft = crm.listApprovals("pending")[0];
   await crm.rejectReply(draft.id, "Ответ неверный");
 
@@ -691,8 +711,18 @@ test("заказ записывается только в сделку теку�
   const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
   const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"iPhone 17 Pro Max","storage":"1 TB","color":"Синий","price":1610,"priceKgs":140875,"currency":"USD","available":true}]}';
 
+  // _publishOrderIfConfirmed передаёт conversation.id в _scheduleOrderCareFollowUps,
+  // а та пишет в order_follow_ups с внешним ключом на crm_conversations(id) —
+  // строка обязана реально существовать в базе, голый литерал с придуманным
+  // id здесь не подходит (тест падал с "FOREIGN KEY constraint failed",
+  // сам код при этом рабочий: в реальном пути conversation всегда приходит
+  // из getConversation(), то есть уже вставлен). Сеем через тот же путь,
+  // которым пользуется прод, — _upsertConversation.
+  const first = crm._upsertConversation({
+    externalKey: "telegram:111", source: "telegram", chatId: "111", name: "Первый", inbound: true,
+  });
   crm._publishOrderIfConfirmed(
-    { id: 10, source: "telegram", externalKey: "telegram:111", externalChatId: "111", customerName: "Первый" },
+    first,
     [{ role: "user", content: "Оформляйте этот iPhone" }],
     selection
   );
@@ -702,14 +732,23 @@ test("заказ записывается только в сделку теку�
   assert.equal(crmDeals.orderCalls[0].externalKey, "telegram:111");
   assert.equal(crmDeals.orderCalls[0].customerName, "Первый");
 
+  // Второй клиент (другой chatId) не должен писать заказ в сделку первого,
+  // даже если бы где-то по ошибке подставили тот же externalKey, — отсюда
+  // и название теста. _upsertConversation с новым chatId настоящего второго
+  // клиента здесь и должен получить собственный externalKey.
+  const second = crm._upsertConversation({
+    externalKey: "telegram:222", source: "telegram", chatId: "222", name: "Второй", inbound: true,
+  });
   crm._publishOrderIfConfirmed(
-    { id: 11, source: "telegram", externalKey: "telegram:111", externalChatId: "222", customerName: "Второй" },
+    second,
     [{ role: "user", content: "Оформляйте этот iPhone" }],
     selection
   );
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.equal(crmDeals.orderCalls.length, 1);
+  assert.equal(crmDeals.orderCalls.length, 2);
+  assert.equal(crmDeals.orderCalls[1].externalKey, "telegram:222");
+  assert.equal(crmDeals.orderCalls[1].customerName, "Второй");
 });
 
 test("входящая потребность и ответ с ценой двигают сделку вперёд", async (t) => {

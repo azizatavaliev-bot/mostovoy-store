@@ -68,6 +68,9 @@ const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подх
 // а не ждёт молча. Разные формулировки, чтобы не выглядело шаблонно при
 // частом срабатывании в разных диалогах.
 const FOLLOW_UP_DELAY_MS = 5 * 60 * 1000;
+// Пауза перед автоответом, чтобы собрать несколько сообщений клиента подряд
+// в один ответ вместо серии отдельных.
+const AUTO_REPLY_DEBOUNCE_MS = 3000;
 const FOLLOW_UP_MESSAGES = [
   "Не пропали? Если нужно время подумать — я тут, готов подсказать по любой модели.",
   "Остались вопросы по вариантам, которые я показал? Могу уточнить детали или предложить другое.",
@@ -406,6 +409,17 @@ const ASSISTANT_COLOR_POLICY = `ЦВЕТ ТОВАРА:
 Если клиент уже назвал цвет (сейчас или раньше в диалоге) — используй его и не переспрашивай повторно.
 Если ни один пост о модели не содержит цвета — не упоминай цвет вообще, не сочиняй его.`;
 
+// Клиент, который написал что-то грубое или раздражённое, — это не повод
+// прекращать диалог: живой менеджер извиняется по существу и продолжает
+// помогать, а не «на этом остановлюсь». Правило появилось из разбора
+// реального диалога, где на грубость и жалобу бот отвечал общей формулировкой
+// без разбора сути и переставал вести диалог вместо того, чтобы разобраться,
+// что случилось, или предложить менеджера.
+const ASSISTANT_TONE_POLICY = `ЕСЛИ КЛИЕНТ РАЗДРАЖЁН ИЛИ ГРУБИТ:
+Никогда не заканчивай диалог фразой вроде «на этом остановлюсь», «больше не буду продолжать» и не переставай отвечать. Ты не можешь отказаться помогать из-за тона сообщения.
+Извинись один раз, коротко и по существу конкретной причины (не путай с жалобой на другой товар — жалоба «нет эффекта» и «дорого» это разные ситуации), и продолжи разбираться: задай уточняющий вопрос по сути проблемы или прямо предложи передать обращение менеджеру.
+Не повторяй одну и ту же извиняющуюся фразу в соседних сообщениях — если уже извинился в этом диалоге, переходи сразу к сути следующего ответа.`;
+
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последние реплики диалога.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки.
 Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 30 позиций. Это исключение только для явной просьбы показать всё — обычный подбор по бюджету или совету по-прежнему 1–5 товаров, не выгружай лишнее без явной просьбы.
@@ -441,7 +455,7 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, fetchImpl } = {}) {
+  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, fetchImpl, autoReplyDebounceMs } = {}) {
     this.db = db;
     this.deepseek = deepseek;
     this.ai = ai || deepseek;
@@ -449,12 +463,36 @@ class CrmService {
     this.azisCrm = azisCrm;
     this.crmDeals = crmDeals;
     this.fetchImpl = fetchImpl || globalThis.fetch;
+    this._autoReplyDebounceMs = autoReplyDebounceMs ?? AUTO_REPLY_DEBOUNCE_MS;
     // Клиент, которому предложили выбор и не ответили, не должен зависать
     // в тишине — через FOLLOW_UP_DELAY_MS бот сам напоминает о себе, если
     // за это время не пришло новое сообщение. In-memory: переживает только
     // текущий процесс, что при рестарте деплоя не страшнее пропуска одного
     // напоминания.
     this._followUpTimers = new Map();
+    // Клиент часто пишет мыслями через несколько сообщений подряд — без
+    // задержки на каждое уходил отдельный вызов ИИ, и клиенту прилетало
+    // несколько ответов вперемешку. Ждём паузу, потом отвечаем один раз.
+    this._autoReplyTimers = new Map();
+  }
+
+  // Откладывает автоответ на AUTO_REPLY_DEBOUNCE_MS: если за это время придёт
+  // ещё сообщение, таймер сбрасывается и переставляется на новое сообщение.
+  // Сработает только последний таймер — _autoReply сам отбрасывает ответ на
+  // устаревшее сообщение (сверяет incomingMessageId с новейшим входящим),
+  // так что комбинировать текст сообщений вручную не нужно: когда пауза
+  // наступит, _autoReply возьмёт всю свежую историю целиком.
+  _debouncedAutoReply(conversationId, incomingMessageId) {
+    const existing = this._autoReplyTimers.get(conversationId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this._autoReplyTimers.delete(conversationId);
+      void this._autoReply(conversationId, incomingMessageId).catch((error) =>
+        logger.error("crm.auto_reply_failed", { conversationId, error: error.message })
+      );
+    }, this._autoReplyDebounceMs);
+    timer.unref?.();
+    this._autoReplyTimers.set(conversationId, timer);
   }
 
   // Отменяет отложенное напоминание — клиент уже написал сам, дублировать
@@ -1205,6 +1243,7 @@ prompt_patch — не больше двух коротких предложен�
       `ЗАДАЧА:\n${settings.taskPrompt}`,
       ASSISTANT_PRICE_POLICY,
       ASSISTANT_COLOR_POLICY,
+      ASSISTANT_TONE_POLICY,
       KNOWLEDGE_BASE ? `БАЗА ЗНАНИЙ О КАТЕГОРИЯХ (фон для презентации, не источник цены/наличия):\n${KNOWLEDGE_BASE}` : "",
       catalog ? `АКТУАЛЬНЫЙ КАТАЛОГ:\n${catalog}` : "",
     ].filter(Boolean).join("\n\n");
@@ -1361,7 +1400,7 @@ prompt_patch — не больше двух коротких предложен�
       if (this._isDuplicateInbound(conversation.id, inserted, text)) {
         this._logEvent(conversation.id, "info", "inbox", "message.duplicate_suppressed", "Дубликат сообщения не запустил повторный ответ", { windowSeconds: 40 });
       } else {
-        await this._autoReply(conversation.id, inserted);
+        this._debouncedAutoReply(conversation.id, inserted);
       }
     }
   }
@@ -1409,7 +1448,7 @@ prompt_patch — не больше двух коротких предложен�
       const stageAction = stageActionForInbound(incoming.text);
       if (stageAction) this._publishStage(conversation, stageAction);
     }
-    if (inserted && conversation.ai_enabled) await this._autoReply(conversation.id, inserted);
+    if (inserted && conversation.ai_enabled) this._debouncedAutoReply(conversation.id, inserted);
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }
 

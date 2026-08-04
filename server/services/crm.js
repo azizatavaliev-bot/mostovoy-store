@@ -1,8 +1,21 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const config = require("../config");
 const logger = require("../logger");
 const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
+
+// Категории/бренды, которых нет в самих постах канала (посты — только
+// конкретные SKU с ценой). Читается один раз при старте процесса: если
+// файла нет, бот просто не получает этот контекст, не падает.
+const KNOWLEDGE_BASE = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, "..", "..", "knowledge_base.md"), "utf-8").trim();
+  } catch {
+    return "";
+  }
+})();
 
 function escapeTelegramHtml(value) {
   return String(value || "")
@@ -1192,6 +1205,7 @@ prompt_patch — не больше двух коротких предложен�
       `ЗАДАЧА:\n${settings.taskPrompt}`,
       ASSISTANT_PRICE_POLICY,
       ASSISTANT_COLOR_POLICY,
+      KNOWLEDGE_BASE ? `БАЗА ЗНАНИЙ О КАТЕГОРИЯХ (фон для презентации, не источник цены/наличия):\n${KNOWLEDGE_BASE}` : "",
       catalog ? `АКТУАЛЬНЫЙ КАТАЛОГ:\n${catalog}` : "",
     ].filter(Boolean).join("\n\n");
   }

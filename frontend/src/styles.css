@@ -2575,11 +2575,17 @@ body { letter-spacing: -.01em; }
 .hero__actions .btn--ghost { border-color: rgba(29,29,31,.24); background: rgba(255,255,255,.55); }
 .hero__actions .btn--ghost:hover { background: var(--ink); }
 .hero__quickfact { border-color: rgba(29,29,31,.14); }
+@media (max-width: 520px) {
+  /* min-width: 216px выше того же .hero__actions .btn идёт позже в файле,
+     чем мобильная сетка 1fr 1fr — при равной специфичности выигрывает он
+     и ломает раскладку (2 кнопки по 216px не помещаются в 375px). */
+  .hero__actions .btn { min-width: 0; }
+}
 .hero__quickicon { color: var(--red); background: rgba(255,255,255,.72); box-shadow: 0 8px 24px rgba(0,0,0,.055); }
 .hero__disc {
   right: 0; bottom: -27%;
-  background: radial-gradient(circle at 38% 31%, #ffccd1 0 5%, #ff7785 28%, #ff263a 59%, #e6001b 100%);
-  box-shadow: inset 0 22px 58px rgba(255,255,255,.22), 0 26px 76px rgba(255,20,45,.28);
+  background: radial-gradient(circle at 38% 31%, #ff3d4a 0%, #ff0f28 32%, #cc1414 100%);
+  box-shadow: inset 0 22px 58px rgba(255,255,255,.14), 0 26px 90px rgba(255,20,45,.42);
 }
 .hero__orbit { border-width: 1px; border-color: rgba(255,255,255,.82); box-shadow: 0 0 0 1px rgba(255,36,55,.08); }
 .hero__device { filter: drop-shadow(0 38px 30px rgba(29,29,31,.16)); }

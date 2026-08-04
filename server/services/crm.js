@@ -49,6 +49,16 @@ const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены �
 Если клиент спрашивает в целом, что за техника есть, какие категории или бренды в наличии (не называя конкретную модель или категорию) — не переспрашивай и не проси уточнить задачу или цель. Сразу перечисли реальные категории магазина: iPhone, Samsung, MacBook, iPad, Apple Watch, AirPods, Dyson, Garmin, Whoop, Ray-Ban Meta, Canon, умные колонки, Trade-in телефонов, рассрочка. После списка можно одним коротким вопросом уточнить, что из этого интересует. Если клиент прямо говорит «я не знаю» или «назовите все категории» — не предлагай ему сформулировать задачу, а повтори список категорий.
 Отвечай как живой продажник, а не справочник: не обрывай сообщение сразу после списка товаров или ответа на вопрос. Если назвал несколько моделей на выбор — в конце спроси что-то вроде «Определились с выбором?» или «Какая больше нравится?». Если назвал одну модель с ценой — предложи следующий шаг (оформить, зарезервировать, рассчитать рассрочку). Ответ должен вести разговор вперёд, а не просто закрывать вопрос клиента.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и веди продажу до конкретного следующего действия. Не начинай с вопросов, если уже можно показать подходящие варианты. После выбора или цены предложи оформить заказ или резерв; только после согласия попроси имя и удобный способ связи.`;
+
+// Клиент не ответил после подборки/вопроса — бот сам напоминает о себе,
+// а не ждёт молча. Разные формулировки, чтобы не выглядело шаблонно при
+// частом срабатывании в разных диалогах.
+const FOLLOW_UP_DELAY_MS = 5 * 60 * 1000;
+const FOLLOW_UP_MESSAGES = [
+  "Не пропали? Если нужно время подумать — я тут, готов подсказать по любой модели.",
+  "Остались вопросы по вариантам, которые я показал? Могу уточнить детали или предложить другое.",
+  "Если ещё выбираете — скажите бюджет или что важнее, и я сужу подборку.",
+];
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
@@ -383,7 +393,7 @@ const ASSISTANT_COLOR_POLICY = `ЦВЕТ ТОВАРА:
 
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последние реплики диалога.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки.
-Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 12 позиций.
+Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 30 позиций.
 Если запрошенной клиентом модели буквально нет в базе (например спросили iPhone 13, а такой модели нет) — не возвращай пустой массив. Вместо этого сам подбери 2–3 ближайшие реальные модели той же линейки и категории (например попросили iPhone 13 — предложи iPhone 14 или iPhone 15, если они есть в базе) и верни их в products с reason вроде «ближайшая модель вместо iPhone 13». Пустой массив верни только если во всей категории вообще ничего подходящего нет.
 Если клиент называет модельную линейку без конкретной модификации (например «iPhone 17», «MacBook», «Apple Watch», «AirPods») — верни все модификации этой линейки, которые есть в базе (например и iPhone 17, и iPhone 17 Pro, и iPhone 17 Pro Max — если все они есть), а не только одну случайную. Модификации одной линейки не должны вытеснять друг друга из выборки: в пределах лимита 5 товаров сначала покрой линейку целиком, и только если модификаций больше 5 — оставь самые популярные (базовая, Pro, Pro Max).
 Короткое уточнение клиента о валюте, цвете или памяти относится к последнему названному в диалоге товару. Найди этот товар по предыдущим репликам и не возвращай пустой массив только из-за того, что в последней строке нет названия модели.
@@ -423,6 +433,57 @@ class CrmService {
     this.azisCrm = azisCrm;
     this.crmDeals = crmDeals;
     this.fetchImpl = fetchImpl || globalThis.fetch;
+    // Клиент, которому предложили выбор и не ответили, не должен зависать
+    // в тишине — через FOLLOW_UP_DELAY_MS бот сам напоминает о себе, если
+    // за это время не пришло новое сообщение. In-memory: переживает только
+    // текущий процесс, что при рестарте деплоя не страшнее пропуска одного
+    // напоминания.
+    this._followUpTimers = new Map();
+  }
+
+  // Отменяет отложенное напоминание — клиент уже написал сам, дублировать
+  // не нужно: новое сообщение и так запустит свой автоответ.
+  _cancelFollowUp(conversationId) {
+    const timer = this._followUpTimers.get(conversationId);
+    if (timer) {
+      clearTimeout(timer);
+      this._followUpTimers.delete(conversationId);
+    }
+  }
+
+  _scheduleFollowUp(conversationId, afterIncomingMessageId) {
+    this._cancelFollowUp(conversationId);
+    const timer = setTimeout(() => {
+      this._followUpTimers.delete(conversationId);
+      void this._sendFollowUpIfIdle(conversationId, afterIncomingMessageId).catch((error) =>
+        logger.error("crm.follow_up_failed", { conversationId, error: error.message })
+      );
+    }, FOLLOW_UP_DELAY_MS);
+    timer.unref?.();
+    this._followUpTimers.set(conversationId, timer);
+  }
+
+  async _sendFollowUpIfIdle(conversationId, afterIncomingMessageId) {
+    const conversation = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
+    if (!conversation || !conversation.ai_enabled) return;
+    // Клиент уже написал снова (или менеджер вмешался) — новое сообщение
+    // само вызовет автоответ, отдельное напоминание тут не нужно.
+    const newestInbound = this.db.prepare(
+      `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'incoming' ORDER BY id DESC LIMIT 1`
+    ).get(conversationId);
+    if (Number(newestInbound?.id) !== Number(afterIncomingMessageId)) return;
+    const newestOutbound = this.db.prepare(
+      `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'outgoing' ORDER BY id DESC LIMIT 1`
+    ).get(conversationId);
+    // Менеджер мог написать сам после автоответа — тогда последнее исходящее
+    // не наше, и лезть с напоминанием не стоит.
+    const lastOutgoingSender = this.db.prepare(
+      `SELECT sender FROM crm_messages WHERE id = ?`
+    ).get(newestOutbound?.id)?.sender;
+    if (lastOutgoingSender && lastOutgoingSender !== "assistant") return;
+    const message = FOLLOW_UP_MESSAGES[Math.floor(Math.random() * FOLLOW_UP_MESSAGES.length)];
+    await this._send(conversationId, message, "assistant");
+    this._logEvent(conversationId, "info", "delivery", "follow_up.sent", "Напоминание клиенту, который не ответил после подборки");
   }
 
   // Новый клиент → сделка в воронке MostovoyCRM.
@@ -1156,6 +1217,9 @@ prompt_patch — не больше двух коротких предложен�
       username: message.from?.username ? `@${message.from.username}` : null,
       createdAt: new Date(Number(message.date || Date.now() / 1000) * 1000).toISOString(),
     });
+    // Клиент написал сам — отложенное напоминание больше не нужно, новый
+    // автоответ на это сообщение сформирует свой собственный.
+    this._cancelFollowUp(conversation.id);
     let text = String(message.text || message.caption || "").trim();
     if (hasMedia) {
       try {
@@ -1244,6 +1308,7 @@ prompt_patch — не больше двух коротких предложен�
       phone: incoming.customerPhone,
       createdAt: incoming.createdAt,
     });
+    this._cancelFollowUp(conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: incoming.messageId,
       direction: "incoming",
@@ -1339,6 +1404,7 @@ prompt_patch — не больше двух коротких предложен�
         await this._send(conversationId, reply, "assistant");
         this._publishOrderIfConfirmed(detail.conversation, history, selection);
         this._logEvent(conversationId, "info", "delivery", "reply.sent", "Автоответ отправлен без подтверждения");
+        this._scheduleFollowUp(conversationId, incomingMessageId);
       }
     } catch (error) {
       logger.error("crm.auto_reply_failed", { conversationId, error: error.message });
@@ -1358,11 +1424,11 @@ prompt_patch — не больше двух коротких предложен�
       const result = await this.deepseek.chatJson({
         system: CATALOG_SPECIALIST_PROMPT,
         user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nАКТУАЛЬНАЯ БАЗА ИЗ TELEGRAM-КАНАЛА:\n${narrowCatalogForRequest(catalog, customerRequest)}`,
-        maxTokens: 1400,
+        maxTokens: 3500,
         onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
       });
       const products = Array.isArray(result?.products)
-        ? result.products.slice(0, 12).map((item) => {
+        ? result.products.slice(0, 30).map((item) => {
           const price = Number(item?.price);
           const currency = String(item?.currency || "").toUpperCase();
           return {

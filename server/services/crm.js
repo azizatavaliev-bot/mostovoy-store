@@ -393,7 +393,7 @@ const ASSISTANT_COLOR_POLICY = `ЦВЕТ ТОВАРА:
 
 const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последние реплики диалога.
 Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки.
-Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 30 позиций.
+Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 30 позиций. Это исключение только для явной просьбы показать всё — обычный подбор по бюджету или совету по-прежнему 1–5 товаров, не выгружай лишнее без явной просьбы.
 Если запрошенной клиентом модели буквально нет в базе (например спросили iPhone 13, а такой модели нет) — не возвращай пустой массив. Вместо этого сам подбери 2–3 ближайшие реальные модели той же линейки и категории (например попросили iPhone 13 — предложи iPhone 14 или iPhone 15, если они есть в базе) и верни их в products с reason вроде «ближайшая модель вместо iPhone 13». Пустой массив верни только если во всей категории вообще ничего подходящего нет.
 Если клиент называет модельную линейку без конкретной модификации (например «iPhone 17», «MacBook», «Apple Watch», «AirPods») — верни все модификации этой линейки, которые есть в базе (например и iPhone 17, и iPhone 17 Pro, и iPhone 17 Pro Max — если все они есть), а не только одну случайную. Модификации одной линейки не должны вытеснять друг друга из выборки: в пределах лимита 5 товаров сначала покрой линейку целиком, и только если модификаций больше 5 — оставь самые популярные (базовая, Pro, Pro Max).
 Короткое уточнение клиента о валюте, цвете или памяти относится к последнему названному в диалоге товару. Найди этот товар по предыдущим репликам и не возвращай пустой массив только из-за того, что в последней строке нет названия модели.
@@ -486,6 +486,54 @@ class CrmService {
     this._logEvent(conversationId, "info", "delivery", "follow_up.sent", "Напоминание клиенту, который не ответил после подборки");
   }
 
+  // Забота после продажи: клиент подтвердил заказ — через сутки бот
+  // спрашивает, подтвердили ли заказ менеджеры, а через ~4 дня (примерная
+  // оценка срока доставки по Бишкеку, не точный расчёт) — не было ли
+  // проблем с товаром. Очередь в БД, а не setTimeout: этот срок легко
+  // переживает рестарт деплоя, в отличие от короткого idle-напоминания.
+  _scheduleOrderCareFollowUps(conversationId) {
+    const hasPending = (kind) => this.db.prepare(
+      `SELECT 1 FROM order_follow_ups WHERE conversation_id = ? AND kind = ? AND sent_at IS NULL LIMIT 1`
+    ).get(conversationId, kind);
+    if (!hasPending("confirm")) {
+      this.db.prepare(
+        `INSERT INTO order_follow_ups (conversation_id, kind, due_at) VALUES (?, 'confirm', datetime('now', '+20 hours'))`
+      ).run(conversationId);
+    }
+    if (!hasPending("delivery")) {
+      this.db.prepare(
+        `INSERT INTO order_follow_ups (conversation_id, kind, due_at) VALUES (?, 'delivery', datetime('now', '+4 days'))`
+      ).run(conversationId);
+    }
+  }
+
+  // Вызывается периодически из index.js. Не бросает исключение наружу —
+  // сбой одного напоминания не должен останавливать остальные в очереди.
+  async processDueOrderFollowUps() {
+    const due = this.db.prepare(
+      `SELECT id, conversation_id, kind FROM order_follow_ups
+        WHERE sent_at IS NULL AND due_at <= datetime('now')
+        ORDER BY due_at LIMIT 20`
+    ).all();
+    for (const row of due) {
+      try {
+        const conversation = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(row.conversation_id);
+        if (conversation?.ai_enabled) {
+          const text = row.kind === "confirm"
+            ? "Кстати, подскажите — вам уже подтвердили заказ?"
+            : "Как всё прошло с заказом — товар пришёл в порядке, без проблем?";
+          await this._send(row.conversation_id, text, "assistant");
+          this._logEvent(row.conversation_id, "info", "delivery",
+            row.kind === "confirm" ? "order_care.confirm_sent" : "order_care.delivery_sent",
+            row.kind === "confirm" ? "Уточнение подтверждения заказа" : "Проверка после получения товара");
+        }
+      } catch (error) {
+        logger.error("crm.order_care_failed", { id: row.id, conversationId: row.conversation_id, error: error.message });
+      }
+      this.db.prepare(`UPDATE order_follow_ups SET sent_at = datetime('now') WHERE id = ?`).run(row.id);
+    }
+  }
+
   // Новый клиент → сделка в воронке MostovoyCRM.
   // Ничего не ждём и не бросаем: недоступная CRM не должна ни задерживать
   // ответ клиенту, ни ронять обработку сообщения. Пропуск не потеряется —
@@ -536,7 +584,6 @@ class CrmService {
   }
 
   _publishOrderIfConfirmed(conversation, history, selection) {
-    if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return;
     const messages = Array.isArray(history) ? history : [];
     const customerText = messages
       .filter((message) => message?.role === "user")
@@ -563,6 +610,12 @@ class CrmService {
       logger.error("crm_deals.order_identity_mismatch", { externalKey, externalChatId });
       return;
     }
+
+    // Забота о клиенте работает всегда, даже если интеграция с CRM (ниже)
+    // не настроена — это чисто разговорная функция бота.
+    this._scheduleOrderCareFollowUps(conversation.id);
+
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return;
     const phone = conversation.customer_phone || conversation.customerPhone
       || (customerText.match(/(?:\+?\d[\d\s()\-]{7,}\d)/u) || [])[0]
       || null;

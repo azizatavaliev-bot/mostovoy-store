@@ -11,8 +11,9 @@ const db = getDb();
 seedLegacyProducts(db);
 
 const app = createApp({ db });
-const { queue } = app.locals.services;
+const { queue, crm } = app.locals.services;
 let fullCatalogSyncTimer = null;
+let orderCareTimer = null;
 
 async function syncFullChannelCatalog() {
   try {
@@ -20,6 +21,14 @@ async function syncFullChannelCatalog() {
     logger.info("catalog.full_channel_synced", result);
   } catch (error) {
     logger.warn("catalog.full_channel_sync_failed", { error: error.message });
+  }
+}
+
+async function checkOrderCareFollowUps() {
+  try {
+    await crm.processDueOrderFollowUps();
+  } catch (error) {
+    logger.warn("crm.order_care_check_failed", { error: error.message });
   }
 }
 
@@ -36,6 +45,8 @@ const server = app.listen(config.port, () => {
   void syncFullChannelCatalog();
   fullCatalogSyncTimer = setInterval(syncFullChannelCatalog, 6 * 60 * 60 * 1000);
   fullCatalogSyncTimer.unref();
+  orderCareTimer = setInterval(checkOrderCareFollowUps, 15 * 60 * 1000);
+  orderCareTimer.unref();
   startFxRateUpdater();
 });
 
@@ -44,6 +55,7 @@ queue.start();
 function shutdown(signal) {
   logger.info("server.shutdown", { signal });
   if (fullCatalogSyncTimer) clearInterval(fullCatalogSyncTimer);
+  if (orderCareTimer) clearInterval(orderCareTimer);
   queue.stop();
   server.close(() => {
     closeDb();

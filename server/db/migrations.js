@@ -492,4 +492,20 @@ module.exports = [
       CREATE INDEX idx_order_follow_ups_conversation ON order_follow_ups(conversation_id, kind);
     `,
   },
+  {
+    name: "017_nudge_follow_ups",
+    sql: `
+      CREATE TABLE nudge_follow_ups (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES crm_conversations(id) ON DELETE CASCADE,
+        kind            TEXT NOT NULL CHECK (kind IN ('hours','day','last','order_incomplete')),
+        product_name    TEXT,
+        due_at          TEXT NOT NULL,
+        sent_at         TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_nudge_follow_ups_due ON nudge_follow_ups(due_at) WHERE sent_at IS NULL;
+      CREATE INDEX idx_nudge_follow_ups_conversation ON nudge_follow_ups(conversation_id, kind);
+    `,
+  },
 ];

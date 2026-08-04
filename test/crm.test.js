@@ -1007,3 +1007,217 @@ test("клиент сделок шлёт внутренний токен и но
     note: null,
   });
 });
+
+test("возражение «я подумаю» отвечает готовым текстом без вызова ИИ", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let aiCalled = false;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => { aiCalled = true; return "не должно вызываться"; } },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
+      return { ok: true, status: 200 };
+    },
+    autoReplyDebounceMs: 0,
+  });
+
+  await crm.receiveTelegram({
+    message_id: 601,
+    date: 1_700_000_000,
+    text: "Я подумаю пока",
+    chat: { id: 1601, type: "private" },
+    from: { id: 1601, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(aiCalled, false);
+  const messages = crm.listConversations()[0];
+  const detail = crm.getConversation(messages.id);
+  assert.equal(
+    detail.messages.at(-1).text,
+    "Хорошо, понимаю. Подскажите только, что пока останавливает: цена, сомнения в результате или хотите сравнить с другими вариантами?"
+  );
+});
+
+test("возражение «дорого» отвечает готовым текстом без вызова ИИ", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let aiCalled = false;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => { aiCalled = true; return "не должно вызываться"; } },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
+      return { ok: true, status: 200 };
+    },
+    autoReplyDebounceMs: 0,
+  });
+
+  await crm.receiveTelegram({
+    message_id: 602,
+    date: 1_700_000_000,
+    text: "Ой, дороговато для меня",
+    chat: { id: 1602, type: "private" },
+    from: { id: 1602, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(aiCalled, false);
+  const conversation = crm.listConversations()[0];
+  const detail = crm.getConversation(conversation.id);
+  assert.equal(
+    detail.messages.at(-1).text,
+    "Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?"
+  );
+});
+
+test("после обычного автоответа ставится цепочка напоминаний о простое", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => "Здравствуйте! Чем могу помочь?" },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
+      return { ok: true, status: 200 };
+    },
+    autoReplyDebounceMs: 0,
+  });
+  crm.saveSettings({ ...crm.getSettings(), approvalEnabled: false });
+
+  await crm.receiveTelegram({
+    message_id: 603,
+    date: 1_700_000_000,
+    text: "Здравствуйте",
+    chat: { id: 1603, type: "private" },
+    from: { id: 1603, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const conversation = crm.listConversations()[0];
+  const rows = db.prepare(
+    "SELECT kind FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL ORDER BY kind"
+  ).all(conversation.id);
+  assert.deepEqual(rows.map((row) => row.kind).sort(), ["day", "hours", "last"]);
+});
+
+test("клиент, сказавший «беру» и пропавший, получает одно напоминание вместо обычной цепочки", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => "Хорошо, оформляю." },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
+      return { ok: true, status: 200 };
+    },
+    autoReplyDebounceMs: 0,
+  });
+  crm.saveSettings({ ...crm.getSettings(), approvalEnabled: false });
+
+  await crm.receiveTelegram({
+    message_id: 604,
+    date: 1_700_000_000,
+    text: "Беру, оформляйте",
+    chat: { id: 1604, type: "private" },
+    from: { id: 1604, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const conversation = crm.listConversations()[0];
+  const rows = db.prepare(
+    "SELECT kind FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL"
+  ).all(conversation.id);
+  assert.deepEqual(rows.map((row) => row.kind), ["order_incomplete"]);
+});
+
+test("новое сообщение клиента отменяет все ожидающие напоминания о простое", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1605",
+    source: "telegram",
+    inbound: true,
+    chatId: "1605",
+    name: "Клиент",
+  });
+  crm._scheduleNudgeFollowUps(conversation.id, "iPhone 17");
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS c FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL").get(conversation.id).c,
+    3
+  );
+
+  crm._cancelNudgeFollowUps(conversation.id);
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS c FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL").get(conversation.id).c,
+    0
+  );
+});
+
+test("просроченное напоминание «через несколько часов» подставляет имя и товар", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let sentText = null;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        sentText = JSON.parse(init.body).text;
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1606",
+    source: "telegram",
+    inbound: true,
+    chatId: "1606",
+    name: "Айгерим",
+  });
+  db.prepare(
+    "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
+  ).run(conversation.id);
+  db.prepare(
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+  ).run(conversation.id);
+
+  await crm.processDueNudgeFollowUps();
+
+  assert.equal(
+    sentText,
+    "Здравствуйте, Айгерим. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко подсказать по применению или помочь подобрать другой вариант."
+  );
+});

@@ -65,17 +65,60 @@ const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены �
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и веди продажу до конкретного следующего действия. Не начинай с вопросов, если уже можно показать подходящие варианты. После выбора или цены предложи оформить заказ или резерв; только после согласия попроси имя и удобный способ связи.`;
 
 // Клиент не ответил после подборки/вопроса — бот сам напоминает о себе,
-// а не ждёт молча. Разные формулировки, чтобы не выглядело шаблонно при
-// частом срабатывании в разных диалогах.
-const FOLLOW_UP_DELAY_MS = 5 * 60 * 1000;
+// а не ждёт молча. Цепочка из трёх ступеней: через несколько часов, на
+// следующий день (либо после развёрнутой консультации — другой текст), и
+// финальное сообщение, если клиент так и не откликнулся.
+const NUDGE_HOURS_DELAY = "+3 hours";
+const NUDGE_DAY_DELAY = "+27 hours";
+const NUDGE_LAST_DELAY = "+75 hours";
+// «Не завершил заказ»: клиент сказал «беру»/«оформляйте», но не ответил
+// дальше — напоминаем один раз через тот же интервал, что и первую ступень.
+const NUDGE_ORDER_INCOMPLETE_DELAY = "+3 hours";
+// Диалог длиннее этого числа входящих сообщений считается развёрнутой
+// консультацией — тогда на второй ступени другой текст.
+const CONSULTATION_MESSAGE_THRESHOLD = 3;
 // Пауза перед автоответом, чтобы собрать несколько сообщений клиента подряд
 // в один ответ вместо серии отдельных.
 const AUTO_REPLY_DEBOUNCE_MS = 3000;
-const FOLLOW_UP_MESSAGES = [
-  "Не пропали? Если нужно время подумать — я тут, готов подсказать по любой модели.",
-  "Остались вопросы по вариантам, которые я показал? Могу уточнить детали или предложить другое.",
-  "Если ещё выбираете — скажите бюджет или что важнее, и я сужу подборку.",
+
+function fillNudgeTemplate(template, { clientName, productName } = {}) {
+  let text = String(template || "");
+  text = clientName
+    ? text.replaceAll("{{client_name}}", clientName)
+    : text.replace(/,?\s*\{\{client_name\}\}/g, "").replace(/^,\s*/, "");
+  text = text.replaceAll("{{product_name}}", productName || "интересующим вас товаром");
+  return text.trim();
+}
+
+const NUDGE_TEMPLATES = {
+  hours: "Здравствуйте, {{client_name}}. Хотела уточнить, остались ли у вас вопросы по {{product_name}}? Могу коротко подсказать по применению или помочь подобрать другой вариант.",
+  day: "Добрый день, {{client_name}}. Вчера вы интересовались {{product_name}}. Подскажите, вы ещё рассматриваете его или пока решили отложить покупку?",
+  consultation: "Добрый день. Хотела узнать, удалось ли вам определиться после нашей консультации? Могу ещё раз коротко сравнить подходящие варианты.",
+  last: "{{client_name}}, больше не буду отвлекать. Если вопрос по {{product_name}} ещё актуален, просто напишите — продолжим с того места, где остановились.",
+  order_incomplete: "Здравствуйте. Вижу, что мы не закончили оформление {{product_name}}. Хотите продолжить или заказ уже неактуален?",
+};
+
+// Реактивные ответы на явные возражения — отправляются вместо полноценной
+// генерации ИИ, экономят токены и звучат последовательно при частом
+// повторении одного и того же возражения в разных диалогах.
+const REACTIVE_TEMPLATES = [
+  {
+    kind: "thinking",
+    pattern: /(?:я\s+)?подума(?:ю|ем)|над(?:о|а)\s+подумать|дай(?:те)?\s+подумать|мне\s+нужно\s+время|рассмотрю\s+ещ[её]/iu,
+    text: "Хорошо, понимаю. Подскажите только, что пока останавливает: цена, сомнения в результате или хотите сравнить с другими вариантами?",
+  },
+  {
+    kind: "expensive",
+    pattern: /дорог(?:о|овато|ая|ой)|не\s+потяну|не\s+укладываюсь\s+в\s+бюджет|дешевле\s+есть|скидк[уи]\s+можно/iu,
+    text: "Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?",
+  },
 ];
+
+function classifyReactiveTemplate(text) {
+  const value = String(text || "");
+  const match = REACTIVE_TEMPLATES.find((item) => item.pattern.test(value));
+  return match ? match.text : null;
+}
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
@@ -464,12 +507,6 @@ class CrmService {
     this.crmDeals = crmDeals;
     this.fetchImpl = fetchImpl || globalThis.fetch;
     this._autoReplyDebounceMs = autoReplyDebounceMs ?? AUTO_REPLY_DEBOUNCE_MS;
-    // Клиент, которому предложили выбор и не ответили, не должен зависать
-    // в тишине — через FOLLOW_UP_DELAY_MS бот сам напоминает о себе, если
-    // за это время не пришло новое сообщение. In-memory: переживает только
-    // текущий процесс, что при рестарте деплоя не страшнее пропуска одного
-    // напоминания.
-    this._followUpTimers = new Map();
     // Клиент часто пишет мыслями через несколько сообщений подряд — без
     // задержки на каждое уходил отдельный вызов ИИ, и клиенту прилетало
     // несколько ответов вперемешку. Ждём паузу, потом отвечаем один раз.
@@ -495,49 +532,77 @@ class CrmService {
     this._autoReplyTimers.set(conversationId, timer);
   }
 
-  // Отменяет отложенное напоминание — клиент уже написал сам, дублировать
-  // не нужно: новое сообщение и так запустит свой автоответ.
-  _cancelFollowUp(conversationId) {
-    const timer = this._followUpTimers.get(conversationId);
-    if (timer) {
-      clearTimeout(timer);
-      this._followUpTimers.delete(conversationId);
+  // Клиент написал сам (или менеджер вмешался) — все неотправленные
+  // напоминания об этом диалоге больше не нужны, новое сообщение и так
+  // запустит свой автоответ (или, для order_incomplete, значит клиент ещё
+  // не пропал).
+  _cancelNudgeFollowUps(conversationId) {
+    this.db.prepare(
+      `UPDATE nudge_follow_ups SET sent_at = datetime('now') WHERE conversation_id = ? AND sent_at IS NULL`
+    ).run(conversationId);
+  }
+
+  // Ставит цепочку напоминаний об одном простое: через несколько часов, на
+  // следующий день (или после консультации, если диалог был длинным), и
+  // финальное сообщение — все три сразу, чтобы processDueNudgeFollowUps не
+  // зависел от setTimeout и переживал рестарт деплоя. Если клиент ответит
+  // раньше — _cancelNudgeFollowUps отменит все три.
+  _scheduleNudgeFollowUps(conversationId, productName) {
+    this._cancelNudgeFollowUps(conversationId);
+    for (const [kind, delay] of [["hours", NUDGE_HOURS_DELAY], ["day", NUDGE_DAY_DELAY], ["last", NUDGE_LAST_DELAY]]) {
+      this.db.prepare(
+        `INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, ?, ?, datetime('now', ?))`
+      ).run(conversationId, kind, productName || null, delay);
     }
   }
 
-  _scheduleFollowUp(conversationId, afterIncomingMessageId) {
-    this._cancelFollowUp(conversationId);
-    const timer = setTimeout(() => {
-      this._followUpTimers.delete(conversationId);
-      void this._sendFollowUpIfIdle(conversationId, afterIncomingMessageId).catch((error) =>
-        logger.error("crm.follow_up_failed", { conversationId, error: error.message })
-      );
-    }, FOLLOW_UP_DELAY_MS);
-    timer.unref?.();
-    this._followUpTimers.set(conversationId, timer);
+  // Клиент явно сказал «беру»/«оформляйте», но не дал данные для заказа —
+  // одно напоминание вместо обычной цепочки простоя (обе бессмысленны
+  // одновременно).
+  _scheduleOrderIncompleteNudge(conversationId, productName) {
+    this._cancelNudgeFollowUps(conversationId);
+    this.db.prepare(
+      `INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'order_incomplete', ?, datetime('now', ?))`
+    ).run(conversationId, productName || null, NUDGE_ORDER_INCOMPLETE_DELAY);
   }
 
-  async _sendFollowUpIfIdle(conversationId, afterIncomingMessageId) {
-    const conversation = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
-    if (!conversation || !conversation.ai_enabled) return;
-    // Клиент уже написал снова (или менеджер вмешался) — новое сообщение
-    // само вызовет автоответ, отдельное напоминание тут не нужно.
-    const newestInbound = this.db.prepare(
-      `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'incoming' ORDER BY id DESC LIMIT 1`
-    ).get(conversationId);
-    if (Number(newestInbound?.id) !== Number(afterIncomingMessageId)) return;
-    const newestOutbound = this.db.prepare(
-      `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'outgoing' ORDER BY id DESC LIMIT 1`
-    ).get(conversationId);
-    // Менеджер мог написать сам после автоответа — тогда последнее исходящее
-    // не наше, и лезть с напоминанием не стоит.
-    const lastOutgoingSender = this.db.prepare(
-      `SELECT sender FROM crm_messages WHERE id = ?`
-    ).get(newestOutbound?.id)?.sender;
-    if (lastOutgoingSender && lastOutgoingSender !== "assistant") return;
-    const message = FOLLOW_UP_MESSAGES[Math.floor(Math.random() * FOLLOW_UP_MESSAGES.length)];
-    await this._send(conversationId, message, "assistant");
-    this._logEvent(conversationId, "info", "delivery", "follow_up.sent", "Напоминание клиенту, который не ответил после подборки");
+  // Вызывается периодически из index.js, как и processDueOrderFollowUps.
+  async processDueNudgeFollowUps() {
+    const due = this.db.prepare(
+      `UPDATE nudge_follow_ups SET sent_at = datetime('now')
+        WHERE id IN (
+          SELECT id FROM nudge_follow_ups
+           WHERE sent_at IS NULL AND due_at <= datetime('now')
+           ORDER BY due_at LIMIT 20
+        )
+       RETURNING id, conversation_id, kind, product_name`
+    ).all();
+    for (const row of due) {
+      try {
+        const conversation = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(row.conversation_id);
+        if (!conversation?.ai_enabled) continue;
+        const lastOutgoing = this.db.prepare(
+          `SELECT sender FROM crm_messages WHERE conversation_id = ? AND direction = 'outgoing' ORDER BY id DESC LIMIT 1`
+        ).get(row.conversation_id);
+        // Менеджер мог вмешаться и написать сам — тогда напоминание от бота лишнее.
+        if (lastOutgoing?.sender && lastOutgoing.sender !== "assistant") continue;
+        let templateKey = row.kind;
+        if (row.kind === "day") {
+          const incomingCount = this.db.prepare(
+            `SELECT COUNT(*) AS count FROM crm_messages WHERE conversation_id = ? AND direction = 'incoming'`
+          ).get(row.conversation_id)?.count || 0;
+          templateKey = incomingCount >= CONSULTATION_MESSAGE_THRESHOLD ? "consultation" : "day";
+        }
+        const text = fillNudgeTemplate(NUDGE_TEMPLATES[templateKey], {
+          clientName: conversation.customer_name,
+          productName: row.product_name,
+        });
+        await this._send(row.conversation_id, text, "assistant");
+        this._logEvent(row.conversation_id, "info", "delivery", "nudge.sent", "Напоминание клиенту об открытом диалоге", { kind: row.kind });
+      } catch (error) {
+        logger.error("crm.nudge_follow_up_failed", { id: row.id, conversationId: row.conversation_id, error: error.message });
+      }
+    }
   }
 
   // Забота после продажи: клиент подтвердил заказ — через сутки бот
@@ -546,6 +611,9 @@ class CrmService {
   // проблем с товаром. Очередь в БД, а не setTimeout: этот срок легко
   // переживает рестарт деплоя, в отличие от короткого idle-напоминания.
   _scheduleOrderCareFollowUps(conversationId) {
+    // Забота о заказе замещает напоминания о простое/незавершённом заказе —
+    // теперь бот следит за клиентом по-другому.
+    this._cancelNudgeFollowUps(conversationId);
     const hasPending = (kind) => this.db.prepare(
       `SELECT 1 FROM order_follow_ups WHERE conversation_id = ? AND kind = ? AND sent_at IS NULL LIMIT 1`
     ).get(conversationId, kind);
@@ -660,23 +728,23 @@ class CrmService {
     const explicitOrder = /(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(latestCustomerText);
     const confirmedOffer = /^(?:да|давайте|конечно|хорошо|согласен|согласна|беру|оформляйте)[.!\s]*$/iu.test(latestCustomerText.trim())
       && /(?:оформ|заказ|резерв|покуп)/iu.test(previousAssistantText);
-    if (!explicitOrder && !confirmedOffer) return;
+    if (!explicitOrder && !confirmedOffer) return false;
     const product = selectedCatalogProduct(selection);
-    if (!product) return;
+    if (!product) return false;
 
     const externalKey = conversation.external_key || conversation.externalKey;
-    if (!externalKey) return;
+    if (!externalKey) return false;
     const externalChatId = conversation.external_chat_id || conversation.externalChatId;
     if (conversation.source === "telegram" && externalChatId && externalKey !== `telegram:${externalChatId}`) {
       logger.error("crm_deals.order_identity_mismatch", { externalKey, externalChatId });
-      return;
+      return false;
     }
 
     // Забота о клиенте работает всегда, даже если интеграция с CRM (ниже)
     // не настроена — это чисто разговорная функция бота.
     this._scheduleOrderCareFollowUps(conversation.id);
 
-    if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return;
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return true;
     const phone = conversation.customer_phone || conversation.customerPhone
       || (customerText.match(/(?:\+?\d[\d\s()\-]{7,}\d)/u) || [])[0]
       || null;
@@ -708,6 +776,7 @@ class CrmService {
       externalKey,
       error: error.message,
     }));
+    return true;
   }
 
   _publishAzis(type, payload) {
@@ -1335,7 +1404,7 @@ prompt_patch — не больше двух коротких предложен�
     });
     // Клиент написал сам — отложенное напоминание больше не нужно, новый
     // автоответ на это сообщение сформирует свой собственный.
-    this._cancelFollowUp(conversation.id);
+    this._cancelNudgeFollowUps(conversation.id);
     let text = String(message.text || message.caption || "").trim();
     if (hasMedia) {
       try {
@@ -1424,7 +1493,7 @@ prompt_patch — не больше двух коротких предложен�
       phone: incoming.customerPhone,
       createdAt: incoming.createdAt,
     });
-    this._cancelFollowUp(conversation.id);
+    this._cancelNudgeFollowUps(conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: incoming.messageId,
       direction: "incoming",
@@ -1456,6 +1525,20 @@ prompt_patch — не больше двух коротких предложен�
     if (!this.ai?.enabled) return;
     const detail = this.getConversation(conversationId);
     if (!detail?.conversation.aiEnabled) return;
+    // Явное возражение («я подумаю», «дорого») — готовый ответ вместо
+    // полноценной генерации: быстрее, дешевле и звучит последовательно.
+    const latestCustomerMessage = [...detail.messages].reverse().find((m) => m.direction === "incoming")?.text || "";
+    const reactiveText = classifyReactiveTemplate(latestCustomerMessage);
+    if (reactiveText) {
+      const newestInboundCheck = this.db.prepare(
+        `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'incoming' ORDER BY id DESC LIMIT 1`
+      ).get(conversationId);
+      if (Number(newestInboundCheck?.id) !== Number(incomingMessageId)) return;
+      await this._send(conversationId, reactiveText, "assistant");
+      this._logEvent(conversationId, "info", "delivery", "reply.sent_template", "Готовый ответ на возражение вместо генерации ИИ");
+      this._scheduleNudgeFollowUps(conversationId, null);
+      return;
+    }
     const settings = this.getSettings();
     // Перед каждым ответом берём свежую витрину Telegram-канала. Это поиск
     // по первоисточнику до вызова модели, а не ответ по памяти DeepSeek.
@@ -1518,9 +1601,17 @@ prompt_patch — не больше двух коротких предложен�
         });
       } else {
         await this._send(conversationId, reply, "assistant");
-        this._publishOrderIfConfirmed(detail.conversation, history, selection);
+        const orderCareStarted = this._publishOrderIfConfirmed(detail.conversation, history, selection);
         this._logEvent(conversationId, "info", "delivery", "reply.sent", "Автоответ отправлен без подтверждения");
-        this._scheduleFollowUp(conversationId, incomingMessageId);
+        if (!orderCareStarted) {
+          const product = selectedCatalogProduct(selection);
+          const productName = product ? [product.name, product.storage, product.color].filter(Boolean).join(", ") : null;
+          if (stageActionForInbound(customerRequest) === "ready_to_buy") {
+            this._scheduleOrderIncompleteNudge(conversationId, productName);
+          } else {
+            this._scheduleNudgeFollowUps(conversationId, productName);
+          }
+        }
       }
     } catch (error) {
       logger.error("crm.auto_reply_failed", { conversationId, error: error.message });

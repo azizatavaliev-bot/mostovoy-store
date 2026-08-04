@@ -30,6 +30,11 @@ async function checkOrderCareFollowUps() {
   } catch (error) {
     logger.warn("crm.order_care_check_failed", { error: error.message });
   }
+  try {
+    await crm.processDueNudgeFollowUps();
+  } catch (error) {
+    logger.warn("crm.nudge_check_failed", { error: error.message });
+  }
 }
 
 const server = app.listen(config.port, () => {

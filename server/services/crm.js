@@ -64,6 +64,65 @@ const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены �
 Когда клиент спрашивает про конкретный товар (особенно менее известные категории вроде фитнес-браслетов, умных часов, колонок — не только iPhone и MacBook), не отвечай одной сухой фразой вроде «это браслет для здоровья». В подборке у товара есть поле description — используй его, чтобы презентовать товар: что он умеет, чем впечатляет, какие ощущения от использования. Пересказывай своими словами живо и кратко, а не зачитывай description дословно длинным блоком. Если description не пришёл — опиши товар по названию и категории коротко и честно, не выдумывая характеристик, которых не называл.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и веди продажу до конкретного следующего действия. Не начинай с вопросов, если уже можно показать подходящие варианты. После выбора или цены предложи оформить заказ или резерв; только после согласия попроси имя и удобный способ связи.`;
 
+// Первый контакт с новым клиентом. Если это просто приветствие/старт диалога —
+// шлём это сообщение как есть, без ИИ. Если клиент сразу задал вопрос — ИИ
+// отвечает на вопрос, а этот текст (в укороченном виде, см. FIRST_CONTACT_CATALOG_TEXT)
+// добавляется в конец ответа.
+const FIRST_CONTACT_WELCOME_TEXT = `Добро пожаловать в MOSTOVOY SHOP.
+У нас вы найдёте смартфоны, ноутбуки, наушники, часы, камеры и другую оригинальную технику.
+
+Выберите нужную категорию:
+
+📱 iPhone
+📱 Samsung
+⌚ Apple Watch
+🎧 AirPods
+💻 MacBook
+📲 iPad
+⌚ Garmin
+🌪️ Dyson
+🏃 Whoop 5.0
+🕶️ Ray-Ban Meta Gen 2
+📷 Canon G7X Mark III
+🔊 Яндекс Станция
+
+Также у нас доступны:
+
+🔄 Trade-in — обмен старого смартфона на новый с доплатой.
+💳 Рассрочка — покупка техники с оплатой частями.
+
+Напишите, что именно ищете, и мы подберём подходящий вариант под ваш бюджет.`;
+
+const FIRST_CONTACT_CATALOG_TEXT = `Вот наш актуальный каталог товаров:
+
+📱 iPhone
+📱 Samsung
+⌚ Apple Watch
+🎧 AirPods
+💻 MacBook
+📲 iPad
+⌚ Garmin
+🌪️ Dyson
+🏃 Whoop 5.0
+🕶️ Ray-Ban Meta Gen 2
+📷 Canon G7X Mark III
+🔊 Яндекс Станция
+
+Также доступны:
+
+🔄 Trade-in — обмен старого смартфона на новый с доплатой.
+💳 Рассрочка — покупка техники с оплатой частями.
+
+Выберите нужную категорию или напишите, что именно ищете.`;
+
+// Первое сообщение нового клиента без конкретного вопроса ("привет",
+// "/start" и т.п.) — просто открывает диалог, ответа по существу не требует.
+function isFirstContactGreeting(text) {
+  const value = String(text || "").trim().toLocaleLowerCase("ru");
+  if (!value) return true;
+  return /^[/!]?(привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро)|хай|start|hi|hello|здрасте|йо)[\s!.,]*$/u.test(value);
+}
+
 // Клиент не ответил после подборки/вопроса — бот сам напоминает о себе,
 // а не ждёт молча. Цепочка из трёх ступеней: через несколько часов, на
 // следующий день (либо после развёрнутой консультации — другой текст), и
@@ -436,8 +495,8 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
 Всегда называй цену в сомах (priceKgs) по умолчанию — независимо от стоимости товара, языка сообщения и исходной валюты публикации.
 Доллары (priceUsd) называй только если клиент прямо попросил USD/доллары/$. Рубли (priceRub) называй только если клиент прямо сообщил, что он находится в России, живёт в России или доставка нужна в Россию. Одной просьбы «в рублях?» без сообщения о России недостаточно: отвечай в сомах. Для клиента, который прямо сообщил, что он из Казахстана, называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Не называй несколько валют сразу, если клиент не просит сравнение.
-Товаровед получает структурированную базу, построенную из публикаций Telegram-канала, и возвращает только подходящие актуальные позиции. Это единственный источник цены. В подборке price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле. Если точного товара нет, не выдумывай цену и предложи 1–3 ближайшие позиции из подборки; задай один конкретный вопрос только если подобрать альтернативу нельзя.
-Клиенту никогда не говори «подборка» — это внутренний термин. Если запрошенной модели нет, говори «в нашем каталоге её пока нет» и сразу называй конкретные близкие модели с ценами, которые вернул товаровед — не проси у клиента бюджет вместо этого, если товаровед уже подобрал альтернативы.
+Каталог ниже уже отфильтрован по категории запроса клиента — это единственный источник цены. В нём price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле.
+Клиенту никогда не говори «подборка» или «каталог» — это внутренние термины. Если клиент называет модельную линейку без конкретной модификации («iPhone 17», «MacBook», «Apple Watch») — перечисли все модификации этой линейки, которые есть ниже, а не только одну случайную. Если запрошенной модели буквально нет — не проси у клиента бюджет вместо ответа: сам подбери 2–3 ближайшие реальные модели той же линейки и категории (например вместо iPhone 13 — iPhone 14 или iPhone 15, если они есть) и назови их с ценами.
 Если клиент коротко уточняет валюту («в сомах?», «в $?», «а в тенге?»), товар уже указан в контексте диалога и его надо взять из подборки. Никогда не отвечай, что точной суммы в другой валюте нет: готовые priceKgs, priceUsd, priceRub и priceKzt уже являются подтверждённым пересчётом цены канала.
 
 ПРОДАЖА:
@@ -463,19 +522,6 @@ const ASSISTANT_TONE_POLICY = `ЕСЛИ КЛИЕНТ РАЗДРАЖЁН ИЛИ �
 Извинись один раз, коротко и по существу конкретной причины (не путай с жалобой на другой товар — жалоба «нет эффекта» и «дорого» это разные ситуации), и продолжи разбираться: задай уточняющий вопрос по сути проблемы или прямо предложи передать обращение менеджеру.
 Не повторяй одну и ту же извиняющуюся фразу в соседних сообщениях — если уже извинился в этом диалоге, переходи сразу к сути следующего ответа.`;
 
-const CATALOG_SPECIALIST_PROMPT = `Ты товаровед магазина техники. Тебе даны актуальная база товаров из Telegram-канала и последние реплики диалога.
-Найди от 1 до 5 товаров, которые подходят запросу, бюджету и категории. Бери названия, цены, валюты и наличие только из переданной базы. Не используй память, сайт или догадки.
-Если клиент прямо просит показать все модели бренда или категории целиком («какие айфоны есть», «покажи все макбуки», «весь ассортимент часов») — лимит 1–5 не действует: верни все подходящие модели из базы, до 30 позиций. Это исключение только для явной просьбы показать всё — обычный подбор по бюджету или совету по-прежнему 1–5 товаров, не выгружай лишнее без явной просьбы.
-Если запрошенной клиентом модели буквально нет в базе (например спросили iPhone 13, а такой модели нет) — не возвращай пустой массив. Вместо этого сам подбери 2–3 ближайшие реальные модели той же линейки и категории (например попросили iPhone 13 — предложи iPhone 14 или iPhone 15, если они есть в базе) и верни их в products с reason вроде «ближайшая модель вместо iPhone 13». Пустой массив верни только если во всей категории вообще ничего подходящего нет.
-Если клиент называет модельную линейку без конкретной модификации (например «iPhone 17», «MacBook», «Apple Watch», «AirPods») — верни все модификации этой линейки, которые есть в базе (например и iPhone 17, и iPhone 17 Pro, и iPhone 17 Pro Max — если все они есть), а не только одну случайную. Модификации одной линейки не должны вытеснять друг друга из выборки: в пределах лимита 5 товаров сначала покрой линейку целиком, и только если модификаций больше 5 — оставь самые популярные (базовая, Pro, Pro Max).
-Короткое уточнение клиента о валюте, цвете или памяти относится к последнему названному в диалоге товару. Найди этот товар по предыдущим репликам и не возвращай пустой массив только из-за того, что в последней строке нет названия модели.
-Поле products содержит уже разобранные позиции. Поле pendingPosts содержит новые или изменённые исходные посты, которые ещё обрабатываются; если они описывают тот же товар, данные из более нового pendingPosts имеют приоритет.
-Для сравнения с бюджетом используй курсы магазина: 1 USD = ${config.rates.KGS} KGS, 1 USD = ${config.rates.RUB} RUB, 1 USD = ${config.rates.KZT} KZT. В JSON всё равно верни исходную цену и валюту из канала, не пересчитывай поле price.
-Не добавляй к цене наценку, комиссию, налог или запас: переданная цена и её пересчёт по указанному курсу уже являются ценой магазина. Если пересчитанная цена не превышает бюджет клиента, товар подходит и должен быть возвращён в products.
-Верни JSON строго такого вида:
-{"products":[{"name":"iPhone 15 Pro Max","brand":"Apple","category":"smartphone","storage":"256GB","color":"Natural Titanium","price":1099,"currency":"USD","available":true,"reason":"кратко почему подходит","description":"описание товара из базы дословно, без изменений"}],"note":"одно короткое уточнение только если товаров нет"}
-price — число без пробелов и символов. currency — только USD, KGS, RUB или KZT. Поля brand, category, storage и color заполняй только если они прямо есть в посте; иначе null. available — true только если наличие указано или не опровергнуто в свежем посте.
-description — если у товара в базе есть поле description, скопируй его как есть, без сокращений и переформулировок; если описания нет — верни null, не сочиняй его.`;
 
 function toConversation(row) {
   return {
@@ -511,6 +557,9 @@ class CrmService {
     // задержки на каждое уходил отдельный вызов ИИ, и клиенту прилетало
     // несколько ответов вперемешку. Ждём паузу, потом отвечаем один раз.
     this._autoReplyTimers = new Map();
+    // Диалоги, где первое сообщение клиента уже было вопросом: ответ ИИ на
+    // это сообщение нужно дополнить каталогом категорий (см. receiveTelegram).
+    this._pendingFirstContactCatalog = new Set();
   }
 
   // Откладывает автоответ на AUTO_REPLY_DEBOUNCE_MS: если за это время придёт
@@ -1279,7 +1328,7 @@ prompt_patch — не больше двух коротких предложен�
     const startedAt = Date.now();
     const catalog = buildTelegramCatalogForAssistant(this.db);
     const catalogRequest = catalogRequestFromHistory([...(Array.isArray(history) ? history : []), { role: "user", content: text }]);
-    const selection = await this._selectCatalogProducts({
+    const selection = this._selectCatalogProducts({
       conversationId: null,
       customerRequest: catalogRequest,
       catalog,
@@ -1393,6 +1442,9 @@ prompt_patch — не больше двух коротких предложен�
     if ((!message?.text?.trim() && !message?.caption?.trim() && !hasMedia) || message.from?.is_bot || message.chat?.type !== "private") return;
     const chatId = String(message.chat.id);
     const name = [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ");
+    const isNewConversation = !this.db
+      .prepare("SELECT 1 FROM crm_conversations WHERE external_key = ?")
+      .get(`telegram:${chatId}`);
     const conversation = this._upsertConversation({
       externalKey: `telegram:${chatId}`,
       source: "telegram",
@@ -1468,7 +1520,17 @@ prompt_patch — не больше двух коротких предложен�
     if (inserted && conversation.ai_enabled) {
       if (this._isDuplicateInbound(conversation.id, inserted, text)) {
         this._logEvent(conversation.id, "info", "inbox", "message.duplicate_suppressed", "Дубликат сообщения не запустил повторный ответ", { windowSeconds: 40 });
+      } else if (isNewConversation && isFirstContactGreeting(text) && this.ai?.enabled) {
+        try {
+          await this._send(conversation.id, FIRST_CONTACT_WELCOME_TEXT, "assistant");
+          this._logEvent(conversation.id, "info", "delivery", "reply.sent_welcome", "Отправлено приветственное сообщение новому клиенту");
+          this._scheduleNudgeFollowUps(conversation.id, null);
+        } catch (error) {
+          logger.error("crm.welcome_send_failed", { conversationId: conversation.id, error: error.message });
+          this._logEvent(conversation.id, "error", "delivery", "reply.welcome_failed", error.message);
+        }
       } else {
+        if (isNewConversation) this._pendingFirstContactCatalog.add(conversation.id);
         this._debouncedAutoReply(conversation.id, inserted);
       }
     }
@@ -1555,7 +1617,7 @@ prompt_patch — не больше двух коротких предложен�
     }));
     const customerRequest = [...history].reverse().find((message) => message.role === "user")?.content || "";
     const catalogRequest = catalogRequestFromHistory(history);
-    const selection = await this._selectCatalogProducts({
+    const selection = this._selectCatalogProducts({
       conversationId,
       customerRequest: catalogRequest,
       catalog,
@@ -1587,6 +1649,10 @@ prompt_patch — не больше двух коротких предложен�
           newestIncomingMessageId: newestInbound?.id || null,
         });
         return;
+      }
+      if (this._pendingFirstContactCatalog.has(conversationId)) {
+        this._pendingFirstContactCatalog.delete(conversationId);
+        reply = `${reply}\n\n${FIRST_CONTACT_CATALOG_TEXT}`;
       }
       if (settings.approvalEnabled) {
         const summary = await this._summarizeConversation(conversationId, history, settings);
@@ -1621,50 +1687,50 @@ prompt_patch — не больше двух коротких предложен�
     }
   }
 
-  async _selectCatalogProducts({ conversationId, customerRequest, catalog }) {
-    if (!catalog) return "Товаровед не нашёл свежих публикаций канала.";
-    if (!this.deepseek?.enabled || typeof this.deepseek.chatJson !== "function") {
-      this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_unavailable", "Товаровед DeepSeek недоступен");
-      return "Товаровед временно недоступен. Не называй неподтверждённую цену; предложи только товары с известными данными или попроси один конкретный критерий выбора.";
-    }
+  // Раньше подборку по категории делал отдельный AI-товаровед — лишний
+  // вызов модели, который иногда путался и терял реально существующие
+  // товары (например не находил MacBook Air M5, хотя он есть в канале).
+  // Отбор по категории — это фильтрация по ключевым словам, для нее ИИ не
+  // нужен: narrowCatalogForRequest уже это делает, здесь только пересчёт
+  // цены в разные валюты (чистая математика).
+  _selectCatalogProducts({ conversationId, customerRequest, catalog }) {
+    if (!catalog) return "Свежих публикаций канала не найдено.";
+    let data;
     try {
-      const result = await this.deepseek.chatJson({
-        system: CATALOG_SPECIALIST_PROMPT,
-        user: `ЗАПРОС КЛИЕНТА:\n${customerRequest}\n\nАКТУАЛЬНАЯ БАЗА ИЗ TELEGRAM-КАНАЛА:\n${narrowCatalogForRequest(catalog, customerRequest)}`,
-        maxTokens: 4500,
-        onUsage: this._usageRecorder("catalog_specialist", conversationId, config.deepseek.model),
-      });
-      const products = Array.isArray(result?.products)
-        ? result.products.slice(0, 30).map((item) => {
-          const price = Number(item?.price);
-          const currency = String(item?.currency || "").toUpperCase();
-          return {
-            name: String(item?.name || "").trim(),
-            brand: item?.brand ? String(item.brand).trim() : null,
-            category: item?.category ? String(item.category).trim() : null,
-            storage: item?.storage ? String(item.storage).trim() : null,
-            color: item?.color ? String(item.color).trim() : null,
-            price,
-            currency,
-            priceKgs: Math.ceil(convertAssistantPrice(price, currency, "KGS")),
-            priceUsd: Math.ceil(convertAssistantPrice(price, currency, "USD")),
-            priceRub: Math.ceil(convertAssistantPrice(price, currency, "RUB")),
-            priceKzt: Math.ceil(convertAssistantPrice(price, currency, "KZT")),
-            available: item?.available === true,
-            reason: String(item?.reason || "").trim(),
-            description: item?.description ? String(item.description).trim().slice(0, 600) : null,
-          };
-        }).filter((item) => item.name && Number.isFinite(item.price) && ["USD", "KGS", "RUB", "KZT"].includes(item.currency))
-        : [];
-      const selection = JSON.stringify({ products, note: String(result?.note || "").trim() });
-      this._logEvent(conversationId, "info", "catalog", "catalog.specialist_selected", "Товаровед отобрал товары из канала", {
-        productCount: products.length,
-      });
-      return `ПОДБОРКА ТОВАРОВЕДА ИЗ КАНАЛА:\n${selection}\n\nОтвечай только по этой подборке. Не говори, что обращался к товароведу или каналу.`;
-    } catch (error) {
-      this._logEvent(conversationId, "warn", "catalog", "catalog.specialist_failed", error.message);
-      return "Товаровед временно не смог отобрать товары. Не называй неподтверждённую цену; попроси один конкретный критерий выбора и не упоминай менеджера.";
+      data = JSON.parse(narrowCatalogForRequest(catalog, customerRequest));
+    } catch {
+      // Старые импортированные позиции без message_products возвращаются
+      // уже готовой строкой (см. buildTelegramCatalogForAssistant) — как есть.
+      return catalog;
     }
+    if (!data || typeof data !== "object") return catalog;
+    const products = Array.isArray(data.products)
+      ? data.products.slice(0, 30).map((item) => {
+        const price = Number(item?.price);
+        const currency = String(item?.currency || "").toUpperCase();
+        return {
+          name: item?.name || null,
+          brand: item?.brand || null,
+          category: item?.category || null,
+          storage: item?.storage || null,
+          color: item?.color || null,
+          description: item?.description || null,
+          price,
+          currency,
+          priceKgs: Math.ceil(convertAssistantPrice(price, currency, "KGS")),
+          priceUsd: Math.ceil(convertAssistantPrice(price, currency, "USD")),
+          priceRub: Math.ceil(convertAssistantPrice(price, currency, "RUB")),
+          priceKzt: Math.ceil(convertAssistantPrice(price, currency, "KZT")),
+          available: Boolean(item?.available),
+        };
+      }).filter((item) => item.name && Number.isFinite(item.price) && ["USD", "KGS", "RUB", "KZT"].includes(item.currency))
+      : [];
+    const pendingPosts = Array.isArray(data.pendingPosts) ? data.pendingPosts.slice(0, 10) : [];
+    this._logEvent(conversationId, "info", "catalog", "catalog.matched", "Каталог отфильтрован по категории запроса", {
+      productCount: products.length,
+      pendingPostCount: pendingPosts.length,
+    });
+    return `АКТУАЛЬНЫЙ КАТАЛОГ ИЗ TELEGRAM-КАНАЛА:\n${JSON.stringify({ products, pendingPosts })}\n\nОтвечай только по этому каталогу. Не говори, что обращался к товароведу или каналу.`;
   }
 
   _recordFinanceRequest(conversationId, request, selection) {
@@ -1831,4 +1897,6 @@ module.exports = {
   stageActionForInbound,
   telegramHtml,
   toConversation,
+  FIRST_CONTACT_WELCOME_TEXT,
+  FIRST_CONTACT_CATALOG_TEXT,
 };

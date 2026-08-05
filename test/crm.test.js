@@ -9,6 +9,7 @@ const {
   enforceCatalogPriceReply,
   stageActionForInbound,
   telegramHtml,
+  FIRST_CONTACT_CATALOG_TEXT,
 } = require("../server/services/crm");
 const { parseAmoWebhook } = require("../server/services/amocrm");
 const config = require("../server/config");
@@ -65,46 +66,54 @@ test("каталог для ИИ отдаёт структурированные
   assert.equal(catalog.products.some((product) => product.name === "Whoop 5.0 Peak"), false);
 });
 
-test("товаровед DeepSeek получает базу канала, а менеджер — только короткую подборку", async (t) => {
+test("подбор по категории отбирает товары из канала без вызова ИИ", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const iphone = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'active')"
+  ).run("iphone-17-test", "iphone-17-test", "iPhone 17", 87000, "KGS").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 777, '2026-08-02T10:00:00.000Z', 'iPhone 17 256 GB — 87 000 с', 'hash-777', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)"
+  ).run(message, iphone, 87000, "KGS");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const selection = crm._selectCatalogProducts({
+    conversationId: null,
+    customerRequest: "Посоветуй iPhone до 120 000 сомов",
+    catalog: buildTelegramCatalogForAssistant(db),
+  });
+
+  const expectedKzt = Math.ceil((87000 / config.rates.KGS) * config.rates.KZT);
+  assert.match(selection, /АКТУАЛЬНЫЙ КАТАЛОГ/);
+  assert.match(selection, /"price":87000/);
+  assert.match(selection, /"currency":"KGS"/);
+  assert.match(selection, new RegExp(`"priceKzt":${expectedKzt}`));
+  assert.doesNotMatch(selection, /\[Пост канала/);
+});
+
+test("незавершённые посты другой категории не мешают подбору по категории", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   db.prepare(
     `INSERT INTO telegram_messages
       (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
-     VALUES ('-1001', 777, '2026-08-02T10:00:00.000Z', 'iPhone 17 256 GB — 87 000 с', 'hash-777', 'raw')`
+     VALUES ('-1001', 777, '2026-08-02T10:00:00.000Z', 'Dyson Airwrap 500$', 'hash-777', 'raw')`
   ).run();
-  let payload;
-  const crm = new CrmService({
-    db,
-    deepseek: {
-      enabled: true,
-      chatJson: async (value) => {
-        payload = value;
-        return {
-          products: [{
-            name: 'iPhone 17', brand: 'Apple', category: 'smartphone', storage: '256GB', color: null,
-            price: 87000, currency: 'KGS', available: true, reason: 'в бюджете',
-          }],
-        };
-      },
-    },
-    amocrm: { enabled: false },
-  });
 
-  const selection = await crm._selectCatalogProducts({
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const selection = crm._selectCatalogProducts({
     conversationId: null,
-    customerRequest: 'Посоветуй iPhone до 120 000 сомов',
+    customerRequest: "Посоветуй iPhone до 120 000 сомов",
     catalog: buildTelegramCatalogForAssistant(db),
   });
 
-  assert.match(payload.user, /iPhone 17 256 GB — 87 000 с/);
-  assert.match(payload.system, /Не добавляй к цене наценку/);
-  assert.match(selection, /ПОДБОРКА ТОВАРОВЕДА/);
-  assert.match(selection, /"price":87000/);
-  assert.match(selection, /"currency":"KGS"/);
-  // Курс доллар→сом обновлён на 83 (был 87.5) — пересчёт в тенге меняется вместе с ним.
-  assert.match(selection, /"priceKzt":534579/);
-  assert.doesNotMatch(selection, /\[Пост канала/);
+  assert.match(selection, /АКТУАЛЬНЫЙ КАТАЛОГ/);
+  assert.doesNotMatch(selection, /Dyson/);
 });
 
 test("валюта ответа по умолчанию — сомы для любой стоимости", (t) => {
@@ -463,7 +472,7 @@ test("ответ бота ждёт подтверждения и отправл�
   const [draft] = crm.listApprovals("pending");
   assert.equal(sent, 0);
   assert.equal(draft.customerMessage, "Есть iPhone 17?");
-  assert.equal(draft.aiReply, "Да, iPhone 17 есть в наличии.");
+  assert.equal(draft.aiReply, `Да, iPhone 17 есть в наличии.\n\n${FIRST_CONTACT_CATALOG_TEXT}`);
 
   await crm.approveReply(draft.id, "Да, есть. Какой цвет вас интересует?");
 
@@ -586,7 +595,7 @@ test("гипервизор получает только историю диал
   assert.equal(calls[1].system, "Только факты из истории. Не оценивай ответ.");
   assert.deepEqual(calls[1].messages, [{ role: "user", content: "Есть iPhone 17?" }]);
   assert.equal("user" in calls[1], false);
-  assert.equal(draft.aiReply, "Да, iPhone 17 есть в наличии.");
+  assert.equal(draft.aiReply, `Да, iPhone 17 есть в наличии.\n\n${FIRST_CONTACT_CATALOG_TEXT}`);
   assert.equal(draft.summary, "Клиент ищет iPhone 17 и уточняет наличие. Цвет пока не выбран.");
 });
 

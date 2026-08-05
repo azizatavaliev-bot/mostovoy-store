@@ -1718,8 +1718,12 @@ prompt_patch — не больше двух коротких предложен�
       return catalog;
     }
     if (!data || typeof data !== "object") return catalog;
+    // Лимит именно здесь ограничивал реальную линейку: только у iPhone 17
+    // (все модификации) уже 33 позиции с разными SIM-конфигурациями и
+    // цветами — 30 обрезало часть вариантов молча. 60 покрывает текущий
+    // каталог с запасом.
     const products = Array.isArray(data.products)
-      ? data.products.slice(0, 30).map((item) => {
+      ? data.products.slice(0, 60).map((item) => {
         const price = Number(item?.price);
         const currency = String(item?.currency || "").toUpperCase();
         return {

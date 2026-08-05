@@ -913,6 +913,20 @@ class CrmService {
     }
   }
 
+  // В отличие от clearConversationHistory (чистит переписку, диалог остаётся
+  // «известным» для CRM) — полностью убирает сам диалог: следующее сообщение
+  // от этого chat_id снова считается первым контактом (приветствие, заведение
+  // сделки). Нужно для повторного тестирования одними и теми же тестовыми
+  // аккаунтами. ON DELETE CASCADE/SET NULL в схеме сами подчищают связанные
+  // сообщения, события и очереди напоминаний.
+  deleteConversation(id) {
+    const conversation = this.db.prepare("SELECT id FROM crm_conversations WHERE id = ?").get(id);
+    if (!conversation) return null;
+    this.db.prepare("DELETE FROM crm_conversations WHERE id = ?").run(id);
+    logger.info("crm.conversation_deleted", { conversationId: id });
+    return { deleted: true };
+  }
+
   getStatus() {
     const base = config.publicUrl || "https://mostovoy-store-production.up.railway.app";
     const secretPath = config.amocrm.webhookSecret

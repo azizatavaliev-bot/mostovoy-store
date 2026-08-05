@@ -306,6 +306,24 @@ test("очистка истории лида удаляет сообщения, 
   assert.equal(crm.getConversation(conversation.id).messages.length, 0);
 });
 
+test("удаление диалога убирает сам диалог — следующее сообщение снова первый контакт", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  await crm.receiveTelegram({
+    message_id: 78,
+    text: "Хочу iPhone",
+    chat: { id: 124, type: "private" },
+    from: { id: 124, first_name: "Клиент" },
+  });
+  const conversation = crm.listConversations()[0];
+
+  const result = crm.deleteConversation(conversation.id);
+  assert.deepEqual(result, { deleted: true });
+  assert.equal(crm.listConversations().length, 0);
+  assert.equal(crm.deleteConversation(conversation.id), null);
+});
+
 test("amoCRM form webhook разбирает WhatsApp-сообщение", () => {
   const parsed = parseAmoWebhook({
     "message[add][0][text]": "Здравствуйте",

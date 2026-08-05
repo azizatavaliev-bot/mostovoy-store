@@ -13,7 +13,9 @@ const config = require("../config");
 const SOURCE_URL = "https://open.er-api.com/v6/latest/USD";
 const REFRESH_MS = 6 * 60 * 60 * 1000; // 6 часов — курс так часто не меняется
 const FETCH_TIMEOUT_MS = 10000;
-const TRACKED = ["KGS", "RUB", "KZT"];
+// KGS сюда не входит: это фиксированный внутренний курс магазина (88),
+// а не рыночный — не должен обновляться живым источником.
+const TRACKED = ["RUB", "KZT"];
 
 async function fetchLiveRates() {
   const controller = new AbortController();

@@ -126,9 +126,9 @@ test("валюта ответа по умолчанию — сомы для лю
   insert.run("macbook-pro-snapshot", "macbook-pro-snapshot", "MacBook Pro 16", 1600);
 
   const catalog = buildTelegramCatalogForAssistant(db);
-  // Курс доллар→сом обновлён на 83 (был 87.5).
-  assert.match(catalog, /iPhone 15: цена по умолчанию 74\s700 с/);
-  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 132\s800 с/);
+  // Курс доллар→сом — фиксированный внутренний курс магазина, 88.
+  assert.match(catalog, /iPhone 15: цена по умолчанию 79\s200 с/);
+  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 140\s800 с/);
 
   const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
   const prompt = crm._composePrompt(crm.getSettings(), "");

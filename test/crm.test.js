@@ -9,6 +9,7 @@ const {
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   stageActionForInbound,
+  classifyImportantEscalation,
   telegramHtml,
   FIRST_CONTACT_CATALOG_TEXT,
 } = require("../server/services/crm");
@@ -31,6 +32,14 @@ test("намерение клиента преобразуется в этап �
   assert.equal(stageActionForInbound("Этот вариант меня устраивает"), "interest_confirmed");
   assert.equal(stageActionForInbound("Оформляйте заказ"), "ready_to_buy");
   assert.equal(stageActionForInbound("Привет"), null);
+});
+
+test("эскалация человеку распознаётся по правам/юрисдикции, негативу без причины и просьбе администратора", () => {
+  assert.equal(classifyImportantEscalation("Это нарушает мои права как потребителя, обращусь в суд"), true);
+  assert.equal(classifyImportantEscalation("Дайте администратора, живого человека хочу"), true);
+  assert.equal(classifyImportantEscalation("Вы мошенники, развели меня на деньги"), true);
+  assert.equal(classifyImportantEscalation("Сколько стоит iPhone 17?"), false);
+  assert.equal(classifyImportantEscalation("Дорого, есть скидка?"), false);
 });
 
 test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {

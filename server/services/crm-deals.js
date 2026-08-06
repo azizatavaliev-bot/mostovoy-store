@@ -112,6 +112,38 @@ class CrmDealsClient {
       clearTimeout(timer);
     }
   }
+
+  // Диалог, который должен разобрать человек (юрисдикция/права, немотивированный
+  // негатив, просьба администратора), а не автоответ — уходит важным
+  // уведомлением в CRM, не в переписку сделки.
+  async notifyImportant({ title, body, externalKey }) {
+    if (!this.enabled) return { skipped: true };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await this.fetchImpl(`${this.baseUrl}/api/internal/notify`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-internal-token": this.internalToken,
+        },
+        body: JSON.stringify({
+          type: "system",
+          title,
+          body,
+          isImportant: true,
+          sourceType: "telegram_bot",
+          sourceId: externalKey,
+        }),
+        signal: controller.signal,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `CRM: HTTP ${response.status}`);
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 }
 
 module.exports = { CrmDealsClient };

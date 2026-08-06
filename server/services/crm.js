@@ -293,6 +293,17 @@ function stageActionForInbound(text) {
   return null;
 }
 
+// Диалог, который должен разобрать человек, а не автоответ бота: жалоба на
+// права/юрисдикцию (защита прав потребителей, суд, жалоба в надзорный орган),
+// прямая просьба администратора/живого человека или явный немотивированный
+// негатив (обвинение в мошенничестве). Отдельно от stageActionForInbound —
+// это не про этап воронки, а про то, что боту тут отвечать не стоит.
+const IMPORTANT_ESCALATION_PATTERN = /юрисдикци|мои\s+права|нарушаете\s+закон|защит[аы]\s+прав\s+потребител|роспотребнадзор|подам\s+в\s+суд|обращусь\s+в\s+суд|адвокат|позовите\s+администратора|дайте\s+администратора|соедините\s+с\s+администратором|нужен\s+администратор|живого\s+человека|мошенник|развод(?:ите|ят)?\s+на\s+деньги|кинул[аи]?\s+меня/iu;
+
+function classifyImportantEscalation(text) {
+  return IMPORTANT_ESCALATION_PATTERN.test(String(text || ""));
+}
+
 function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
   const products = productsFromSelection(selection);
   if (!products.length) return reply;
@@ -774,6 +785,26 @@ class CrmService {
           externalKey: conversation.external_key,
           error: error.message,
         })
+      );
+  }
+
+  // Диалог, который должен разобрать человек, а не автоответ — жалоба на
+  // права/юрисдикцию, немотивированный негатив, прямая просьба администратора.
+  // Уходит важным уведомлением в CRM параллельно с обычным ответом клиенту,
+  // не вместо него: клиент всё равно должен получить ответ.
+  _publishImportantNotify(conversation, text) {
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.notifyImportant !== "function") return;
+    void this.crmDeals
+      .notifyImportant({
+        title: `Требует внимания человека (${conversation.customer_name || conversation.source})`,
+        body: `Сообщение клиента: ${String(text || "").slice(0, 500)}`,
+        externalKey: conversation.external_key,
+      })
+      .then(() => {
+        this._logEvent(conversation.id, "warn", "crm", "notify.important_sent", "Важное уведомление отправлено в CRM");
+      })
+      .catch((error) =>
+        logger.error("crm_deals.notify_failed", { externalKey: conversation.external_key, error: error.message })
       );
   }
 
@@ -1575,6 +1606,7 @@ prompt_patch — не больше двух коротких предложен�
       });
       const stageAction = stageActionForInbound(text);
       if (stageAction) this._publishStage(conversation, stageAction);
+      if (classifyImportantEscalation(text)) this._publishImportantNotify(conversation, text);
     }
     if (inserted && conversation.ai_enabled) {
       if (this._isDuplicateInbound(conversation.id, inserted, text)) {
@@ -1637,6 +1669,7 @@ prompt_patch — не больше двух коротких предложен�
       });
       const stageAction = stageActionForInbound(incoming.text);
       if (stageAction) this._publishStage(conversation, stageAction);
+      if (classifyImportantEscalation(incoming.text)) this._publishImportantNotify(conversation, incoming.text);
     }
     if (inserted && conversation.ai_enabled) this._debouncedAutoReply(conversation.id, inserted);
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
@@ -1960,6 +1993,7 @@ module.exports = {
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   stageActionForInbound,
+  classifyImportantEscalation,
   telegramHtml,
   toConversation,
   FIRST_CONTACT_WELCOME_TEXT,

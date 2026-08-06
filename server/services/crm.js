@@ -322,6 +322,27 @@ function enforceCatalogPriceReply({ reply, request, context = request, selection
   return `${lines.join("\n")}\n\nВ наличии. Могу сразу оформить заказ или рассчитать Trade-in/рассрочку.`;
 }
 
+// Страховка от галлюцинации «в наличии нет» вопреки реальным данным
+// каталога — модель иногда так отвечает, хотя товар реально есть и
+// помечен доступным (замечено на iPhone 17 при исправных данных). Работает
+// как enforceCatalogPriceReply выше: не переписывает промптом, а ловит уже
+// готовый ответ и подменяет его, если он противоречит каталогу.
+function enforceCatalogAvailabilityReply({ reply, selection }) {
+  const products = productsFromSelection(selection);
+  if (!products.length) return reply;
+  const output = String(reply || "");
+  // \b не распознаёт кириллицу как word-символ, поэтому границы слов здесь
+  // не через \b, а через явные разделители/пробелы.
+  const claimsUnavailable = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu.test(output);
+  if (!claimsUnavailable) return reply;
+  const lines = products.slice(0, 5).map((product) => {
+    const details = [product.storage, product.color].filter(Boolean).join(", ");
+    const value = roundAssistantPrice(Number(product.priceKgs), "KGS");
+    return `• ${product.name}${details ? `, ${details}` : ""} — ${value.toLocaleString("ru-RU")} с`;
+  });
+  return `Есть в наличии:\n${lines.join("\n")}\n\nКакой вариант вас интересует?`;
+}
+
 function financeToolContext(request, selection) {
   const text = String(request || "").toLowerCase();
   const wantsInstallment = /рассроч|в кредит|платеж.*месяц|ежемесяч/.test(text);
@@ -1382,6 +1403,7 @@ prompt_patch — не больше двух коротких предложен�
       onUsage: this._usageRecorder("laboratory", null, selectedModel),
     });
     reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
+    reply = enforceCatalogAvailabilityReply({ reply, selection });
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
       latencyMs: Date.now() - startedAt,
@@ -1675,6 +1697,7 @@ prompt_patch — не больше двух коротких предложен�
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
+      reply = enforceCatalogAvailabilityReply({ reply, selection });
       const newestInbound = this.db.prepare(
         `SELECT id FROM crm_messages
           WHERE conversation_id = ? AND direction = 'incoming'
@@ -1935,6 +1958,7 @@ module.exports = {
   formatAssistantPrice,
   catalogRequestFromHistory,
   enforceCatalogPriceReply,
+  enforceCatalogAvailabilityReply,
   stageActionForInbound,
   telegramHtml,
   toConversation,

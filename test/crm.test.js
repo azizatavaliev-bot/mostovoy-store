@@ -7,6 +7,7 @@ const {
   narrowCatalogForRequest,
   catalogRequestFromHistory,
   enforceCatalogPriceReply,
+  enforceCatalogAvailabilityReply,
   stageActionForInbound,
   telegramHtml,
   FIRST_CONTACT_CATALOG_TEXT,
@@ -260,6 +261,38 @@ test("отказ назвать цену из подборки заменяет�
   });
   assert.match(rubForRussia, /97\s600 ₽/);
   assert.doesNotMatch(rubForRussia, /108\s100 с/);
+});
+
+test("галлюцинация «в наличии нет» заменяется реальными товарами из каталога", () => {
+  const selection = `АКТУАЛЬНЫЙ КАТАЛОГ ИЗ TELEGRAM-КАНАЛА:\n${JSON.stringify({
+    products: [{
+      name: "iPhone 17",
+      storage: "256 ГБ",
+      color: null,
+      price: 870,
+      currency: "USD",
+      priceKgs: 76560,
+      priceUsd: 870,
+      priceRub: 68730,
+      priceKzt: 410130,
+      available: true,
+    }],
+  })}`;
+
+  const fixed = enforceCatalogAvailabilityReply({
+    reply: "Здравствуйте! Сейчас подтверждённых iPhone 17 в наличии нет. Могу предложить варианты, когда они появятся.",
+    selection,
+  });
+  assert.match(fixed, /Есть в наличии/);
+  assert.match(fixed, /iPhone 17/);
+  assert.match(fixed, /76\s600 с/);
+  assert.doesNotMatch(fixed, /в наличии нет/i);
+
+  const untouched = enforceCatalogAvailabilityReply({
+    reply: "iPhone 17, 256 ГБ — 76 560 сом. В наличии.",
+    selection,
+  });
+  assert.equal(untouched, "iPhone 17, 256 ГБ — 76 560 сом. В наличии.");
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

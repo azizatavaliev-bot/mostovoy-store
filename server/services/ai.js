@@ -1,4 +1,5 @@
 const config = require("../config");
+const { buildMapping, applyMapping, restoreMapping } = require("./privacy");
 
 const MODELS = [
   { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek" },
@@ -92,7 +93,28 @@ class AiRouter {
     return MODELS.map((item) => ({ ...item, enabled: this.isEnabled(item.id) }));
   }
 
+  // Телефон/адрес/имя клиента не должны уходить ни в один ИИ-провайдер как
+  // есть — заменяем на плейсхолдеры перед вызовом и подставляем реальные
+  // значения обратно в готовый текст. Единая точка входа для всех
+  // текстовых генераций (chatText/chatJson), поэтому провайдер-специфичный
+  // код остался в _dispatchChatText нетронутым.
   async chatText({ system, messages = [], user, model, maxTokens = 900, temperature, onUsage }) {
+    const mapping = buildMapping([...messages.map((item) => item.content), user]);
+    const redactedMessages = messages.map((item) => ({ ...item, content: applyMapping(item.content, mapping) }));
+    const redactedUser = applyMapping(user, mapping);
+    const text = await this._dispatchChatText({
+      system,
+      messages: redactedMessages,
+      user: redactedUser,
+      model,
+      maxTokens,
+      temperature,
+      onUsage,
+    });
+    return restoreMapping(text, mapping);
+  }
+
+  async _dispatchChatText({ system, messages = [], user, model, maxTokens = 900, temperature, onUsage }) {
     const info = modelInfo(model);
     if (!info) throw new Error("Неизвестная модель");
     if (!this.isEnabled(model)) throw new Error(`${info.label}: API-ключ не настроен`);

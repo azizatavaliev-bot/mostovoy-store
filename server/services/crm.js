@@ -140,17 +140,30 @@ const CONSULTATION_MESSAGE_THRESHOLD = 3;
 // в один ответ вместо серии отдельных.
 const AUTO_REPLY_DEBOUNCE_MS = 3000;
 
+// Имя клиента в Telegram — это его собственный профильный first_name, не то,
+// что бот сам разобрал из текста. Спам/бот-аккаунты иногда ставят себе имя
+// вроде ссылки ("https://...") — такое в шаблон не подставляем, выглядит
+// неуместно в сообщении от менеджера. Настоящее имя человека такому не
+// соответствует.
+function isLikelyHumanName(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return false;
+  if (/https?:|www\.|t\.me\/|@|\d{3,}/i.test(trimmed)) return false;
+  return true;
+}
+
 function fillNudgeTemplate(template, { clientName, productName } = {}) {
+  const safeName = isLikelyHumanName(clientName) ? clientName : null;
   let text = String(template || "");
-  text = clientName
-    ? text.replaceAll("{{client_name}}", clientName)
+  text = safeName
+    ? text.replaceAll("{{client_name}}", safeName)
     : text.replace(/,?\s*\{\{client_name\}\}/g, "").replace(/^,\s*/, "");
   text = text.replaceAll("{{product_name}}", productName || "интересующим вас товаром");
   return text.trim();
 }
 
 const NUDGE_TEMPLATES = {
-  hours: "Здравствуйте, {{client_name}}. Хотела уточнить, остались ли у вас вопросы по {{product_name}}? Могу коротко подсказать по применению или помочь подобрать другой вариант.",
+  hours: "Здравствуйте, {{client_name}}. Хотела уточнить, остались ли у вас вопросы по {{product_name}}? Могу коротко рассказать подробнее или помочь подобрать другой вариант.",
   day: "Добрый день, {{client_name}}. Вчера вы интересовались {{product_name}}. Подскажите, вы ещё рассматриваете его или пока решили отложить покупку?",
   consultation: "Добрый день. Хотела узнать, удалось ли вам определиться после нашей консультации? Могу ещё раз коротко сравнить подходящие варианты.",
   last: "{{client_name}}, больше не буду отвлекать. Если вопрос по {{product_name}} ещё актуален, просто напишите — продолжим с того места, где остановились.",

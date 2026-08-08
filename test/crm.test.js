@@ -1287,6 +1287,48 @@ test("просроченное напоминание «через нескол�
 
   assert.equal(
     sentText,
-    "Здравствуйте, Айгерим. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко подсказать по применению или помочь подобрать другой вариант."
+    "Здравствуйте, Айгерим. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
+  );
+});
+
+test("нечеловеческое имя профиля (ссылка) не подставляется в напоминание", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let sentText = null;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        sentText = JSON.parse(init.body).text;
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1607",
+    source: "telegram",
+    inbound: true,
+    chatId: "1607",
+    name: "https://t.me/spam",
+  });
+  db.prepare(
+    "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
+  ).run(conversation.id);
+  db.prepare(
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+  ).run(conversation.id);
+
+  await crm.processDueNudgeFollowUps();
+
+  assert.equal(
+    sentText,
+    "Здравствуйте. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
   );
 });

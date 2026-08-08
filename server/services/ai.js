@@ -98,7 +98,12 @@ class AiRouter {
   // значения обратно в готовый текст. Единая точка входа для всех
   // текстовых генераций (chatText/chatJson), поэтому провайдер-специфичный
   // код остался в _dispatchChatText нетронутым.
-  async chatText({ system, messages = [], user, model, maxTokens = 900, temperature, onUsage }) {
+  //
+  // maxTokens по умолчанию — 1800, а не 900: полный список линейки товара
+  // (например все MacBook с конфигурациями и ценами) на 900 токенах обрывался
+  // посреди слова, потому что ПРОДАЖА-политика требует перечислить каждую
+  // модель и модификацию, а не сокращённую подборку.
+  async chatText({ system, messages = [], user, model, maxTokens = 1800, temperature, onUsage }) {
     const mapping = buildMapping([...messages.map((item) => item.content), user]);
     const redactedMessages = messages.map((item) => ({ ...item, content: applyMapping(item.content, mapping) }));
     const redactedUser = applyMapping(user, mapping);

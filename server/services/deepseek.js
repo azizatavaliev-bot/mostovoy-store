@@ -114,7 +114,7 @@ class DeepSeekClient {
     throw lastError;
   }
 
-  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 900, model, onUsage }) {
+  async chatText({ system, messages = [], user, temperature = 0.35, maxTokens = 1800, model, onUsage }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }

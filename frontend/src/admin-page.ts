@@ -129,6 +129,8 @@ interface BotSettings {
   characterPrompt: string;
   rulesPrompt: string;
   taskPrompt: string;
+  supervisorEnabled: boolean;
+  supervisorPrompt: string;
 }
 
 interface BotApproval {
@@ -1584,6 +1586,8 @@ function currentBotSettings(): Partial<BotSettings> {
     characterPrompt: promptValue("botCharacterPrompt"),
     rulesPrompt: promptValue("botRulesPrompt"),
     taskPrompt: promptValue("botTaskPrompt"),
+    supervisorEnabled: Boolean((document.getElementById("botSupervisor") as HTMLInputElement | null)?.checked),
+    supervisorPrompt: promptValue("botSupervisorPrompt"),
   };
 }
 
@@ -1614,6 +1618,7 @@ function renderAiUsage(): string {
   const taskNames: Record<string, string> = {
     sales_agent: "Продавец-консультант",
     hypervisor_context: "Гипервизор · контекст",
+    supervisor: "Супервизор · проверка ответа",
     media_analysis: "Изображения и аудио",
     laboratory: "Лаборатория",
     aggressive_learning: "Агрессивное обучение",
@@ -1696,6 +1701,8 @@ function renderDeveloperMount(): void {
           Подтверждать ответы перед отправкой</label>
         <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botAggressiveLearning" ${s.aggressiveLearning ? "checked" : ""}><span></span>
           <div><b>Агрессивное обучение</b><small>После каждого отклонения сохраняет причину и точечно улучшает системный промпт.</small></div></label>
+        <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botSupervisor" ${s.supervisorEnabled ? "checked" : ""}><span></span>
+          <div><b>Супервизор второго прохода</b><small>Отдельный вызов ИИ проверяет черновик перед отправкой: факты, полноту списка, тон, самопризнание в том, что бот.</small></div></label>
         <label>Модель<select id="botModel">${s.models.map((model) =>
           `<option value="${esc(model.id)}" ${model.id === s.model ? "selected" : ""} ${model.enabled ? "" : "disabled"}>
             ${esc(model.label)} · ${esc(model.provider)}${model.enabled ? "" : " — нужен API-ключ"}
@@ -1706,6 +1713,7 @@ function renderDeveloperMount(): void {
           ["botCharacterPrompt", "Промпт характера", s.characterPrompt],
           ["botRulesPrompt", "Промпт правил", s.rulesPrompt],
           ["botTaskPrompt", "Промпт задачи", s.taskPrompt],
+          ["botSupervisorPrompt", "Промпт супервизора · проверка черновика перед отправкой", s.supervisorPrompt],
         ].map(([id, label, value]) => `<label>${label}<textarea id="${id}" rows="5">${esc(value)}</textarea></label>`).join("")}
       </section>
       <section class="bot-panel bot-lab">

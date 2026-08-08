@@ -63,6 +63,22 @@ const DEFAULT_RULES_PROMPT = `Не выдумывай наличие, цены �
 Отвечай как живой продажник, а не справочник: не обрывай сообщение сразу после списка товаров или ответа на вопрос. Если назвал несколько моделей на выбор — в конце спроси что-то вроде «Определились с выбором?» или «Какая больше нравится?». Если назвал одну модель с ценой — предложи следующий шаг (оформить, зарезервировать, рассчитать рассрочку). Ответ должен вести разговор вперёд, а не просто закрывать вопрос клиента.
 Когда клиент спрашивает про конкретный товар (особенно менее известные категории вроде фитнес-браслетов, умных часов, колонок — не только iPhone и MacBook), не отвечай одной сухой фразой вроде «это браслет для здоровья». В подборке у товара есть поле description — используй его, чтобы презентовать товар: что он умеет, чем впечатляет, какие ощущения от использования. Пересказывай своими словами живо и кратко, а не зачитывай description дословно длинным блоком. Если description не пришёл — опиши товар по названию и категории коротко и честно, не выдумывая характеристик, которых не называл.`;
 const DEFAULT_TASK_PROMPT = `Помоги клиенту выбрать подходящий товар, ответь на вопрос и веди продажу до конкретного следующего действия. Не начинай с вопросов, если уже можно показать подходящие варианты. После выбора или цены предложи оформить заказ или резерв; только после согласия попроси имя и удобный способ связи.`;
+const DEFAULT_SUPERVISOR_PROMPT = `Ты — внутренний контролёр качества ответов продавца-консультанта магазина техники МОСТОВОЙ. Клиент тебя не видит, это второй проход перед отправкой черновика.
+
+Проверь черновик по истории переписки и последнему сообщению клиента:
+- отвечает по существу на вопрос клиента, не игнорирует его и не уходит от ответа;
+- не использует внутренние термины «подборка», «каталог», «база», «мне передали список» — клиент не должен видеть кухню;
+- не выдумывает цену, наличие, скидку, характеристику или срок доставки, которых нет в переданных клиенту данных; фраза «нет в наличии» без явного подтверждения из этих данных — ошибка;
+- если клиент явно просил показать все модели или весь ассортимент категории — черновик должен перечислять реально много позиций, а не 2–3 штуки; короткий ответ на такой прямой запрос тоже ошибка;
+- после названной цены или подборки заканчивается конкретным следующим шагом (оформить, зарезервировать, рассчитать рассрочку или Trade-in), а не обрывается на списке;
+- не повторяет приветствие, если это не первое сообщение диалога;
+- не признаётся, что это ИИ или бот;
+- не содержит незакрытых или нестандартных тегов вроде <ЧТО-ТО>...</ЧТО-ТО> — таких меток в системе нет, весь текст клиент увидит буквально, включая любые теги.
+
+Если черновик уже хороший — верни status "approved", corrected_reply оставь пустой строкой.
+Если есть проблема — верни status "rewrite" и в corrected_reply готовый естественный текст для отправки клиенту (сам ответ, а не описание проблемы), который исправляет её и сохраняет всё верное из черновика.
+
+Верни только JSON без markdown: {"status": "approved" или "rewrite", "corrected_reply": "строка", "issue": "коротко в чём проблема, пусто если approved"}.`;
 
 // Первый контакт с новым клиентом. Если это просто приветствие/старт диалога —
 // шлём это сообщение как есть, без ИИ. Если клиент сразу задал вопрос — ИИ
@@ -1050,6 +1066,8 @@ class CrmService {
       characterPrompt: rows.bot_character_prompt || DEFAULT_CHARACTER_PROMPT,
       rulesPrompt: rows.bot_rules_prompt || DEFAULT_RULES_PROMPT,
       taskPrompt: rows.bot_task_prompt || DEFAULT_TASK_PROMPT,
+      supervisorEnabled: rows.bot_supervisor_enabled !== "false",
+      supervisorPrompt: rows.bot_supervisor_prompt || DEFAULT_SUPERVISOR_PROMPT,
       models: typeof this.ai?.listModels === "function"
         ? this.ai.listModels()
         : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),
@@ -1067,6 +1085,8 @@ class CrmService {
       bot_character_prompt: String(payload.characterPrompt ?? current.characterPrompt).trim().slice(0, 8000) || DEFAULT_CHARACTER_PROMPT,
       bot_rules_prompt: String(payload.rulesPrompt ?? current.rulesPrompt).trim().slice(0, 8000) || DEFAULT_RULES_PROMPT,
       bot_task_prompt: String(payload.taskPrompt ?? current.taskPrompt).trim().slice(0, 8000) || DEFAULT_TASK_PROMPT,
+      bot_supervisor_enabled: String(payload.supervisorEnabled ?? current.supervisorEnabled),
+      bot_supervisor_prompt: String(payload.supervisorPrompt ?? current.supervisorPrompt).trim().slice(0, 8000) || DEFAULT_SUPERVISOR_PROMPT,
     };
     const upsert = this.db.prepare(
       `INSERT INTO crm_settings (key, value) VALUES (?, ?)
@@ -1449,6 +1469,13 @@ prompt_patch — не больше двух коротких предложен�
       model: selectedModel,
       onUsage: this._usageRecorder("laboratory", null, selectedModel),
     });
+    reply = await this._reviewReply({
+      conversationId: null,
+      settings: { ...settings, model: selectedModel },
+      history: Array.isArray(history) ? history : [],
+      customerRequest: text,
+      draft: reply,
+    });
     reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
     reply = enforceCatalogAvailabilityReply({ reply, selection });
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
@@ -1472,6 +1499,43 @@ prompt_patch — не больше двух коротких предложен�
       KNOWLEDGE_BASE ? `БАЗА ЗНАНИЙ О КАТЕГОРИЯХ (фон для презентации, не источник цены/наличия):\n${KNOWLEDGE_BASE}` : "",
       catalog ? `АКТУАЛЬНЫЙ КАТАЛОГ:\n${catalog}` : "",
     ].filter(Boolean).join("\n\n");
+  }
+
+  // Второй агент: проверяет черновик продавца перед отправкой (факты,
+  // тон, полнота списка, внутренние термины, самопризнание в том, что бот).
+  // Отдельный вызов ИИ, не текстовые regex-патчи — те (enforceCatalogPriceReply/
+  // enforceCatalogAvailabilityReply) остаются и выполняются уже ПОСЛЕ этого
+  // ревью, как финальная страховка на случай, если сам супервизор ошибся.
+  // Сбой или таймаут ревью не блокирует ответ клиенту — уходит исходный
+  // черновик (fail-open, тот же принцип, что и у остальных вызовов ИИ здесь).
+  async _reviewReply({ conversationId, settings, history, customerRequest, draft }) {
+    if (!settings.supervisorEnabled || !this.ai?.enabled || typeof this.ai.chatJson !== "function") return draft;
+    try {
+      const result = await this.ai.chatJson({
+        system: settings.supervisorPrompt,
+        user: JSON.stringify({
+          customer_message: customerRequest,
+          history: history.slice(-6),
+          draft_reply: draft,
+        }),
+        temperature: 0,
+        maxTokens: 1800,
+        model: settings.model,
+        onUsage: this._usageRecorder("supervisor", conversationId, settings.model),
+      });
+      const status = String(result?.status || "approved");
+      const corrected = String(result?.corrected_reply || "").trim();
+      if (status === "rewrite" && corrected) {
+        this._logEvent(conversationId, "info", "supervisor", "supervisor.rewrite", "Супервизор исправил черновик", {
+          issue: String(result?.issue || "").slice(0, 300),
+        });
+        return corrected;
+      }
+      return draft;
+    } catch (error) {
+      this._logEvent(conversationId, "warn", "supervisor", "supervisor.failed", error.message);
+      return draft;
+    }
   }
 
   async _summarizeConversation(conversationId, history, settings) {
@@ -1746,6 +1810,7 @@ prompt_patch — не больше двух коротких предложен�
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
       });
+      reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
       reply = enforceCatalogAvailabilityReply({ reply, selection });
       const newestInbound = this.db.prepare(
@@ -2003,6 +2068,7 @@ module.exports = {
   DEFAULT_CHARACTER_PROMPT,
   DEFAULT_RULES_PROMPT,
   DEFAULT_TASK_PROMPT,
+  DEFAULT_SUPERVISOR_PROMPT,
   buildTelegramCatalogForAssistant,
   narrowCatalogForRequest,
   formatAssistantPrice,

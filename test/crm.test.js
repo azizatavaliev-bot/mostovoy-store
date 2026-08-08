@@ -659,6 +659,80 @@ test("гипервизор получает только историю диал
   assert.equal(draft.summary, "Клиент ищет iPhone 17 и уточняет наличие. Цвет пока не выбран.");
 });
 
+test("супервизор переписывает черновик, который ложно утверждает отсутствие товара", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  let sentText = null;
+  let reviewCalled = false;
+  const deepseek = {
+    enabled: true,
+    chatText: async () => "К сожалению, такого товара у нас нет.",
+    chatJson: async ({ user }) => {
+      reviewCalled = true;
+      assert.match(user, /такого товара у нас нет/);
+      return {
+        status: "rewrite",
+        corrected_reply: "iPhone 17 есть в наличии, 850$. Оформляем?",
+        issue: "Черновик ложно сообщил об отсутствии товара",
+      };
+    },
+  };
+  const crm = new CrmService({
+    db, deepseek, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        sentText = JSON.parse(init.body).text;
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false });
+  const message = {
+    date: 1_700_000_000,
+    chat: { id: 140, type: "private" },
+    from: { id: 140, first_name: "Клиент" },
+  };
+
+  await crm.receiveTelegram({ ...message, message_id: 140, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 141, text: "Есть iPhone 17?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.ok(reviewCalled);
+  assert.equal(sentText, "iPhone 17 есть в наличии, 850$. Оформляем?");
+});
+
+test("супервизор отключается настройкой и не вызывается", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  let sentText = null;
+  let reviewCalled = false;
+  const deepseek = {
+    enabled: true,
+    chatText: async () => "Готовый черновик.",
+    chatJson: async () => { reviewCalled = true; return { status: "approved", corrected_reply: "" }; },
+  };
+  const crm = new CrmService({
+    db, deepseek, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+  const message = {
+    date: 1_700_000_000,
+    chat: { id: 141, type: "private" },
+    from: { id: 141, first_name: "Клиент" },
+  };
+
+  await crm.receiveTelegram({ ...message, message_id: 150, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 151, text: "Есть iPhone 17?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(reviewCalled, false);
+  assert.equal(sentText, "Готовый черновик.");
+});
+
 test("агрессивное обучение сохраняет отклонение и точечно обновляет системный промпт", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

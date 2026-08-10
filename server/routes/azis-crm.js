@@ -26,6 +26,8 @@ function createAzisCrmRouter({ crm }) {
       const result = await crm.receiveAmo(
         {
           text: String(body.text || "").trim(),
+          messageType: String(body.messageType || body.attachmentType || "text"),
+          mediaUrl: String(body.mediaUrl || body.attachmentLink || ""),
           direction: "incoming",
           chatId: String(body.externalChatId || body.chatId || ""),
           messageId: String(body.externalMessageId || body.messageId || ""),

@@ -24,6 +24,28 @@ function escapeTelegramHtml(value) {
     .replaceAll(">", "&gt;");
 }
 
+function normalizePhone(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function amoMediaKind(messageType) {
+  const type = String(messageType || "").toLowerCase();
+  if (["picture", "image", "photo"].includes(type)) return "image";
+  if (["voice", "audio"].includes(type)) return "audio";
+  return null;
+}
+
+function mediaMimeType(kind, url, header) {
+  const contentType = String(header || "").split(";")[0].trim();
+  if (contentType.startsWith(`${kind}/`)) return contentType;
+  const extension = String(url || "").split("?")[0].match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
+  if (kind === "image") return extension === "png" ? "image/png" : extension === "webp" ? "image/webp" : "image/jpeg";
+  if (extension === "m4a") return "audio/mp4";
+  if (extension === "mp3") return "audio/mpeg";
+  if (extension === "wav") return "audio/wav";
+  return "audio/ogg";
+}
+
 function telegramHtml(markdown) {
   const protectedBlocks = [];
   const protect = (html) => {
@@ -1845,11 +1867,41 @@ prompt_patch — не больше двух коротких предложен�
       return { stored: Boolean(inserted), conversationId: Number(conversation.id), manager: true };
     }
     this._cancelNudgeFollowUps(conversation.id);
+    let incomingText = incoming.text;
+    const mediaKind = amoMediaKind(incoming.messageType);
+    if (mediaKind && incoming.mediaUrl) {
+      try {
+        if (!this.ai?.analyzeMedia) throw new Error("Анализ вложений не настроен");
+        const response = await this.fetchImpl(incoming.mediaUrl, { signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`amoCRM file: HTTP ${response.status}`);
+        const declaredSize = Number(response.headers?.get?.("content-length") || 0);
+        if (declaredSize > 20 * 1024 * 1024) throw new Error("Файл больше 20 МБ");
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length > 20 * 1024 * 1024) throw new Error("Файл больше 20 МБ");
+        const analysis = await this.ai.analyzeMedia({
+          kind: mediaKind,
+          bytes,
+          mimeType: mediaMimeType(mediaKind, incoming.mediaUrl, response.headers?.get?.("content-type")),
+          caption: incoming.text.replace(/^\[(?:voice|audio|picture|image|photo)\]\s+https?:\/\/\S+$/i, ""),
+          onUsage: this._usageRecorder("media_analysis", conversation.id, this.getSettings().model),
+        });
+        incomingText = [incoming.text, mediaKind === "image" ? `[Изображение: ${analysis}]` : `[Аудио: ${analysis}]`]
+          .filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "info", "media", "media.analyzed", "Вложение amoCRM проанализировано", {
+          kind: mediaKind,
+          bytes: bytes.length,
+        });
+      } catch (error) {
+        incomingText = [incoming.text, mediaKind === "image" ? "[Клиент прислал изображение]" : "[Клиент прислал аудио]"]
+          .filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "error", "media", "media.failed", error.message);
+      }
+    }
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: incoming.messageId,
       direction: "incoming",
       sender: "customer",
-      text: incoming.text,
+      text: incomingText,
       raw,
       createdAt: incoming.createdAt,
     });
@@ -1858,16 +1910,16 @@ prompt_patch — не больше двух коротких предложен�
         externalMessageId: incoming.messageId,
         direction: "incoming",
         sender: "customer",
-        text: incoming.text,
+        text: incomingText,
         raw,
         createdAt: incoming.createdAt,
       });
       this._logEvent(conversation.id, "info", "inbox", "message.received", `Получено сообщение из ${source}`, {
         messageId: inserted,
       });
-      const stageAction = stageActionForInbound(incoming.text);
+      const stageAction = stageActionForInbound(incomingText);
       if (stageAction) this._publishStage(conversation, stageAction);
-      if (classifyImportantEscalation(incoming.text)) this._publishImportantNotify(conversation, incoming.text);
+      if (classifyImportantEscalation(incomingText)) this._publishImportantNotify(conversation, incomingText);
     }
     if (inserted) {
       try {
@@ -1876,7 +1928,13 @@ prompt_patch — не больше двух коротких предложен�
         this._logEvent(conversation.id, "warn", "amocrm", "amocrm.history_failed", error.message);
       }
       const current = this.db.prepare("SELECT ai_enabled FROM crm_conversations WHERE id = ?").get(conversation.id);
-      if (current?.ai_enabled) this._debouncedAutoReply(conversation.id, inserted);
+      const testPhone = normalizePhone(config.amocrm.testPhone);
+      const customerPhone = normalizePhone(conversation.customer_phone);
+      if (current?.ai_enabled && (!testPhone || customerPhone === testPhone)) {
+        this._debouncedAutoReply(conversation.id, inserted);
+      } else if (testPhone && customerPhone !== testPhone) {
+        this._logEvent(conversation.id, "info", "delivery", "reply.test_phone_skipped", "Автоответ отключён для номера вне теста");
+      }
     }
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }

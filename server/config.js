@@ -48,6 +48,9 @@ const config = {
     accessToken: process.env.AMOCRM_ACCESS_TOKEN || "",
     amojoBaseUrl: (process.env.AMOJO_BASE_URL || "https://amojo.amocrm.ru").replace(/\/+$/, ""),
     webhookSecret: process.env.AMOCRM_WEBHOOK_SECRET || "",
+    // Пока идёт проверка интеграции, автоответы из amoCRM разрешены только
+    // этому номеру. Пустое значение возвращает обычную работу со всеми.
+    testPhone: process.env.AMOCRM_TEST_PHONE || "",
   },
 
   azisCrm: {

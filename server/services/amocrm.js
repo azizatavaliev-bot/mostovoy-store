@@ -11,11 +11,14 @@ function parseAmoWebhook(body, index = 0) {
   const text = String(get(key("text")) || nested.text || "").trim() || (media ? `[${messageType}] ${media}` : "");
   return {
     text,
+    messageType,
+    mediaUrl: media,
     direction: String(get(key("type")) || nested.type || "incoming").toLowerCase(),
     chatId: String(get(key("chat_id")) || nested.chat_id || ""),
     messageId: String(get(key("id")) || nested.id || ""),
     customerId: String(get(key("author][id")) || author.id || ""),
     customerName: String(get(key("author][name")) || author.name || ""),
+    customerPhone: String(get(key("author][phone")) || author.phone || body.customerPhone || ""),
     leadId: String(get(key("element_id")) || get(key("entity_id")) || nested.element_id || nested.entity_id || ""),
     contactId: String(get(key("contact_id")) || nested.contact_id || ""),
     source: String(get(key("origin")) || nested.origin || "whatsapp"),

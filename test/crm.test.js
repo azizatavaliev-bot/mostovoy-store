@@ -450,6 +450,19 @@ test("amoCRM webhook разбирает все сообщения пачки, а
   ]);
 });
 
+test("amoCRM webhook сохраняет ссылку и тип голосового", () => {
+  const parsed = parseAmoWebhook({
+    "message[add][0][message_type]": "voice",
+    "message[add][0][attachment][link]": "https://drive-a.amocrm.ru/download/test/voice.m4a",
+    "message[add][0][type]": "incoming",
+    "message[add][0][chat_id]": "voice-chat",
+  });
+
+  assert.equal(parsed.messageType, "voice");
+  assert.equal(parsed.mediaUrl, "https://drive-a.amocrm.ru/download/test/voice.m4a");
+  assert.equal(parsed.text, "[voice] https://drive-a.amocrm.ru/download/test/voice.m4a");
+});
+
 test("старая история amoCRM видна, а прошлый ответ менеджера останавливает AI", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
@@ -520,6 +533,75 @@ test("Instagram из amoCRM сохраняется отдельным канал
   assert.equal(events[0].type, "message");
   assert.equal(events[0].payload.channel, "instagram");
   assert.equal(events[0].payload.externalMessageId, "instagram-message-7");
+});
+
+test("голосовое amoCRM расшифровывается и сохраняется в переписке", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  let analyzed = null;
+  const crm = new CrmService({
+    db,
+    ai: {
+      enabled: false,
+      analyzeMedia: async (payload) => {
+        analyzed = payload;
+        return "клиент спрашивает цену iPhone 17";
+      },
+    },
+    amocrm: { enabled: false },
+    fetchImpl: async () => ({
+      ok: true,
+      headers: { get: (name) => name === "content-type" ? "audio/mp4" : null },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3]).buffer,
+    }),
+  });
+
+  await crm.receiveAmo({
+    text: "[voice] https://drive-a.amocrm.ru/download/test/voice.m4a",
+    messageType: "voice",
+    mediaUrl: "https://drive-a.amocrm.ru/download/test/voice.m4a",
+    direction: "incoming",
+    chatId: "voice-chat",
+    messageId: "voice-message",
+    source: "whatsapp",
+  });
+
+  assert.equal(analyzed.kind, "audio");
+  assert.equal(analyzed.mimeType, "audio/mp4");
+  assert.match(crm.getConversation(crm.listConversations()[0].id).messages[0].text, /клиент спрашивает цену iPhone 17/);
+});
+
+test("тестовый режим amoCRM запускает автоответ только для разрешённого номера", async (t) => {
+  const db = createConnection(":memory:");
+  const previousPhone = config.amocrm.testPhone;
+  config.amocrm.testPhone = "+996 500 896 899";
+  t.after(() => {
+    config.amocrm.testPhone = previousPhone;
+    db.close();
+  });
+  const crm = new CrmService({ db, ai: { enabled: true }, amocrm: { enabled: false } });
+  const scheduled = [];
+  crm._debouncedAutoReply = (conversationId) => scheduled.push(conversationId);
+
+  await crm.receiveAmo({
+    text: "Привет",
+    direction: "incoming",
+    chatId: "other-phone",
+    messageId: "message-1",
+    customerPhone: "+996 700 000 000",
+    source: "whatsapp",
+  });
+  await crm.receiveAmo({
+    text: "Привет",
+    direction: "incoming",
+    chatId: "test-phone",
+    messageId: "message-2",
+    customerPhone: "996500896899",
+    source: "whatsapp",
+  });
+
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0], crm.listConversations().find((item) => item.externalKey === "amo:test-phone").id);
 });
 
 test("ответ из Azis CRM отправляется в исходный amoCRM-чат", async (t) => {

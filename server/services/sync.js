@@ -194,7 +194,8 @@ class SyncService {
       user: buildExtractUser(text),
       // Полный прайс категории (20+ позиций, как iPhone 17) не влезает в
       // дефолтные 4096 токенов ответа — JSON обрезался и разбор падал.
-      maxTokens: 8192,
+      // 30000 проверено живым запросом к deepseek-v4-flash: API принимает.
+      maxTokens: 30000,
     });
     const { products, rejected } = validateExtraction(raw);
 

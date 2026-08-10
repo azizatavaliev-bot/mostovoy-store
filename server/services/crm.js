@@ -523,15 +523,17 @@ function narrowCatalogForRequest(catalog, request) {
       .map((message) => CATALOG_FAMILIES.find((item) => item.request.test(message)))
       .find(Boolean)
       || CATALOG_FAMILIES.find((item) => item.request.test(requestText));
+    // Структурированные товары НЕ фильтруем по категории: фильтр по regex
+    // терял реальные товары (русские названия, «MacBook Pro» в другом посте,
+    // категории вне списка семейств) — и бот отвечал «нет в наличии» про то,
+    // что есть. Полный структурированный каталог компактен, DeepSeek дешёвый:
+    // модель всегда видит весь ассортимент. Сужаем только объёмные сырые
+    // посты (pendingPosts).
     if (!family) return JSON.stringify({ ...data, pendingPosts: data.pendingPosts.slice(0, 40) });
     const matches = (value) => family.terms.some((term) => String(value || "").toLowerCase().includes(term));
-    const matchingProducts = Array.isArray(data.products)
-      ? data.products.filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
-      : [];
-    const newestStructuredMessageId = matchingProducts.reduce(
-      (latest, product) => Math.max(latest, Number(product.telegramMessageId) || 0),
-      0,
-    );
+    const newestStructuredMessageId = (Array.isArray(data.products) ? data.products : [])
+      .filter((product) => matches(`${product.name} ${product.brand} ${product.category}`))
+      .reduce((latest, product) => Math.max(latest, Number(product.telegramMessageId) || 0), 0);
     const matchingPendingPosts = data.pendingPosts
       .filter((post) => matches(post.text))
       // raw/pending означает «ещё не разобран», а не «обязательно новее».
@@ -540,13 +542,13 @@ function narrowCatalogForRequest(catalog, request) {
     const pricedPosts = matchingPendingPosts
       .filter((post) => /\d[\d\s.,]*\s*(?:\$|с(?:\s|$)|сом|usd|kgs)/i.test(post.text))
       .sort((a, b) => Number(b.telegramMessageId) - Number(a.telegramMessageId));
-    // Канал публикует новый полный прайс категории отдельным постом. Старые
-    // прайсы остаются в истории, поэтому для ответа используем только самый
-    // новый ценовой пост этой категории.
-    if (pricedPosts.length) return JSON.stringify({ ...data, products: matchingProducts, pendingPosts: pricedPosts.slice(0, 1) });
+    // Канал может публиковать прайс категории несколькими постами (например
+    // MacBook Air и MacBook Pro отдельно) — один самый новый пост терял
+    // половину линейки. Берём несколько свежих, модель сама возьмёт
+    // актуальную цену: старые прайсы уже отсечены фильтром выше.
+    if (pricedPosts.length) return JSON.stringify({ ...data, pendingPosts: pricedPosts.slice(0, 5) });
     return JSON.stringify({
       ...data,
-      products: matchingProducts,
       pendingPosts: matchingPendingPosts.slice(0, 30),
     });
   } catch {
@@ -558,7 +560,7 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
 Всегда называй цену в сомах (priceKgs) по умолчанию — независимо от стоимости товара, языка сообщения и исходной валюты публикации.
 Доллары (priceUsd) называй только если клиент прямо попросил USD/доллары/$. Рубли (priceRub) называй только если клиент прямо сообщил, что он находится в России, живёт в России или доставка нужна в Россию. Одной просьбы «в рублях?» без сообщения о России недостаточно: отвечай в сомах. Для клиента, который прямо сообщил, что он из Казахстана, называй цену в тенге (priceKzt). Не определяй страну по языку сообщения. Не называй несколько валют сразу, если клиент не просит сравнение.
-Каталог ниже уже отфильтрован по категории запроса клиента — это единственный источник цены. В нём price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле.
+Каталог ниже включает ВЕСЬ актуальный ассортимент магазина (products — все категории сразу; pendingPosts — свежие ещё не разобранные посты по теме запроса) — это единственный источник цены. Прежде чем сказать «такого товара нет», проверь весь список products целиком: товар может называться по-русски, стоять в другой категории или в конце списка. В нём price/currency — исходная цена канала, а priceKgs, priceUsd, priceRub и priceKzt — её пересчёт по курсу магазина; для ответа в нужной валюте используй соответствующее готовое поле.
 Клиенту никогда не говори «подборка» или «каталог» — это внутренние термины. Если клиент называет модельную линейку без конкретной модификации («iPhone 17», «MacBook», «Apple Watch») — перечисли все модификации этой линейки, которые есть ниже, а не только одну случайную. Если запрошенной модели буквально нет — не проси у клиента бюджет вместо ответа: сам подбери 2–3 ближайшие реальные модели той же линейки и категории (например вместо iPhone 13 — iPhone 14 или iPhone 15, если они есть) и назови их с ценами.
 Если клиент прямо просит показать все модели категории целиком («покажи все айфоны», «весь ассортимент MacBook», «какие вообще есть модели») — лимит 2–3 не действует: перечисли КАЖДУЮ модель и конфигурацию этой категории, которая есть в каталоге ниже, а не только последнее поколение и не только «самые популярные». Для длинного списка группируй по модели и объёму памяти, чтобы легко читалось. Данные в каталоге ниже уже включают все категории и поколения товара — никогда не отказывайся показать список и не говори, что не можешь его вывести, если категория есть в каталоге.
 Если клиент коротко уточняет валюту («в сомах?», «в $?», «а в тенге?»), товар уже указан в контексте диалога и его надо взять из подборки. Никогда не отвечай, что точной суммы в другой валюте нет: готовые priceKgs, priceUsd, priceRub и priceKzt уже являются подтверждённым пересчётом цены канала.
@@ -1879,12 +1881,11 @@ prompt_patch — не больше двух коротких предложен�
       return catalog;
     }
     if (!data || typeof data !== "object") return catalog;
-    // Лимит именно здесь ограничивал реальную линейку: только у iPhone 17
-    // (все модификации) уже 33 позиции с разными SIM-конфигурациями и
-    // цветами — 30 обрезало часть вариантов молча. 60 покрывает текущий
-    // каталог с запасом.
+    // Теперь в подборку идёт весь структурированный каталог целиком (см.
+    // narrowCatalogForRequest) — лимит только страховочный, чтобы промпт не
+    // взорвался при аномальном росте базы.
     const products = Array.isArray(data.products)
-      ? data.products.slice(0, 60).map((item) => {
+      ? data.products.slice(0, 400).map((item) => {
         const price = Number(item?.price);
         const currency = String(item?.currency || "").toUpperCase();
         return {

@@ -192,7 +192,16 @@ class DeepSeekClient {
     }
 
     const data = await res.json().catch(() => null);
-    const content = data?.choices?.[0]?.message?.content;
+    const choice = data?.choices?.[0];
+    // Обрезанный по лимиту ответ — это всегда битый JSON. Повтор с тем же
+    // лимитом бесполезен: нужна честная ошибка, а не «невалидный JSON».
+    if (choice?.finish_reason === "length") {
+      throw new DeepSeekError("Ответ обрезан по max_tokens — увеличьте лимит для этой задачи", {
+        code: "truncated",
+        retriable: false,
+      });
+    }
+    const content = choice?.message?.content;
     const parsed = parseJsonStrict(content);
     onUsage?.(data?.usage || {}, data?.model || this.model);
     logger.debug("deepseek.ok", { model: this.model, usage: data?.usage });

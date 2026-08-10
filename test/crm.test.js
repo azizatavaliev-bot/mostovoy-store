@@ -159,7 +159,9 @@ test("поиск для товароведа оставляет посты то�
     ],
   });
   const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "Посоветуй айфон до 120000 сом"));
-  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3]);
+  // Прайс категории может выходить несколькими постами (Air и Pro отдельно) —
+  // оставляем несколько свежих, новее — раньше. Dyson (чужая категория) отсечён.
+  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [3, 1]);
 });
 
 test("старый raw-прайс не перебивает более новый разобранный пост канала", () => {
@@ -177,7 +179,7 @@ test("старый raw-прайс не перебивает более новы�
   assert.deepEqual(narrowed.pendingPosts, []);
 });
 
-test("новая категория клиента не перехватывается старым iPhone из истории", () => {
+test("структурированные товары не фильтруются — модель всегда видит весь каталог", () => {
   const catalog = JSON.stringify({
     source: "telegram_channel",
     products: [
@@ -189,17 +191,26 @@ test("новая категория клиента не перехватывае
     ],
     pendingPosts: [],
   });
+  // Раньше фильтр по regex-семейству терял реальные товары («нет в наличии»
+  // про то, что есть) — теперь products возвращаются целиком при любом запросе.
   const whoop = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Сколько стоит iPhone 17?\nКОНСУЛЬТАНТ: 87 000 сом\nКЛИЕНТ: А Whoop есть?"));
-  assert.deepEqual(whoop.products.map((product) => product.name), ["Whoop 5.0 Peak"]);
+  assert.equal(whoop.products.length, 5);
 
-  const razor = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: А бритва есть?"));
-  assert.deepEqual(razor.products.map((product) => product.name), ["Philips OneBlade"]);
+  const macbook = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи все макбуки"));
+  assert.equal(macbook.products.length, 5);
+});
 
-  const glasses = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: Ray-Ban есть?"));
-  assert.deepEqual(glasses.products.map((product) => product.name), ["Meta Ray-Ban Wayfarer Gen 2"]);
-
-  const dyson = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: Какие Dyson есть?"));
-  assert.deepEqual(dyson.products.map((product) => product.name), ["Dyson Airwrap HS09"]);
+test("категорию сырых постов определяет последняя реплика клиента, а не iPhone из истории", () => {
+  const catalog = JSON.stringify({
+    source: "telegram_channel",
+    products: [],
+    pendingPosts: [
+      { telegramMessageId: 1, text: "iPhone 17 256 GB — 840$" },
+      { telegramMessageId: 2, text: "Whoop 5.0 Peak — 255$" },
+    ],
+  });
+  const narrowed = JSON.parse(narrowCatalogForRequest(catalog, "КЛИЕНТ: Покажи iPhone\nКЛИЕНТ: А Whoop есть?"));
+  assert.deepEqual(narrowed.pendingPosts.map((post) => post.telegramMessageId), [2]);
 });
 
 test("короткое уточнение валюты сохраняет модель из контекста диалога", () => {

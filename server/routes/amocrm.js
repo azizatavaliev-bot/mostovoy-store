@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const express = require("express");
 const config = require("../config");
 const logger = require("../logger");
-const { parseAmoWebhook } = require("../services/amocrm");
+const { parseAmoWebhooks } = require("../services/amocrm");
 
 function safeEqual(a, b) {
   const x = Buffer.from(String(a || ""));
@@ -23,12 +23,18 @@ function createAmoCrmRouter({ crm }) {
           return res.status(401).json({ ok: false, error: "invalid_secret" });
         }
       }
-      const incoming = parseAmoWebhook(req.body || {});
-      if (!incoming.text || !incoming.chatId) {
+      const messages = parseAmoWebhooks(req.body || {}).filter((message) => message.text && message.chatId);
+      if (!messages.length) {
         return res.json({ ok: true, ignored: "not_a_message" });
       }
       res.json({ ok: true, queued: true });
-      Promise.resolve(crm.receiveAmo(incoming, req.body)).catch((error) =>
+      const ordered = [
+        ...messages.filter((message) => message.direction === "outgoing"),
+        ...messages.filter((message) => message.direction !== "outgoing"),
+      ];
+      Promise.resolve().then(async () => {
+        for (const message of ordered) await crm.receiveAmo(message, req.body);
+      }).catch((error) =>
         logger.error("amocrm.crm_failed", { error: error.message })
       );
     }

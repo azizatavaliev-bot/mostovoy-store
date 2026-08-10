@@ -6,6 +6,7 @@ const {
   buildTelegramCatalogForAssistant,
   narrowCatalogForRequest,
   catalogRequestFromHistory,
+  relevantProductsForContext,
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   stageActionForInbound,
@@ -13,7 +14,7 @@ const {
   telegramHtml,
   FIRST_CONTACT_CATALOG_TEXT,
 } = require("../server/services/crm");
-const { parseAmoWebhook } = require("../server/services/amocrm");
+const { parseAmoWebhook, parseAmoWebhooks } = require("../server/services/amocrm");
 const config = require("../server/config");
 
 test("Markdown-оформление ответа преобразуется в безопасный Telegram HTML", () => {
@@ -245,7 +246,7 @@ test("отказ назвать цену из подборки заменяет�
     request: "А в сомах?",
     selection,
   });
-  assert.match(kgs, /108\s100 с/);
+  assert.match(kgs, /108\s063 с/);
   assert.match(kgs, /Могу сразу оформить заказ/);
   assert.doesNotMatch(kgs, /не смогу|цены.*нет/i);
 
@@ -254,7 +255,7 @@ test("отказ назвать цену из подборки заменяет�
     request: "В $?",
     selection,
   });
-  assert.match(usd, /1\s240 \$/);
+  assert.match(usd, /1\s235 \$/);
   assert.doesNotMatch(usd, /цены.*нет/i);
 
   const wrongKgs = enforceCatalogPriceReply({
@@ -262,7 +263,7 @@ test("отказ назвать цену из подборки заменяет�
     request: "А в сомах?",
     selection,
   });
-  assert.match(wrongKgs, /108\s100 с/);
+  assert.match(wrongKgs, /108\s063 с/);
   assert.doesNotMatch(wrongKgs, /94\s800/);
 
   const rubWithoutRussia = enforceCatalogPriceReply({
@@ -270,7 +271,7 @@ test("отказ назвать цену из подборки заменяет�
     request: "А в рублях?",
     selection,
   });
-  assert.match(rubWithoutRussia, /108\s100 с/);
+  assert.match(rubWithoutRussia, /108\s063 с/);
   assert.doesNotMatch(rubWithoutRussia, /₽/);
 
   const rubForRussia = enforceCatalogPriceReply({
@@ -281,6 +282,27 @@ test("отказ назвать цену из подборки заменяет�
   });
   assert.match(rubForRussia, /97\s600 ₽/);
   assert.doesNotMatch(rubForRussia, /108\s100 с/);
+});
+
+test("обычный Fenix 8 не получает цену Fenix 8 Pro из соседней карточки", () => {
+  const products = [
+    { name: "Garmin Fenix 8 Pro 47mm AMOLED Sapphire", price: 950, currency: "USD", priceKgs: 83600, available: true },
+    { name: "Garmin Fenix 8 47mm AMOLED Sapphire Silver Orange Band", price: 860, currency: "USD", priceKgs: 75680, available: true },
+  ];
+  const context = "КЛИЕНТ: А есть обычный?\nКЛИЕНТ: А есть просто 8\nКОНСУЛЬТАНТ: Обычный Garmin Fenix 8, не Pro, 47 мм Sapphire AMOLED стоит 83 600 сом.\nКЛИЕНТ: Так стоит?";
+  assert.deepEqual(
+    relevantProductsForContext(products, "Так стоит?", context).map((product) => product.price),
+    [860],
+  );
+
+  const corrected = enforceCatalogPriceReply({
+    reply: "Да, обычный Garmin Fenix 8 47 мм стоит 83 600 сом.",
+    request: "Так стоит?",
+    context,
+    selection: `АКТУАЛЬНЫЙ КАТАЛОГ:\n${JSON.stringify({ products })}`,
+  });
+  assert.match(corrected, /75\s680 с/);
+  assert.doesNotMatch(corrected, /83\s600/);
 });
 
 test("галлюцинация «в наличии нет» заменяется реальными товарами из каталога", () => {
@@ -305,7 +327,7 @@ test("галлюцинация «в наличии нет» заменяется
   });
   assert.match(fixed, /Есть в наличии/);
   assert.match(fixed, /iPhone 17/);
-  assert.match(fixed, /76\s600 с/);
+  assert.match(fixed, /76\s560 с/);
   assert.doesNotMatch(fixed, /в наличии нет/i);
 
   const untouched = enforceCatalogAvailabilityReply({
@@ -409,6 +431,61 @@ test("amoCRM JSON webhook разбирает Instagram-сообщение", () =
   assert.equal(parsed.text, "Хочу заказать");
   assert.equal(parsed.chatId, "ig-chat-1");
   assert.equal(parsed.source, "instagram");
+});
+
+test("amoCRM webhook разбирает все сообщения пачки, а не только индекс 0", () => {
+  const parsed = parseAmoWebhooks({
+    "message[add][0][text]": "Первое",
+    "message[add][0][type]": "incoming",
+    "message[add][0][chat_id]": "chat-1",
+    "message[add][0][id]": "msg-1",
+    "message[add][1][text]": "Ответ менеджера",
+    "message[add][1][type]": "outgoing",
+    "message[add][1][chat_id]": "chat-1",
+    "message[add][1][id]": "msg-2",
+  });
+  assert.deepEqual(parsed.map((message) => [message.messageId, message.direction, message.text]), [
+    ["msg-1", "incoming", "Первое"],
+    ["msg-2", "outgoing", "Ответ менеджера"],
+  ]);
+});
+
+test("старая история amoCRM видна, а прошлый ответ менеджера останавливает AI", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  let generated = false;
+  const crm = new CrmService({
+    db,
+    ai: { enabled: true, chatText: async () => { generated = true; return "Ответ бота"; } },
+    amocrm: {
+      enabled: true,
+      getChatHistory: async () => [
+        { messageId: "old-client", direction: "incoming", text: "Сколько стоит?", createdAt: "2026-08-09T10:00:00.000Z" },
+        { messageId: "old-manager", direction: "outgoing", text: "Ответил менеджер", createdAt: "2026-08-09T10:01:00.000Z" },
+        { messageId: "new-client", direction: "incoming", text: "Спасибо", createdAt: "2026-08-10T10:00:00.000Z" },
+      ],
+    },
+    autoReplyDebounceMs: 0,
+  });
+
+  const received = await crm.receiveAmo({
+    text: "Спасибо",
+    direction: "incoming",
+    chatId: "history-chat",
+    messageId: "new-client",
+    leadId: "901",
+    source: "whatsapp",
+    createdAt: "2026-08-10T10:00:00.000Z",
+  });
+  const detail = await crm.getConversationWithRemoteHistory(received.conversationId);
+
+  assert.equal(generated, false);
+  assert.equal(detail.conversation.aiEnabled, false);
+  assert.deepEqual(detail.messages.map((message) => [message.sender, message.text]), [
+    ["customer", "Сколько стоит?"],
+    ["manager", "Ответил менеджер"],
+    ["customer", "Спасибо"],
+  ]);
 });
 
 test("Instagram из amoCRM сохраняется отдельным каналом и зеркалируется в Azis CRM", async (t) => {

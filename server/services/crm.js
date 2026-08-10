@@ -220,7 +220,9 @@ const TRADE_IN_OPTIONS = [
 ];
 
 function roundAssistantPrice(amount, currency) {
-  const step = currency === "USD" ? 10 : 100;
+  // USD и сомы из каталога показываем точно: 860 $ × 88 = 75 680 сом,
+  // а не 75 700. Крупные RUB/KZT оставляем округлёнными до сотни.
+  const step = currency === "RUB" || currency === "KZT" ? 100 : 1;
   return Math.ceil(Number(amount) / step) * step;
 }
 
@@ -275,6 +277,47 @@ function productsFromSelection(selection) {
   } catch {
     return [];
   }
+}
+
+function relevantProductsForContext(products, request, context = request) {
+  if (!Array.isArray(products) || products.length <= 1) return products || [];
+  const normalize = (value) => String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/(\d+)\s*мм/gu, "$1mm")
+    .replace(/[^a-zа-я0-9]+/gu, " ")
+    .trim();
+  const recent = normalize(String(context || request || "").slice(-1600));
+  const latest = normalize(String(request || ""));
+  let candidates = [...products];
+
+  // «обычный / просто / не Pro» — это явное отрицание Pro, а не повод
+  // выбрать первый Pro из каталога. Обратное правило действует для явного Pro.
+  const nonPro = /(?:обычн|не\s+(?:pro|про)\b|просто\s+(?:garmin\s+)?(?:fenix\s+)?\d)/u.test(`${recent} ${latest}`);
+  const explicitPro = !nonPro && /(?:\bpro\b|\bпро\b)/u.test(latest || recent.slice(-500));
+  if (nonPro) {
+    const filtered = candidates.filter((product) => !/(?:\bpro\b|\bпро\b)/u.test(normalize(product.name)));
+    if (filtered.length) candidates = filtered;
+  } else if (explicitPro) {
+    const filtered = candidates.filter((product) => /(?:\bpro\b|\bпро\b)/u.test(normalize(product.name)));
+    if (filtered.length) candidates = filtered;
+  }
+
+  const sizes = [...recent.matchAll(/\b(\d{2})mm\b/gu)];
+  const lastSize = sizes.at(-1)?.[1];
+  if (lastSize) {
+    const filtered = candidates.filter((product) => normalize(product.name).includes(`${lastSize}mm`));
+    if (filtered.length) candidates = filtered;
+  }
+
+  const stop = new Set(["garmin", "apple", "samsung", "модель", "стоит", "цена", "есть", "обычный", "просто", "про", "pro"]);
+  const score = (product) => normalize(product.name).split(" ").reduce((total, token) => {
+    if (stop.has(token) || token.length < 2) return total;
+    return total + (recent.includes(token) ? (/[0-9]/.test(token) ? 3 : 1) : 0);
+  }, 0);
+  const scored = candidates.map((product) => ({ product, score: score(product) }));
+  const best = Math.max(...scored.map((item) => item.score));
+  return best >= 2 ? scored.filter((item) => item.score === best).map((item) => item.product) : candidates;
 }
 
 function requestedReplyCurrency(request, context = request) {
@@ -334,7 +377,7 @@ function classifyImportantEscalation(text) {
 }
 
 function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
-  const products = productsFromSelection(selection);
+  const products = relevantProductsForContext(productsFromSelection(selection), request, context);
   if (!products.length) return reply;
 
   const text = String(request || "");
@@ -965,7 +1008,7 @@ class CrmService {
   listConversations() {
     return this.db.prepare(
       `SELECT c.*,
-        (SELECT text FROM crm_messages m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message
+        (SELECT text FROM crm_messages m WHERE m.conversation_id = c.id ORDER BY datetime(m.created_at) DESC, m.id DESC LIMIT 1) AS last_message
        FROM crm_conversations c ORDER BY c.last_message_at DESC, c.id DESC`
     ).all().map(toConversation);
   }
@@ -975,7 +1018,7 @@ class CrmService {
     if (!row) return null;
     if (markRead) this.db.prepare("UPDATE crm_conversations SET unread_count = 0 WHERE id = ?").run(id);
     const messages = this.db.prepare(
-      "SELECT id, direction, sender, text, status, created_at FROM crm_messages WHERE conversation_id = ? ORDER BY id ASC"
+      "SELECT id, direction, sender, text, status, created_at FROM crm_messages WHERE conversation_id = ? ORDER BY datetime(created_at) ASC, id ASC"
     ).all(id).map((m) => ({
       id: Number(m.id),
       direction: m.direction,
@@ -985,6 +1028,55 @@ class CrmService {
       createdAt: m.created_at,
     }));
     return { conversation: toConversation({ ...row, unread_count: markRead ? 0 : row.unread_count }), messages };
+  }
+
+  async getConversationWithRemoteHistory(id, options = {}) {
+    const row = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(id);
+    if (!row) return null;
+    if (row.source !== "telegram") {
+      try {
+        await this._syncAmoHistory(row);
+      } catch (error) {
+        this._logEvent(row.id, "warn", "amocrm", "amocrm.history_failed", error.message);
+      }
+    }
+    return this.getConversation(id, options);
+  }
+
+  async _syncAmoHistory(conversation) {
+    if (!this.amocrm?.getChatHistory || !conversation?.external_chat_id) return;
+    const remote = await this.amocrm.getChatHistory(conversation.external_chat_id, 200);
+    const local = this.db.prepare(
+      "SELECT external_message_id, direction, sender, text, created_at FROM crm_messages WHERE conversation_id = ? ORDER BY id"
+    ).all(conversation.id);
+    const ids = new Set(local.map((message) => String(message.external_message_id || "")));
+    let managerFound = false;
+    for (const message of remote) {
+      if (!message.messageId || ids.has(message.messageId)) continue;
+      if (message.direction === "outgoing") {
+        const timestamp = new Date(message.createdAt).getTime();
+        const botEcho = local.some((saved) =>
+          saved.sender === "assistant"
+          && saved.text === message.text
+          && Math.abs(new Date(saved.created_at).getTime() - timestamp) <= 15 * 60_000
+        );
+        if (botEcho) continue;
+        managerFound = true;
+      }
+      this._storeMessage(conversation.id, {
+        externalMessageId: message.messageId,
+        direction: message.direction,
+        sender: message.direction === "incoming" ? "customer" : "manager",
+        text: message.text,
+        createdAt: message.createdAt,
+      });
+      ids.add(message.messageId);
+    }
+    if (managerFound) {
+      this.db.prepare(
+        "UPDATE crm_conversations SET ai_enabled = 0, updated_at = datetime('now') WHERE id = ?"
+      ).run(conversation.id);
+    }
   }
 
   updateConversation(id, patch) {
@@ -1711,7 +1803,7 @@ prompt_patch — не больше двух коротких предложен�
   }
 
   async receiveAmo(incoming, raw) {
-    if (!incoming.text || !incoming.chatId || incoming.direction !== "incoming") return { ignored: true };
+    if (!incoming.text || !incoming.chatId) return { ignored: true };
     const source = /instagram/i.test(incoming.source)
       ? "instagram"
       : /whatsapp/i.test(incoming.source)
@@ -1720,15 +1812,38 @@ prompt_patch — не больше двух коротких предложен�
     const conversation = this._upsertConversation({
       externalKey: `amo:${incoming.chatId}`,
       source,
-      inbound: true,
+      inbound: incoming.direction === "incoming",
       chatId: incoming.chatId,
       leadId: incoming.leadId,
       contactId: incoming.contactId,
-      name: incoming.customerName,
+      name: incoming.direction === "incoming" ? incoming.customerName : null,
       username: incoming.customerUsername,
       phone: incoming.customerPhone,
       createdAt: incoming.createdAt,
     });
+    if (incoming.direction === "outgoing") {
+      // Эхо недавней отправки бота/менеджера уже есть локально. Любое другое
+      // исходящее означает, что чат взял живой менеджер — AI выключается.
+      const echo = this.db.prepare(
+        `SELECT 1 FROM crm_messages
+          WHERE conversation_id = ? AND direction = 'outgoing' AND text = ?
+            AND created_at >= datetime(?, '-15 minutes')
+          LIMIT 1`
+      ).get(conversation.id, incoming.text, incoming.createdAt);
+      if (echo) return { stored: false, conversationId: Number(conversation.id), echo: true };
+      const inserted = this._storeMessage(conversation.id, {
+        externalMessageId: incoming.messageId,
+        direction: "outgoing",
+        sender: "manager",
+        text: incoming.text,
+        raw,
+        createdAt: incoming.createdAt,
+      });
+      this.db.prepare(
+        "UPDATE crm_conversations SET ai_enabled = 0, updated_at = datetime('now') WHERE id = ?"
+      ).run(conversation.id);
+      return { stored: Boolean(inserted), conversationId: Number(conversation.id), manager: true };
+    }
     this._cancelNudgeFollowUps(conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: incoming.messageId,
@@ -1754,7 +1869,15 @@ prompt_patch — не больше двух коротких предложен�
       if (stageAction) this._publishStage(conversation, stageAction);
       if (classifyImportantEscalation(incoming.text)) this._publishImportantNotify(conversation, incoming.text);
     }
-    if (inserted && conversation.ai_enabled) this._debouncedAutoReply(conversation.id, inserted);
+    if (inserted) {
+      try {
+        await this._syncAmoHistory(conversation);
+      } catch (error) {
+        this._logEvent(conversation.id, "warn", "amocrm", "amocrm.history_failed", error.message);
+      }
+      const current = this.db.prepare("SELECT ai_enabled FROM crm_conversations WHERE id = ?").get(conversation.id);
+      if (current?.ai_enabled) this._debouncedAutoReply(conversation.id, inserted);
+    }
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }
 
@@ -2074,6 +2197,7 @@ module.exports = {
   narrowCatalogForRequest,
   formatAssistantPrice,
   catalogRequestFromHistory,
+  relevantProductsForContext,
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   stageActionForInbound,

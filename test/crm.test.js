@@ -571,10 +571,10 @@ test("голосовое amoCRM расшифровывается и сохран
   assert.match(crm.getConversation(crm.listConversations()[0].id).messages[0].text, /клиент спрашивает цену iPhone 17/);
 });
 
-test("тестовый режим amoCRM запускает автоответ только для разрешённого номера", async (t) => {
+test("тестовый режим amoCRM запускает автоответ только для разрешённых номеров", async (t) => {
   const db = createConnection(":memory:");
   const previousPhone = config.amocrm.testPhone;
-  config.amocrm.testPhone = "+996 500 896 899";
+  config.amocrm.testPhone = "+996 500 896 899, +996 550 323 710";
   t.after(() => {
     config.amocrm.testPhone = previousPhone;
     db.close();
@@ -599,9 +599,21 @@ test("тестовый режим amoCRM запускает автоответ �
     customerPhone: "996500896899",
     source: "whatsapp",
   });
+  await crm.receiveAmo({
+    text: "Здравствуйте",
+    direction: "incoming",
+    chatId: "second-test-phone",
+    messageId: "message-3",
+    customerPhone: "+996 (550) 323-710",
+    source: "whatsapp",
+  });
 
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0], crm.listConversations().find((item) => item.externalKey === "amo:test-phone").id);
+  assert.equal(scheduled.length, 2);
+  const scheduledKeys = crm.listConversations()
+    .filter((item) => scheduled.includes(item.id))
+    .map((item) => item.externalKey)
+    .sort();
+  assert.deepEqual(scheduledKeys, ["amo:second-test-phone", "amo:test-phone"]);
 });
 
 test("ответ из Azis CRM отправляется в исходный amoCRM-чат", async (t) => {

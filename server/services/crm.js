@@ -1928,11 +1928,15 @@ prompt_patch — не больше двух коротких предложен�
         this._logEvent(conversation.id, "warn", "amocrm", "amocrm.history_failed", error.message);
       }
       const current = this.db.prepare("SELECT ai_enabled FROM crm_conversations WHERE id = ?").get(conversation.id);
-      const testPhone = normalizePhone(config.amocrm.testPhone);
+      const testPhones = String(config.amocrm.testPhone || "")
+        .split(",")
+        .map(normalizePhone)
+        .filter(Boolean);
       const customerPhone = normalizePhone(conversation.customer_phone);
-      if (current?.ai_enabled && (!testPhone || customerPhone === testPhone)) {
+      const testPhoneAllowed = !testPhones.length || testPhones.includes(customerPhone);
+      if (current?.ai_enabled && testPhoneAllowed) {
         this._debouncedAutoReply(conversation.id, inserted);
-      } else if (testPhone && customerPhone !== testPhone) {
+      } else if (!testPhoneAllowed) {
         this._logEvent(conversation.id, "info", "delivery", "reply.test_phone_skipped", "Автоответ отключён для номера вне теста");
       }
     }

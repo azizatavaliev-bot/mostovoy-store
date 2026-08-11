@@ -374,6 +374,29 @@ test("личное сообщение Telegram создаёт CRM-диалог �
   assert.equal(crm.getConversation(conversations[0].id).messages.length, 1);
 });
 
+test("одинаковое сообщение спустя часы не считается дублем", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const conversationId = db.prepare(
+    `INSERT INTO crm_conversations
+      (external_key, source, external_chat_id, customer_name)
+     VALUES ('telegram:duplicate-window', 'telegram', 'duplicate-window', 'Клиент')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    `INSERT INTO crm_messages
+      (conversation_id, external_message_id, direction, sender, text, created_at)
+     VALUES (?, 'old-start', 'incoming', 'customer', '/start', ?)`
+  ).run(conversationId, new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString());
+  const currentId = db.prepare(
+    `INSERT INTO crm_messages
+      (conversation_id, external_message_id, direction, sender, text, created_at)
+     VALUES (?, 'new-start', 'incoming', 'customer', '/start', ?)`
+  ).run(conversationId, new Date().toISOString()).lastInsertRowid;
+
+  assert.equal(crm._isDuplicateInbound(conversationId, currentId, "/start"), false);
+});
+
 test("очистка истории лида удаляет сообщения, но сохраняет сам диалог", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

@@ -2166,7 +2166,7 @@ prompt_patch — не больше двух коротких предложен�
       `SELECT 1 FROM crm_messages
         WHERE conversation_id = ? AND direction = 'incoming' AND id != ?
           AND lower(trim(text)) = ?
-          AND created_at >= datetime('now', '-40 seconds')
+          AND datetime(created_at) >= datetime('now', '-40 seconds')
         LIMIT 1`
     ).get(conversationId, messageId, value));
   }

@@ -13,6 +13,7 @@ const {
   classifyImportantEscalation,
   telegramHtml,
   FIRST_CONTACT_CATALOG_TEXT,
+  classifySalesTemplate,
 } = require("../server/services/crm");
 const { parseAmoWebhook, parseAmoWebhooks } = require("../server/services/amocrm");
 const config = require("../server/config");
@@ -41,6 +42,16 @@ test("эскалация человеку распознаётся по прав
   assert.equal(classifyImportantEscalation("Вы мошенники, развели меня на деньги"), true);
   assert.equal(classifyImportantEscalation("Сколько стоит iPhone 17?"), false);
   assert.equal(classifyImportantEscalation("Дорого, есть скидка?"), false);
+});
+
+test("шаблоны магазина распознают основные сценарии на русском и кыргызском", () => {
+  assert.equal(classifySalesTemplate("Где вы находитесь?").kind, "location");
+  assert.match(classifySalesTemplate("У вас есть доставка?").text, /1–2 дня/);
+  assert.match(classifySalesTemplate("Какая гарантия?").text, /1 год/);
+  assert.equal(classifySalesTemplate("Можно заказать iPhone 17?").kind, "order");
+  assert.match(classifySalesTemplate("Жеткирүү барбы?").text, /Бишкек боюнча/);
+  assert.match(classifySalesTemplate("Кепилдик барбы?").text, /1 жылдык/);
+  assert.equal(classifySalesTemplate("Сколько стоит Garmin Fenix 8?"), null);
 });
 
 test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
@@ -1223,6 +1234,7 @@ test("исходящее менеджера диалог создаёт, а сд
 
   assert.equal(crm.listConversations().length, 1);
   assert.equal(crmDeals.calls.length, 0);
+  assert.equal(crm.listConversations()[0].aiEnabled, false);
 });
 
 test("недоступная CRM не ломает приём сообщения", async (t) => {
@@ -1443,6 +1455,60 @@ test("после обычного автоответа ставится цепо
     "SELECT kind FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL ORDER BY kind"
   ).all(conversation.id);
   assert.deepEqual(rows.map((row) => row.kind).sort(), ["day", "hours", "last"]);
+});
+
+test("ответ ИИ не отправляется, если менеджер забрал диалог во время генерации", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let finishDraft;
+  let generationStarted;
+  const started = new Promise((resolve) => { generationStarted = resolve; });
+  const sent = [];
+  const crm = new CrmService({
+    db,
+    deepseek: {
+      enabled: true,
+      chatText: async () => {
+        generationStarted();
+        return new Promise((resolve) => { finishDraft = resolve; });
+      },
+    },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sent.push(JSON.parse(init.body).text);
+      return { ok: true, status: 200, text: async () => "" };
+    },
+  });
+  crm.saveSettings({ ...crm.getSettings(), approvalEnabled: false, supervisorEnabled: false });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1608",
+    source: "telegram",
+    inbound: true,
+    chatId: "1608",
+    name: "Клиент",
+  });
+  const incomingMessageId = crm._storeMessage(conversation.id, {
+    externalMessageId: "customer-1608",
+    direction: "incoming",
+    sender: "customer",
+    text: "Помогите подобрать часы для спорта",
+  });
+
+  const autoReply = crm._autoReply(conversation.id, incomingMessageId);
+  await started;
+  await crm.sendManual(conversation.id, "Здравствуйте, я менеджер. Сейчас помогу.");
+  finishDraft("Ответ бота, который уже нельзя отправлять");
+  await autoReply;
+
+  assert.equal(crm.getConversation(conversation.id).conversation.aiEnabled, false);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /я менеджер/);
+  assert.equal(crm.getConversation(conversation.id).messages.some((message) => message.sender === "assistant"), false);
 });
 
 test("клиент, сказавший «беру» и пропавший, получает одно напоминание вместо обычной цепочки", async (t) => {

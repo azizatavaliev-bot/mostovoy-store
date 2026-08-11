@@ -224,6 +224,54 @@ const REACTIVE_TEMPLATES = [
   },
 ];
 
+const MOSTOVOY_SALES_TEMPLATES = {
+  location: {
+    ru: "Мы находимся в Бишкеке, в Свердловском районе. Хотите приехать в шоу-рум или оформить доставку?",
+    ky: "Биз Бишкектин Свердлов районунда жайгашканбыз. Шоурумга келесизби же жеткирүү керекпи?",
+  },
+  delivery: {
+    ru: "По Бишкеку доставка обычно занимает 1–2 дня, также доставляем по Кыргызстану. Какой товар и в какой город нужно доставить?",
+    ky: "Бишкек боюнча жеткирүү адатта 1–2 күнгө созулат, Кыргызстандын башка аймактарына да жеткиребиз. Кайсы товарды кайсы шаарга жеткирүү керек?",
+  },
+  warranty: {
+    ru: "На технику действует официальная гарантия 1 год. Какую модель рассматриваете?",
+    ky: "Техникага 1 жылдык расмий кепилдик берилет. Кайсы моделди карап жатасыз?",
+  },
+  installment: {
+    ru: "Да, доступна рассрочка на 3, 6 или 12 месяцев. Назовите модель и срок — рассчитаю ежемесячный платёж.",
+    ky: "Ооба, 3, 6 же 12 айга бөлүп төлөө бар. Моделди жана мөөнөттү жазыңыз — айлык төлөмдү эсептеп берем.",
+  },
+  trade_in: {
+    ru: "Да, у нас есть Trade-in: оценим ваше устройство и вычтем его стоимость из цены нового. Напишите модель и состояние устройства.",
+    ky: "Ооба, Trade-in бар: түзмөгүңүздү баалап, анын баасын жаңы товардын наркынан алып салабыз. Моделин жана абалын жазыңыз.",
+  },
+  trust: {
+    ru: "Мы — магазин техники MOSTOVOY SHOP в Бишкеке. Можно приехать в шоу-рум, посмотреть товар лично и получить официальную гарантию на 1 год. Какую модель хотите проверить?",
+    ky: "Биз Бишкектеги MOSTOVOY SHOP техника дүкөнүбүз. Шоурумга келип, товарды өзүңүз көрүп, 1 жылдык расмий кепилдик ала аласыз. Кайсы моделди текшергиңиз келет?",
+  },
+  order: {
+    ru: "Оформим 😊 Пришлите имя, номер телефона и выбранную модель с памятью и цветом. Для доставки также укажите город и адрес.",
+    ky: "Оформдойбуз 😊 Атыңызды, телефон номериңизди жана тандалган моделдин эс тутуму менен түсүн жазыңыз. Жеткирүү үчүн шаарды жана даректи да көрсөтүңүз.",
+  },
+};
+
+const KYRGYZ_SALES_MARKERS = /баа|канча|кайда|дарек|жеткир|кепилдик|бөлүп\s+төл|алмаштыр|сатып|алсам|керекпи|барбы|шаар/iu;
+
+function classifySalesTemplate(text) {
+  const value = String(text || "").trim();
+  const normalized = value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const language = KYRGYZ_SALES_MARKERS.test(normalized) ? "ky" : "ru";
+  let kind = null;
+  if (/оформ(?:ить|ляйте)|хочу\s+(?:заказать|купить)|можно\s+(?:заказать|оформить)|(?:^|\s)беру(?:\s|$)/iu.test(normalized)) kind = "order";
+  else if (/где\s+(?:вы|находитесь)|ваш\s+адрес|как\s+(?:вас|к\s+вам)\s+найти|кайда\s+жайгаш|дареги[ңн]ер/iu.test(normalized)) kind = "location";
+  else if (/гаранти|кепилдик/iu.test(normalized)) kind = "warranty";
+  else if (/мошенник|не\s+обман|можно\s+(?:вам\s+)?доверять|ишенсе\s+болобу|алдамч/iu.test(normalized)) kind = "trust";
+  else if (/^(?:(?:у\s+вас|сиздерде)\s+)?(?:есть|барбы)?\s*(?:рассроч|бөлүп\s+төл)/iu.test(normalized)) kind = "installment";
+  else if (/^(?:(?:у\s+вас|сиздерде)\s+)?(?:есть|барбы)?\s*(?:trade.?in|трейд.?ин|алмаштыр)/iu.test(normalized)) kind = "trade_in";
+  else if (/доставк|жеткир/iu.test(normalized) && !/(?:росси|казахстан|узбекистан|москв|алмат|астан|ташкент)/iu.test(normalized)) kind = "delivery";
+  return kind ? { kind, text: MOSTOVOY_SALES_TEMPLATES[kind][language] } : null;
+}
+
 function classifyReactiveTemplate(text) {
   const value = String(text || "");
   const match = REACTIVE_TEMPLATES.find((item) => item.pattern.test(value));
@@ -1950,12 +1998,18 @@ prompt_patch — не больше двух коротких предложен�
     // Явное возражение («я подумаю», «дорого») — готовый ответ вместо
     // полноценной генерации: быстрее, дешевле и звучит последовательно.
     const latestCustomerMessage = [...detail.messages].reverse().find((m) => m.direction === "incoming")?.text || "";
+    const salesTemplate = classifySalesTemplate(latestCustomerMessage);
+    if (salesTemplate) {
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
+      await this._send(conversationId, salesTemplate.text, "assistant");
+      this._logEvent(conversationId, "info", "delivery", `reply.sent_template.${salesTemplate.kind}`, "Отправлен готовый сценарий магазина");
+      if (salesTemplate.kind === "order") this._scheduleOrderIncompleteNudge(conversationId, null);
+      else this._scheduleNudgeFollowUps(conversationId, null);
+      return;
+    }
     const reactiveText = classifyReactiveTemplate(latestCustomerMessage);
     if (reactiveText) {
-      const newestInboundCheck = this.db.prepare(
-        `SELECT id FROM crm_messages WHERE conversation_id = ? AND direction = 'incoming' ORDER BY id DESC LIMIT 1`
-      ).get(conversationId);
-      if (Number(newestInboundCheck?.id) !== Number(incomingMessageId)) return;
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
       await this._send(conversationId, reactiveText, "assistant");
       this._logEvent(conversationId, "info", "delivery", "reply.sent_template", "Готовый ответ на возражение вместо генерации ИИ");
       this._scheduleNudgeFollowUps(conversationId, null);
@@ -2000,15 +2054,9 @@ prompt_patch — не больше двух коротких предложен�
       reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
       reply = enforceCatalogAvailabilityReply({ reply, selection });
-      const newestInbound = this.db.prepare(
-        `SELECT id FROM crm_messages
-          WHERE conversation_id = ? AND direction = 'incoming'
-          ORDER BY id DESC LIMIT 1`
-      ).get(conversationId);
-      if (Number(newestInbound?.id) !== Number(incomingMessageId)) {
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {
           incomingMessageId,
-          newestIncomingMessageId: newestInbound?.id || null,
         });
         return;
       }
@@ -2123,6 +2171,18 @@ prompt_patch — не больше двух коротких предложен�
     ).get(conversationId, messageId, value));
   }
 
+  _canSendAutoReply(conversationId, incomingMessageId) {
+    const state = this.db.prepare(
+      `SELECT c.ai_enabled,
+        (SELECT id FROM crm_messages
+          WHERE conversation_id = c.id AND direction = 'incoming'
+          ORDER BY id DESC LIMIT 1) AS newest_incoming_id
+       FROM crm_conversations c WHERE c.id = ?`
+    ).get(conversationId);
+    return Boolean(state?.ai_enabled)
+      && Number(state.newest_incoming_id) === Number(incomingMessageId);
+  }
+
   async sendManual(conversationId, text) {
     const value = String(text || "").trim();
     if (!value) throw new Error("Сообщение пустое");
@@ -2188,6 +2248,17 @@ prompt_patch — не больше двух коротких предложен�
   async _send(conversationId, text, sender) {
     const c = this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);
     if (!c) throw new Error("Диалог не найден");
+    if (sender === "manager") {
+      const timer = this._autoReplyTimers.get(c.id);
+      if (timer) clearTimeout(timer);
+      this._autoReplyTimers.delete(c.id);
+      this._cancelNudgeFollowUps(c.id);
+      this.db.prepare(
+        "UPDATE crm_conversations SET ai_enabled = 0, updated_at = datetime('now') WHERE id = ?"
+      ).run(c.id);
+    } else if (sender === "assistant" && !c.ai_enabled) {
+      throw new Error("Автоответ отменён: диалог передан менеджеру");
+    }
     if (c.source === "telegram") {
       if (!config.telegram.botToken) throw new Error("Telegram bot не настроен");
       const res = await this.fetchImpl(`${config.telegram.apiBase}/bot${config.telegram.botToken}/sendMessage`, {
@@ -2268,4 +2339,6 @@ module.exports = {
   toConversation,
   FIRST_CONTACT_WELCOME_TEXT,
   FIRST_CONTACT_CATALOG_TEXT,
+  MOSTOVOY_SALES_TEMPLATES,
+  classifySalesTemplate,
 };

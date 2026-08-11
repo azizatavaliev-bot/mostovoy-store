@@ -397,6 +397,41 @@ test("одинаковое сообщение спустя часы не счи�
   assert.equal(crm._isDuplicateInbound(conversationId, currentId, "/start"), false);
 });
 
+test("повторный /start всегда получает приветствие магазина без ИИ", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const sent = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org")) sent.push(JSON.parse(init.body).text);
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  db.prepare(
+    `INSERT INTO crm_conversations
+      (external_key, source, external_chat_id, customer_name)
+     VALUES ('telegram:returning-start', 'telegram', 'returning-start', 'Клиент')`
+  ).run();
+
+  await crm.receiveTelegram({
+    message_id: 900,
+    text: "/start",
+    chat: { id: "returning-start", type: "private" },
+    from: { id: 900, first_name: "Клиент" },
+  });
+
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /^Здравствуйте! 😊 Добро пожаловать в MOSTOVOY SHOP\./);
+});
+
 test("очистка истории лида удаляет сообщения, но сохраняет сам диалог", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

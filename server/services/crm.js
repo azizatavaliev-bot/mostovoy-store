@@ -106,7 +106,7 @@ const DEFAULT_SUPERVISOR_PROMPT = `Ты — внутренний контрол�
 // шлём это сообщение как есть, без ИИ. Если клиент сразу задал вопрос — ИИ
 // отвечает на вопрос, а этот текст (в укороченном виде, см. FIRST_CONTACT_CATALOG_TEXT)
 // добавляется в конец ответа.
-const FIRST_CONTACT_WELCOME_TEXT = `Добро пожаловать в MOSTOVOY SHOP.
+const FIRST_CONTACT_WELCOME_TEXT = `Здравствуйте! 😊 Добро пожаловать в MOSTOVOY SHOP.
 У нас вы найдёте смартфоны, ноутбуки, наушники, часы, камеры и другую оригинальную технику.
 
 Выберите нужную категорию:
@@ -159,6 +159,10 @@ function isFirstContactGreeting(text) {
   const value = String(text || "").trim().toLocaleLowerCase("ru");
   if (!value) return true;
   return /^[/!]?(привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро)|хай|start|hi|hello|здрасте|йо)[\s!.,]*$/u.test(value);
+}
+
+function isStartCommand(text) {
+  return /^\/start(?:\s.*)?$/iu.test(String(text || "").trim());
 }
 
 // Клиент не ответил после подборки/вопроса — бот сам напоминает о себе,
@@ -1856,7 +1860,7 @@ prompt_patch — не больше двух коротких предложен�
     if (inserted && conversation.ai_enabled) {
       if (this._isDuplicateInbound(conversation.id, inserted, text)) {
         this._logEvent(conversation.id, "info", "inbox", "message.duplicate_suppressed", "Дубликат сообщения не запустил повторный ответ", { windowSeconds: 40 });
-      } else if (isNewConversation && isFirstContactGreeting(text) && this.ai?.enabled) {
+      } else if (isStartCommand(text) || (isNewConversation && isFirstContactGreeting(text) && this.ai?.enabled)) {
         try {
           await this._send(conversation.id, FIRST_CONTACT_WELCOME_TEXT, "assistant");
           this._logEvent(conversation.id, "info", "delivery", "reply.sent_welcome", "Отправлено приветственное сообщение новому клиенту");

@@ -429,7 +429,7 @@ test("повторный /start всегда получает приветств
   });
 
   assert.equal(sent.length, 1);
-  assert.match(sent[0], /^Здравствуйте! 😊 Добро пожаловать в MOSTOVOY SHOP\./);
+  assert.match(sent[0], /^Здравствуйте! 😊 Очень рады видеть вас в MOSTOVOY SHOP!/);
 });
 
 test("очистка истории лида удаляет сообщения, но сохраняет сам диалог", async (t) => {
@@ -1642,6 +1642,9 @@ test("просроченное напоминание «через нескол�
     db,
     deepseek: { enabled: false },
     amocrm: { enabled: false },
+    // Полдень по Бишкеку (06:00 UTC) — гарантированно внутри окна 9:00–22:00,
+    // тест не зависит от реального времени запуска.
+    now: () => new Date("2026-06-01T06:00:00Z"),
     fetchImpl: async (url, init) => {
       if (String(url).includes("api.telegram.org") && init) {
         sentText = JSON.parse(init.body).text;
@@ -1667,7 +1670,7 @@ test("просроченное напоминание «через нескол�
 
   assert.equal(
     sentText,
-    "Здравствуйте, Айгерим. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
+    "Здравствуйте, Айгерим 😊 Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
   );
 });
 
@@ -1684,6 +1687,7 @@ test("нечеловеческое имя профиля (ссылка) не п�
     db,
     deepseek: { enabled: false },
     amocrm: { enabled: false },
+    now: () => new Date("2026-06-01T06:00:00Z"),
     fetchImpl: async (url, init) => {
       if (String(url).includes("api.telegram.org") && init) {
         sentText = JSON.parse(init.body).text;
@@ -1709,6 +1713,97 @@ test("нечеловеческое имя профиля (ссылка) не п�
 
   assert.equal(
     sentText,
-    "Здравствуйте. Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
+    "Здравствуйте 😊 Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
+  );
+});
+
+test("напоминание в тихие часы (ночь по Бишкеку) не отправляется, а переносится на утро", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let sentText = null;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    amocrm: { enabled: false },
+    // 20:00 UTC = 02:00 по Бишкеку — глубокая ночь, вне окна 9:00–22:00.
+    now: () => new Date("2026-06-01T20:00:00Z"),
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        sentText = JSON.parse(init.body).text;
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1608",
+    source: "telegram",
+    inbound: true,
+    chatId: "1608",
+    name: "Бекзат",
+  });
+  db.prepare(
+    "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
+  ).run(conversation.id);
+  db.prepare(
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+  ).run(conversation.id);
+
+  await crm.processDueNudgeFollowUps();
+
+  assert.equal(sentText, null);
+  const rescheduled = db.prepare(
+    "SELECT kind, product_name, due_at FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL"
+  ).get(conversation.id);
+  assert.equal(rescheduled.kind, "hours");
+  assert.equal(rescheduled.product_name, "iPhone 17");
+  assert.equal(rescheduled.due_at, "2026-06-02 03:00:00");
+});
+
+test("напоминание в начале утреннего окна здоровается «Доброе утро»", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  let sentText = null;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    amocrm: { enabled: false },
+    // 04:00 UTC = 10:00 по Бишкеку — начало окна активности.
+    now: () => new Date("2026-06-01T04:00:00Z"),
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        sentText = JSON.parse(init.body).text;
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1609",
+    source: "telegram",
+    inbound: true,
+    chatId: "1609",
+    name: "Бекзат",
+  });
+  db.prepare(
+    "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
+  ).run(conversation.id);
+  db.prepare(
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+  ).run(conversation.id);
+
+  await crm.processDueNudgeFollowUps();
+
+  assert.equal(
+    sentText,
+    "Доброе утро, Бекзат 😊 Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
   );
 });

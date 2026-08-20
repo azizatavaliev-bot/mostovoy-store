@@ -1,5 +1,6 @@
 // Рендер телефона: реалистичный SVG «вид сзади» по данным модели.
 // Если есть фото images/{id}.webp — оно перекрывает SVG.
+import { curatedPhoto } from "./curated-photos";
 import { PHOTOS } from "./photos";
 import type { Installment, Product } from "./types";
 
@@ -92,13 +93,22 @@ function placeholderSVG(p: Product): string {
 export function mediaHTML(p: Product, cls: string): string {
   const fromFeed = PHOTOS[p.id];
   const originalSrc = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.webp` : "");
-  const src = optimizedImageUrl(originalSrc, cls === "gallery" ? 1200 : 640);
+  const feedSrc = optimizedImageUrl(originalSrc, cls === "gallery" ? 1200 : 640);
+  // Для известных моделей показываем отобранное фото на белом фоне,
+  // фото из базы остаётся запасным вариантом. image: null означает, что
+  // вызывающий код намеренно просит векторный рендер (выбран другой цвет).
+  const curated = p.image === null ? "" : curatedPhoto(p.name || "");
+  const src = curated || feedSrc;
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);
+  const onError =
+    curated && feedSrc
+      ? `this.onerror=function(){this.remove()};this.src='${feedSrc}'`
+      : "this.remove()";
   const img = src
     ? `<img src="${src}" alt="${p.name}" loading="lazy" decoding="async"
         onload="this.previousElementSibling.style.opacity='0'"
-        onerror="this.remove()">`
+        onerror="${onError}">`
     : "";
   return `<div class="${cls}">${base}${img}</div>`;
 }

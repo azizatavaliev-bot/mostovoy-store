@@ -26,3 +26,8 @@ uploads/
 .vscode/
 .idea/
 .vercel
+Icon?
+
+# nested repositories
+MostovoyCRM/
+MostovoyInventory/

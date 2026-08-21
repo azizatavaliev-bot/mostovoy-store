@@ -5,6 +5,7 @@ const logger = require("../logger");
 const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
+const { classifyTemplate, templateById, ROUTED_TEMPLATE_IDS, ROUTE_TOOL_DESCRIPTION } = require("./templates");
 
 // Категории/бренды, которых нет в самих постах канала (посты — только
 // конкретные SKU с ценой). Читается один раз при старте процесса: если
@@ -266,6 +267,9 @@ const REACTIVE_TEMPLATES = [
     text: "Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?",
   },
 ];
+
+// Системный промпт ИИ-роутера шаблонов (см. _routeTemplate и templates.js).
+const TEMPLATE_ROUTE_PROMPT = `Ты — маршрутизатор ответов продавца магазина техники МОСТОВОЙ. Если сообщение клиента однозначно попадает под один из готовых сценариев ниже — верни его id. Учитывай историю диалога: не выбирай шаблон, если такой ответ уже отправлялся на этот же вопрос или противоречит тому, что клиент уже говорил. Выбирай только если уверен; при малейшем сомнении, шутке, вопросе про конкретный товар, цену или наличие, составном вопросе с другими темами — верни null.`;
 
 const MOSTOVOY_SALES_TEMPLATES = {
   location: {
@@ -1296,6 +1300,9 @@ class CrmService {
       taskPrompt: rows.bot_task_prompt || DEFAULT_TASK_PROMPT,
       supervisorEnabled: rows.bot_supervisor_enabled !== "false",
       supervisorPrompt: rows.bot_supervisor_prompt || DEFAULT_SUPERVISOR_PROMPT,
+      // ИИ-роутер готовых шаблонов (templates.js). По умолчанию включён;
+      // выключение оставляет только regex-шаблоны.
+      templateRouterEnabled: rows.bot_template_router_enabled !== "false",
       models: typeof this.ai?.listModels === "function"
         ? this.ai.listModels()
         : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),
@@ -1315,6 +1322,7 @@ class CrmService {
       bot_task_prompt: String(payload.taskPrompt ?? current.taskPrompt).trim().slice(0, 8000) || DEFAULT_TASK_PROMPT,
       bot_supervisor_enabled: String(payload.supervisorEnabled ?? current.supervisorEnabled),
       bot_supervisor_prompt: String(payload.supervisorPrompt ?? current.supervisorPrompt).trim().slice(0, 8000) || DEFAULT_SUPERVISOR_PROMPT,
+      bot_template_router_enabled: String(payload.templateRouterEnabled ?? current.templateRouterEnabled),
     };
     const upsert = this.db.prepare(
       `INSERT INTO crm_settings (key, value) VALUES (?, ?)
@@ -1729,6 +1737,37 @@ prompt_patch — не больше двух коротких предложен�
     ].filter(Boolean).join("\n\n");
   }
 
+  // Роутер шаблонов (идея из SmileKit, service.py ROUTE_TOOL): дешёвый вызов
+  // модели, который либо выбирает id готового ответа из templates.js, либо
+  // ничего — тогда идёт обычная генерация. Не бросает наружу: сбой роутера
+  // не должен ломать ответ клиенту (fail-open, как у супервизора).
+  async _routeTemplate(conversationId, settings, messages, customerMessage) {
+    if (!settings.templateRouterEnabled || typeof this.ai?.chatJson !== "function") return null;
+    if (!customerMessage.trim() || ROUTED_TEMPLATE_IDS.length === 0) return null;
+    const history = messages.slice(-7, -1).map((m) => `${m.direction === "incoming" ? "клиент" : "продавец"}: ${m.text}`).join("\n") || "(новый диалог)";
+    try {
+      const result = await this.ai.chatJson({
+        system: `${TEMPLATE_ROUTE_PROMPT}\n\n${ROUTE_TOOL_DESCRIPTION}\n\nВерни JSON {"template_id": "<id>"} с одним из id: ${ROUTED_TEMPLATE_IDS.join(", ")}. Если не уверен — {"template_id": null}.`,
+        user: `ИСТОРИЯ:\n${history}\n\nСООБЩЕНИЕ КЛИЕНТА:\n${customerMessage}`,
+        temperature: 0,
+        maxTokens: 60,
+        model: settings.model,
+        onUsage: this._usageRecorder("template_router", conversationId, settings.model),
+      });
+      const id = typeof result?.template_id === "string" ? result.template_id.trim() : null;
+      if (!id || !ROUTED_TEMPLATE_IDS.includes(id)) return null;
+      // Один и тот же шаблон на тот же вопрос второй раз подряд — не шлём,
+      // пусть ответит модель с учётом контекста.
+      const alreadySent = messages.some((m) => m.direction !== "incoming" && m.text === templateById(id));
+      if (alreadySent) return null;
+      this._logEvent(conversationId, "info", "generation", "template_router.matched", "Роутер выбрал готовый шаблон", { templateId: id });
+      return id;
+    } catch (error) {
+      this._logEvent(conversationId, "warn", "generation", "template_router.failed", error.message);
+      return null;
+    }
+  }
+
   // Второй агент: проверяет черновик продавца перед отправкой (факты,
   // тон, полнота списка, внутренние термины, самопризнание в том, что бот).
   // Отдельный вызов ИИ, не текстовые regex-патчи — те (enforceCatalogPriceReply/
@@ -2079,7 +2118,34 @@ prompt_patch — не больше двух коротких предложен�
       this._scheduleNudgeFollowUps(conversationId, null);
       return;
     }
+    // Расширенный слой готовых ответов (server/services/templates.js, по
+    // образцу SmileKit): сперва regex для однозначных фраз (жалоба, опт,
+    // «позовите человека», повторное «привет»), затем дешёвый ИИ-роутер,
+    // который выбирает id шаблона или ничего. Оба — до сборки каталога и
+    // полной генерации: экономим токены и отвечаем одинаково на одинаковое.
+    const hasHistory = detail.messages.filter((m) => m.direction === "incoming").length > 1;
+    const localTemplate = classifyTemplate(latestCustomerMessage, { hasHistory });
+    if (localTemplate) {
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
+      await this._send(conversationId, localTemplate.text, "assistant");
+      this._logEvent(conversationId, "info", "delivery", `reply.sent_template.${localTemplate.kind}`, "Готовый шаблон по ключевым словам вместо генерации ИИ");
+      if (localTemplate.kind === "complaint" || localTemplate.kind === "human_request") {
+        this._publishImportantNotify(detail.conversation, `Клиент: ${latestCustomerMessage}`);
+      } else {
+        this._scheduleNudgeFollowUps(conversationId, null);
+      }
+      return;
+    }
     const settings = this.getSettings();
+    const routedTemplateId = await this._routeTemplate(conversationId, settings, detail.messages, latestCustomerMessage);
+    const routedText = routedTemplateId ? templateById(routedTemplateId) : null;
+    if (routedText) {
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
+      await this._send(conversationId, routedText, "assistant");
+      this._logEvent(conversationId, "info", "delivery", `reply.routed_template.${routedTemplateId}`, "Готовый шаблон по решению роутера вместо генерации ИИ", { templateId: routedTemplateId });
+      this._scheduleNudgeFollowUps(conversationId, null);
+      return;
+    }
     // Перед каждым ответом берём свежую витрину Telegram-канала. Это поиск
     // по первоисточнику до вызова модели, а не ответ по памяти DeepSeek.
     try {

@@ -15,6 +15,7 @@ const {
   FIRST_CONTACT_CATALOG_TEXT,
   classifySalesTemplate,
 } = require("../server/services/crm");
+const { templateById } = require("../server/services/templates");
 const { parseAmoWebhook, parseAmoWebhooks } = require("../server/services/amocrm");
 const config = require("../server/config");
 
@@ -969,7 +970,9 @@ test("супервизор отключается настройкой и не �
       return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
     },
   });
-  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+  // Роутер шаблонов тоже ходит через chatJson — выключаем, чтобы тест
+  // проверял именно супервизора.
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
   const message = {
     date: 1_700_000_000,
     chat: { id: 141, type: "private" },
@@ -1806,4 +1809,92 @@ test("напоминание в начале утреннего окна здо�
     sentText,
     "Доброе утро, Бекзат 😊 Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
   );
+});
+
+// ─── Слой готовых шаблонов (templates.js) ────────────────────────────────────
+function makeTemplateCrm(t, { chatText, chatJson }) {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const sent = [];
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText, chatJson },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sent.push(JSON.parse(init.body).text);
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+    autoReplyDebounceMs: 0,
+  });
+  return { crm, sent };
+}
+
+const templateMessage = (id, text) => ({
+  message_id: id,
+  date: 1_700_000_000,
+  text,
+  chat: { id: 1900, type: "private" },
+  from: { id: 1900, first_name: "Клиент" },
+});
+
+test("запрос про опт отвечает готовым шаблоном без вызова ИИ", async (t) => {
+  let aiCalled = false;
+  const { crm, sent } = makeTemplateCrm(t, {
+    chatText: async () => { aiCalled = true; return "не должно вызываться"; },
+    chatJson: async () => { aiCalled = true; return { template_id: null }; },
+  });
+  await crm.receiveTelegram(templateMessage(701, "Здравствуйте, а оптом можно у вас брать?"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(aiCalled, false);
+  assert.equal(sent.at(-1), templateById("cooperation_inquiry"));
+});
+
+test("роутер шаблонов выбирает готовый ответ — генерация не вызывается", async (t) => {
+  let generated = false;
+  let routerUser = null;
+  const { crm, sent } = makeTemplateCrm(t, {
+    chatText: async () => { generated = true; return "черновик"; },
+    chatJson: async ({ user }) => { routerUser = user; return { template_id: "reserve" }; },
+  });
+  await crm.receiveTelegram(templateMessage(702, "Можете придержать для меня модель до вечера?"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(generated, false);
+  assert.match(routerUser, /придержать для меня модель/);
+  assert.equal(sent.at(-1), templateById("reserve"));
+});
+
+test("роутер вернул null или упал — идёт обычная генерация", async (t) => {
+  let calls = 0;
+  const { crm, sent } = makeTemplateCrm(t, {
+    chatText: async () => "Обычный ответ модели.",
+    chatJson: async () => { calls += 1; if (calls === 1) return { template_id: null }; throw new Error("router down"); },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+  await crm.receiveTelegram(templateMessage(700, "Привет"));
+  await crm.receiveTelegram(templateMessage(703, "Какой MacBook посоветуете для монтажа?"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(sent.at(-1), "Обычный ответ модели.");
+  await crm.receiveTelegram(templateMessage(704, "А для учёбы?"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(sent.at(-1), "Обычный ответ модели.");
+  assert.equal(calls, 2);
+});
+
+test("выключенный роутер шаблонов не вызывает модель для маршрутизации", async (t) => {
+  let routed = false;
+  const { crm, sent } = makeTemplateCrm(t, {
+    chatText: async () => "Обычный ответ модели.",
+    chatJson: async () => { routed = true; return { template_id: "reserve" }; },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+  await crm.receiveTelegram(templateMessage(700, "Привет"));
+  await crm.receiveTelegram(templateMessage(705, "Можете придержать для меня модель?"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(routed, false);
+  assert.equal(sent.at(-1), "Обычный ответ модели.");
 });

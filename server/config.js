@@ -62,6 +62,19 @@ const config = {
 
   // MostovoyCRM: витрина сообщает ей о новом клиенте, чтобы там завелась
   // сделка в воронке. Токен тот же, что у /api/internal/* в CRM.
+  // WhatsApp через Green API (green-api.com): idInstance/apiTokenInstance идут
+  // в пути запроса, apiUrl/mediaUrl у каждого инстанса свои (регион хоста
+  // назначается при создании) — берём из консоли Green API, не хардкодим.
+  greenapi: {
+    idInstance: process.env.GREENAPI_ID_INSTANCE || "",
+    apiTokenInstance: process.env.GREENAPI_API_TOKEN_INSTANCE || "",
+    apiUrl: (process.env.GREENAPI_API_URL || "https://api.green-api.com").replace(/\/+$/, ""),
+    mediaUrl: (process.env.GREENAPI_MEDIA_URL || "").replace(/\/+$/, ""),
+    // Green API шлёт вебхук с Authorization: Bearer <webhookUrlToken>.
+    webhookToken: process.env.GREENAPI_WEBHOOK_TOKEN || "",
+    timeoutMs: int(process.env.GREENAPI_TIMEOUT_MS, 20000),
+  },
+
   crmDeals: {
     baseUrl: (process.env.CRM_BASE_URL || "").replace(/\/+$/, ""),
     internalToken: process.env.CRM_INTERNAL_TOKEN || "",
@@ -190,6 +203,7 @@ config.features = {
   adminToken: Boolean(config.admin.token),
   adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
   amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
+  greenapi: Boolean(config.greenapi.idInstance && config.greenapi.apiTokenInstance),
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
   crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
 };

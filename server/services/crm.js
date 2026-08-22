@@ -6,6 +6,15 @@ const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analyti
 const { MODELS, modelInfo } = require("./ai");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
 const { classifyTemplate, templateById, ROUTED_TEMPLATE_IDS, ROUTE_TOOL_DESCRIPTION } = require("./templates");
+const { toGreenApiChatId } = require("./greenapi");
+
+// Диалоги лаборатории WhatsApp (external_key "lab:…"): проходят ровно тот же
+// пайплайн, что настоящие клиенты, но ничего не уходит наружу — ни в Green
+// API, ни сделкой/этапом/уведомлением в CRM, ни событием в Azis CRM.
+const LAB_KEY_PREFIX = "lab:";
+function isLabConversation(conversation) {
+  return String(conversation?.external_key || "").startsWith(LAB_KEY_PREFIX);
+}
 
 // Категории/бренды, которых нет в самих постах канала (посты — только
 // конкретные SKU с ценой). Читается один раз при старте процесса: если
@@ -792,13 +801,16 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, fetchImpl, autoReplyDebounceMs, now } = {}) {
+  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, greenapi, fetchImpl, autoReplyDebounceMs, now } = {}) {
     this.db = db;
     this.deepseek = deepseek;
     this.ai = ai || deepseek;
     this.amocrm = amocrm;
     this.azisCrm = azisCrm;
     this.crmDeals = crmDeals;
+    // WhatsApp напрямую через Green API (без amoCRM). Необязателен: без него
+    // канал просто выключен, как amocrm без токена.
+    this.greenapi = greenapi;
     this.fetchImpl = fetchImpl || globalThis.fetch;
     this._autoReplyDebounceMs = autoReplyDebounceMs ?? AUTO_REPLY_DEBOUNCE_MS;
     // Инжектируемые часы — только чтобы тесты «тихих часов» не зависели от
@@ -986,7 +998,7 @@ class CrmService {
   // ответ клиенту, ни ронять обработку сообщения. Пропуск не потеряется —
   // CRM сверяется с /api/admin/crm/conversations.
   _publishDeal(conversation) {
-    if (!this.crmDeals?.enabled) return;
+    if (!this.crmDeals?.enabled || isLabConversation(conversation)) return;
     void this.crmDeals
       .createDeal({
         externalKey: conversation.external_key,
@@ -1008,7 +1020,7 @@ class CrmService {
   // Уходит важным уведомлением в CRM параллельно с обычным ответом клиенту,
   // не вместо него: клиент всё равно должен получить ответ.
   _publishImportantNotify(conversation, text) {
-    if (!this.crmDeals?.enabled || typeof this.crmDeals.notifyImportant !== "function") return;
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.notifyImportant !== "function" || isLabConversation(conversation)) return;
     void this.crmDeals
       .notifyImportant({
         title: `Требует внимания человека (${conversation.customer_name || conversation.source})`,
@@ -1024,7 +1036,7 @@ class CrmService {
   }
 
   _publishStage(conversation, action) {
-    if (!this.crmDeals?.enabled || typeof this.crmDeals.advanceStage !== "function") return;
+    if (!this.crmDeals?.enabled || typeof this.crmDeals.advanceStage !== "function" || isLabConversation(conversation)) return;
     void this.crmDeals
       .createDeal({
         externalKey: conversation.external_key,
@@ -1125,6 +1137,7 @@ class CrmService {
   }
 
   _publishMessage(conversation, data) {
+    if (isLabConversation(conversation)) return;
     this._publishAzis("message", {
       channel: conversation.source,
       externalChatId: conversation.external_chat_id,
@@ -1147,7 +1160,9 @@ class CrmService {
     return this.db.prepare(
       `SELECT c.*,
         (SELECT text FROM crm_messages m WHERE m.conversation_id = c.id ORDER BY datetime(m.created_at) DESC, m.id DESC LIMIT 1) AS last_message
-       FROM crm_conversations c ORDER BY c.last_message_at DESC, c.id DESC`
+       FROM crm_conversations c
+       WHERE c.external_key NOT LIKE 'lab:%'
+       ORDER BY c.last_message_at DESC, c.id DESC`
     ).all().map(toConversation);
   }
 
@@ -1277,8 +1292,11 @@ class CrmService {
       telegram: Boolean(config.telegram.botToken),
       amocrm: Boolean(this.amocrm?.enabled),
       azisCrm: Boolean(this.azisCrm?.enabled),
+      whatsapp: Boolean(this.greenapi?.enabled),
+      whatsappWebhookConfigured: Boolean(config.greenapi.webhookToken),
       ai: Boolean(this.ai?.enabled),
       amocrmWebhook: `${base}/api/amocrm/webhook${secretPath}`,
+      whatsappWebhook: `${base}/api/greenapi/webhook`,
       primaryWebhook: config.azisCrm.baseUrl
         ? `${config.azisCrm.baseUrl}/api/integrations/amo/webhook${azisSecretPath}`
         : `${base}/api/amocrm/webhook${secretPath}`,
@@ -1975,6 +1993,192 @@ prompt_patch — не больше двух коротких предложен�
     }
   }
 
+  // ─── WhatsApp напрямую через Green API ──────────────────────────────────
+  // Входящее из вебхука (см. services/greenapi.js parseGreenApiWebhook).
+  // Логика первого контакта — как в Telegram: «привет» → приветствие магазина
+  // без ИИ, вопрос сразу → ответ ИИ + каталог категорий в конце.
+  async receiveGreenApi(incoming, raw) {
+    if (!incoming?.phone || (!incoming.text && !incoming.mediaUrl)) return { ignored: true };
+    const externalKey = `greenapi:${incoming.phone}`;
+    const isNewConversation = !this.db.prepare("SELECT 1 FROM crm_conversations WHERE external_key = ?").get(externalKey);
+    const conversation = this._upsertConversation({
+      externalKey,
+      source: "whatsapp",
+      inbound: incoming.type === "incoming",
+      chatId: incoming.phone,
+      name: incoming.type === "incoming" ? incoming.name : null,
+      phone: incoming.phone,
+      createdAt: incoming.createdAt,
+    });
+    if (incoming.type === "outgoing") {
+      // Сообщение ушло с самого телефона — чат взял живой менеджер, AI выключается.
+      // Эхо наших же отправок Green API шлёт отдельным типом и сюда не попадает.
+      const echo = this.db.prepare(
+        `SELECT 1 FROM crm_messages
+          WHERE conversation_id = ? AND direction = 'outgoing' AND text = ?
+            AND created_at >= datetime(?, '-15 minutes')
+          LIMIT 1`
+      ).get(conversation.id, incoming.text, incoming.createdAt);
+      if (echo) return { stored: false, conversationId: Number(conversation.id), echo: true };
+      const inserted = this._storeMessage(conversation.id, {
+        externalMessageId: incoming.messageId,
+        direction: "outgoing",
+        sender: "manager",
+        text: incoming.text,
+        raw,
+        createdAt: incoming.createdAt,
+      });
+      this.db.prepare("UPDATE crm_conversations SET ai_enabled = 0, updated_at = datetime('now') WHERE id = ?").run(conversation.id);
+      return { stored: Boolean(inserted), conversationId: Number(conversation.id), manager: true };
+    }
+    this._cancelNudgeFollowUps(conversation.id);
+    let text = String(incoming.text || "").trim();
+    const mediaKind = /image/i.test(incoming.typeMessage) ? "image" : /audio|voice|ptt/i.test(incoming.typeMessage) ? "audio" : null;
+    if (mediaKind && incoming.mediaUrl) {
+      try {
+        if (!this.ai?.analyzeMedia) throw new Error("Анализ вложений не настроен");
+        const response = await this.fetchImpl(incoming.mediaUrl, { signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`Green API file: HTTP ${response.status}`);
+        const bytes = Buffer.from(await response.arrayBuffer());
+        if (bytes.length > 20 * 1024 * 1024) throw new Error("Файл больше 20 МБ");
+        const analysis = await this.ai.analyzeMedia({
+          kind: mediaKind,
+          bytes,
+          mimeType: mediaMimeType(mediaKind, incoming.mediaUrl, response.headers?.get?.("content-type")),
+          caption: text,
+          onUsage: this._usageRecorder("media_analysis", conversation.id, this.getSettings().model),
+        });
+        text = [text, mediaKind === "image" ? `[Изображение: ${analysis}]` : `[Аудио: ${analysis}]`].filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "info", "media", "media.analyzed", "Вложение WhatsApp проанализировано", { kind: mediaKind, bytes: bytes.length });
+      } catch (error) {
+        text = [text, mediaKind === "image" ? "[Клиент прислал изображение]" : "[Клиент прислал аудио]"].filter(Boolean).join("\n");
+        this._logEvent(conversation.id, "error", "media", "media.failed", error.message);
+      }
+    }
+    return this._handleInboundText(conversation, {
+      externalMessageId: incoming.messageId,
+      text,
+      raw,
+      createdAt: incoming.createdAt,
+      sourceLabel: "WhatsApp",
+      isNewConversation,
+    });
+  }
+
+  // Общий хвост приёма текста для WhatsApp и лаборатории: сохранить,
+  // опубликовать в CRM, решить — приветствие, автоответ или ничего.
+  // immediate: true — ответить сразу и дождаться (лаборатория), иначе
+  // через debounce, как для настоящих клиентов.
+  async _handleInboundText(conversation, { externalMessageId, text, raw, createdAt, sourceLabel, isNewConversation, immediate = false, bypassApproval = false }) {
+    const inserted = this._storeMessage(conversation.id, {
+      externalMessageId,
+      direction: "incoming",
+      sender: "customer",
+      text,
+      raw,
+      createdAt,
+    });
+    if (!inserted) return { stored: false, conversationId: Number(conversation.id) };
+    this._publishMessage(conversation, { externalMessageId, direction: "incoming", sender: "customer", text, raw, createdAt });
+    this._logEvent(conversation.id, "info", "inbox", "message.received", `Получено сообщение из ${sourceLabel}`, { messageId: inserted });
+    const stageAction = stageActionForInbound(text);
+    if (stageAction) this._publishStage(conversation, stageAction);
+    if (classifyImportantEscalation(text)) this._publishImportantNotify(conversation, text);
+    if (!conversation.ai_enabled) return { stored: true, conversationId: Number(conversation.id) };
+    if (this._isDuplicateInbound(conversation.id, inserted, text)) {
+      this._logEvent(conversation.id, "info", "inbox", "message.duplicate_suppressed", "Дубликат сообщения не запустил повторный ответ", { windowSeconds: 40 });
+    } else if (isStartCommand(text) || (isNewConversation && isFirstContactGreeting(text) && this.ai?.enabled)) {
+      try {
+        await this._send(conversation.id, FIRST_CONTACT_WELCOME_TEXT, "assistant");
+        this._logEvent(conversation.id, "info", "delivery", "reply.sent_welcome", "Отправлено приветственное сообщение новому клиенту");
+        this._scheduleNudgeFollowUps(conversation.id, null);
+      } catch (error) {
+        logger.error("crm.welcome_send_failed", { conversationId: conversation.id, error: error.message });
+        this._logEvent(conversation.id, "error", "delivery", "reply.welcome_failed", error.message);
+      }
+    } else {
+      if (isNewConversation) this._pendingFirstContactCatalog.add(conversation.id);
+      if (immediate) await this._autoReply(conversation.id, inserted, { bypassApproval });
+      else this._debouncedAutoReply(conversation.id, inserted);
+    }
+    return { stored: true, conversationId: Number(conversation.id) };
+  }
+
+  // ─── Лаборатория WhatsApp ───────────────────────────────────────────────
+  // Тот же пайплайн, что у настоящих клиентов WhatsApp (шаблоны, роутер,
+  // каталог, ИИ, супервизор, страховки цен), но: chatId с префиксом lab —
+  // никогда не пересечётся с реальным номером; наружу ничего не уходит
+  // (см. isLabConversation); подтверждение ответов не блокирует — ответ
+  // сразу в истории. Идея из CRM SmileKit (actions/whatsapp-lab.ts).
+  labChatId() {
+    return `lab-${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36).slice(-4)}`;
+  }
+
+  async labSend({ chatId, text } = {}) {
+    const value = String(text || "").trim();
+    if (!value) throw new Error("Введите сообщение тестового клиента");
+    if (!this.ai?.enabled) throw new Error("ИИ не настроен: лаборатория не может ответить");
+    const id = /^lab-[a-z0-9]+$/i.test(String(chatId || "")) ? String(chatId) : this.labChatId();
+    const externalKey = `${LAB_KEY_PREFIX}${id}`;
+    const isNewConversation = !this.db.prepare("SELECT 1 FROM crm_conversations WHERE external_key = ?").get(externalKey);
+    const conversation = this._upsertConversation({
+      externalKey,
+      source: "whatsapp",
+      inbound: true,
+      chatId: id,
+      name: "Тест (Лаборатория)",
+      createdAt: new Date().toISOString(),
+    });
+    this._cancelNudgeFollowUps(conversation.id);
+    await this._handleInboundText(conversation, {
+      externalMessageId: `lab-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      text: value.slice(0, 4000),
+      raw: null,
+      createdAt: new Date().toISOString(),
+      sourceLabel: "лаборатории WhatsApp",
+      isNewConversation,
+      immediate: true,
+      bypassApproval: true,
+    });
+    return { chatId: id, history: this.labHistory(id) };
+  }
+
+  labHistory(chatId) {
+    const conversation = this.db.prepare("SELECT id FROM crm_conversations WHERE external_key = ?").get(`${LAB_KEY_PREFIX}${chatId}`);
+    if (!conversation) return [];
+    return this.db.prepare(
+      "SELECT sender, text, created_at FROM crm_messages WHERE conversation_id = ? ORDER BY datetime(created_at), id"
+    ).all(conversation.id).map((row) => ({
+      sender: row.sender === "customer" ? "client" : row.sender === "assistant" ? "bot" : "manager",
+      text: row.text,
+      createdAt: row.created_at,
+    }));
+  }
+
+  labReset(chatId) {
+    const conversation = this.db.prepare("SELECT id FROM crm_conversations WHERE external_key = ?").get(`${LAB_KEY_PREFIX}${chatId}`);
+    if (!conversation) return { deleted: false };
+    this.deleteConversation(Number(conversation.id));
+    return { deleted: true };
+  }
+
+  // Состояние инстанса Green API и включение вебхука на наш адрес — для
+  // страницы настроек WhatsApp в CRM.
+  async getWhatsappState() {
+    if (!this.greenapi?.enabled) return { enabled: false, state: null, webhookUrl: this.getStatus().whatsappWebhook, webhookConfigured: Boolean(config.greenapi.webhookToken) };
+    const state = await this.greenapi.getState();
+    return { enabled: true, state, webhookUrl: this.getStatus().whatsappWebhook, webhookConfigured: Boolean(config.greenapi.webhookToken) };
+  }
+
+  async setupWhatsappWebhook() {
+    if (!this.greenapi?.enabled) throw new Error("Green API не настроен");
+    if (!config.greenapi.webhookToken) throw new Error("GREENAPI_WEBHOOK_TOKEN не задан — без него вебхук закрыт");
+    const webhookUrl = this.getStatus().whatsappWebhook;
+    await this.greenapi.setWebhook({ webhookUrl, webhookUrlToken: config.greenapi.webhookToken });
+    this._logEvent(null, "info", "settings", "whatsapp.webhook_set", "Вебхук Green API направлен на витрину", { webhookUrl });
+    return { webhookUrl };
+  }
+
   async receiveAmo(incoming, raw) {
     if (!incoming.text || !incoming.chatId) return { ignored: true };
     const source = /instagram/i.test(incoming.source)
@@ -2094,7 +2298,7 @@ prompt_patch — не больше двух коротких предложен�
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }
 
-  async _autoReply(conversationId, incomingMessageId) {
+  async _autoReply(conversationId, incomingMessageId, options = {}) {
     if (!this.ai?.enabled) return;
     const detail = this.getConversation(conversationId);
     if (!detail?.conversation.aiEnabled) return;
@@ -2194,7 +2398,7 @@ prompt_patch — не больше двух коротких предложен�
         this._pendingFirstContactCatalog.delete(conversationId);
         reply = `${reply}\n\n${FIRST_CONTACT_CATALOG_TEXT}`;
       }
-      if (settings.approvalEnabled) {
+      if (settings.approvalEnabled && !options.bypassApproval) {
         const summary = await this._summarizeConversation(conversationId, history, settings);
         const customerMessage = [...detail.messages].reverse().find((message) => message.direction === "incoming")?.text || "";
         const result = this.db.prepare(
@@ -2389,7 +2593,12 @@ prompt_patch — не больше двух коротких предложен�
     } else if (sender === "assistant" && !c.ai_enabled) {
       throw new Error("Автоответ отменён: диалог передан менеджеру");
     }
-    if (c.source === "telegram") {
+    if (isLabConversation(c)) {
+      // Лаборатория: наружу ничего не уходит, сообщение только ложится в историю.
+    } else if (c.source === "whatsapp" && String(c.external_key).startsWith("greenapi:")) {
+      if (!this.greenapi?.enabled) throw new Error("Green API не настроен");
+      await this.greenapi.sendMessage(toGreenApiChatId(c.external_chat_id), text);
+    } else if (c.source === "telegram") {
       if (!config.telegram.botToken) throw new Error("Telegram bot не настроен");
       const res = await this.fetchImpl(`${config.telegram.apiBase}/bot${config.telegram.botToken}/sendMessage`, {
         method: "POST",

@@ -21,8 +21,10 @@ const { CrmService } = require("./services/crm");
 const { AzisCrmClient } = require("./services/azis-crm");
 const { CrmDealsClient } = require("./services/crm-deals");
 const { createAzisCrmRouter } = require("./routes/azis-crm");
+const { createGreenApiRouter } = require("./routes/greenapi");
+const { GreenApiClient } = require("./services/greenapi");
 
-function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, crmDeals } = {}) {
+function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, crmDeals, greenapi } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
   const aiRouter = ai || new AiRouter({ deepseek: deepseekClient });
   const researchService =
@@ -37,6 +39,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
   const amoCrmClient = amocrm || new AmoCrmClient();
   const azisCrmClient = azisCrm || new AzisCrmClient();
   const crmDealsClient = crmDeals || new CrmDealsClient();
+  const greenApiClient = greenapi || new GreenApiClient();
   const crmService = crm || new CrmService({
     db,
     ai: aiRouter,
@@ -44,6 +47,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
     amocrm: amoCrmClient,
     azisCrm: azisCrmClient,
     crmDeals: crmDealsClient,
+    greenapi: greenApiClient,
   });
 
   const app = express();
@@ -53,6 +57,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
 
   app.use("/api/telegram", createTelegramRouter({ db, queue: syncQueue, crm: crmService }));
   app.use("/api/amocrm", createAmoCrmRouter({ crm: crmService }));
+  app.use("/api/greenapi", createGreenApiRouter({ crm: crmService }));
   app.use("/api/integrations/azis", createAzisCrmRouter({ crm: crmService }));
   app.use("/api/admin", createAdminRouter({ db, crm: crmService }));
   app.use("/api/images", createImageRouter({ db }));
@@ -93,6 +98,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
     crm: crmService,
     amocrm: amoCrmClient,
     azisCrm: azisCrmClient,
+    greenapi: greenApiClient,
   };
   return app;
 }

@@ -70,6 +70,36 @@ function createCrmAdminRoutes(router, crm) {
       res.status(400).json({ error: error.message });
     }
   });
+  // Лаборатория WhatsApp: тот же пайплайн, что у клиентов, но в изолированном
+  // диалоге lab-… и без отправки наружу (crm.js labSend).
+  router.post("/crm/whatsapp-lab/messages", express.json(), async (req, res) => {
+    try {
+      res.json(await crm.labSend(req.body || {}));
+    } catch (error) {
+      res.status(/не настроен/.test(error.message) ? 503 : 400).json({ error: error.message });
+    }
+  });
+  router.get("/crm/whatsapp-lab/:chatId", (req, res) => {
+    res.json({ chatId: req.params.chatId, history: crm.labHistory(req.params.chatId) });
+  });
+  router.delete("/crm/whatsapp-lab/:chatId", (req, res) => {
+    res.json(crm.labReset(req.params.chatId));
+  });
+  // Настройки WhatsApp (Green API): состояние инстанса и включение вебхука.
+  router.get("/crm/whatsapp/state", async (req, res) => {
+    try {
+      res.json(await crm.getWhatsappState());
+    } catch (error) {
+      res.status(502).json({ error: error.message });
+    }
+  });
+  router.post("/crm/whatsapp/setup-webhook", async (req, res) => {
+    try {
+      res.json(await crm.setupWhatsappWebhook());
+    } catch (error) {
+      res.status(/не настроен|не задан/.test(error.message) ? 503 : 502).json({ error: error.message });
+    }
+  });
   router.get("/crm/analytics", (req, res) => {
     res.json(crm.getBuyAnalytics(Number(req.query.days)));
   });

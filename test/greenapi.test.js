@@ -83,18 +83,19 @@ test("ответ бота в WhatsApp уходит через Green API sendMess
     fetchImpl: okFetch,
     autoReplyDebounceMs: 0,
   });
+  await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Привет", idMessage: "wa-0" })));
   await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Здравствуйте, а оптом можно у вас брать?" })));
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].chatId, "996700000001@c.us");
-  assert.equal(sent[0].message, templateById("cooperation_inquiry"));
+  assert.equal(sent.length, 2, "приветствие + шаблон про опт");
+  assert.equal(sent[1].chatId, "996700000001@c.us");
+  assert.equal(sent[1].message, templateById("cooperation_inquiry"));
 
   await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ typeWebhook: "outgoingMessageReceived", text: "Это менеджер, я на связи", idMessage: "wa-2" })));
   const conversation = crm.listConversations()[0];
   assert.equal(conversation.aiEnabled, false);
   await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "А доставка есть?", idMessage: "wa-3" })));
   await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(sent.length, 1, "после менеджера бот молчит");
+  assert.equal(sent.length, 2, "после менеджера бот молчит");
 });
 
 test("лаборатория WhatsApp: реальный пайплайн, но ничего не уходит наружу и не попадает в inbox", async (t) => {

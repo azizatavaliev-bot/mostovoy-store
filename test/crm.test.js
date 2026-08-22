@@ -729,6 +729,37 @@ test("ответ из Azis CRM отправляется в исходный amoC
   assert.equal(events.at(-1).payload.direction, "outgoing");
 });
 
+test("sendExternal не путает диалог amoCRM с чужим каналом при совпадении голого chat_id", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const sent = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: true, sendMessage: async (payload) => sent.push(payload) },
+  });
+
+  // Telegram-диалог с тем же самым голым chat_id, что и у клиента amoCRM ниже —
+  // external_chat_id совпадает, но external_key разный ("telegram:" vs "amo:").
+  const telegramConversation = crm._upsertConversation({
+    externalKey: "telegram:555", source: "telegram", chatId: "555", name: "Телеграм-клиент", inbound: true,
+  });
+
+  const result = await crm.sendExternal({
+    source: "whatsapp",
+    chatId: "555",
+    leadId: "901",
+    contactId: "902",
+    text: "Да, есть в наличии.",
+  });
+
+  assert.notEqual(result.conversationId, Number(telegramConversation.id), "ответ не должен уйти в Telegram-диалог с тем же chat_id");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].chatId, "555");
+  const created = crm.listConversations().find((c) => c.id === result.conversationId);
+  assert.equal(created.source, "whatsapp");
+});
+
 test("CRM хранит заметку и переключатель AI", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
@@ -1148,6 +1179,27 @@ test("заказ записывается только в сделку теку�
   assert.equal(crmDeals.orderCalls[1].customerName, "Второй");
 });
 
+test("подтверждённый заказ в лаборатории WhatsApp не создаёт настоящую сделку", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crmDeals = makeDealsSpy();
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false }, crmDeals });
+  const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"iPhone 17 Pro Max","storage":"1 TB","color":"Синий","price":1610,"priceKgs":140875,"currency":"USD","available":true}]}';
+
+  const lab = crm._upsertConversation({
+    externalKey: "lab:abcdef123456", source: "whatsapp", chatId: "lab-abcdef123456", name: "Тест (Лаборатория)", inbound: true,
+  });
+  const published = crm._publishOrderIfConfirmed(
+    lab,
+    [{ role: "user", content: "Оформляйте этот iPhone" }],
+    selection
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(published, false, "лаборатория не должна считаться подтверждённым заказом");
+  assert.equal(crmDeals.orderCalls.length, 0, "в реальную CRM ничего не должно уйти");
+});
+
 test("входящая потребность и ответ с ценой двигают сделку вперёд", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
@@ -1426,13 +1478,9 @@ test("возражение «я подумаю» отвечает готовым
     autoReplyDebounceMs: 0,
   });
 
-  await crm.receiveTelegram({
-    message_id: 601,
-    date: 1_700_000_000,
-    text: "Я подумаю пока",
-    chat: { id: 1601, type: "private" },
-    from: { id: 1601, first_name: "Клиент" },
-  });
+  const message601 = { date: 1_700_000_000, chat: { id: 1601, type: "private" }, from: { id: 1601, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message601, message_id: 600, text: "Привет" });
+  await crm.receiveTelegram({ ...message601, message_id: 601, text: "Я подумаю пока" });
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.equal(aiCalled, false);
@@ -1464,13 +1512,9 @@ test("возражение «дорого» отвечает готовым те
     autoReplyDebounceMs: 0,
   });
 
-  await crm.receiveTelegram({
-    message_id: 602,
-    date: 1_700_000_000,
-    text: "Ой, дороговато для меня",
-    chat: { id: 1602, type: "private" },
-    from: { id: 1602, first_name: "Клиент" },
-  });
+  const message602 = { date: 1_700_000_000, chat: { id: 1602, type: "private" }, from: { id: 1602, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message602, message_id: 599, text: "Привет" });
+  await crm.receiveTelegram({ ...message602, message_id: 602, text: "Ой, дороговато для меня" });
   await new Promise((resolve) => setTimeout(resolve, 10));
 
   assert.equal(aiCalled, false);
@@ -1848,6 +1892,7 @@ test("запрос про опт отвечает готовым шаблоно�
     chatText: async () => { aiCalled = true; return "не должно вызываться"; },
     chatJson: async () => { aiCalled = true; return { template_id: null }; },
   });
+  await crm.receiveTelegram(templateMessage(700, "Привет"));
   await crm.receiveTelegram(templateMessage(701, "Здравствуйте, а оптом можно у вас брать?"));
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(aiCalled, false);
@@ -1861,6 +1906,7 @@ test("роутер шаблонов выбирает готовый ответ �
     chatText: async () => { generated = true; return "черновик"; },
     chatJson: async ({ user }) => { routerUser = user; return { template_id: "reserve" }; },
   });
+  await crm.receiveTelegram(templateMessage(700, "Привет"));
   await crm.receiveTelegram(templateMessage(702, "Можете придержать для меня модель до вечера?"));
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(generated, false);
@@ -1897,4 +1943,36 @@ test("выключенный роутер шаблонов не вызывает
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(routed, false);
   assert.equal(sent.at(-1), "Обычный ответ модели.");
+});
+
+test("каталог категорий добавляется к первому ответу нового клиента, даже если ответ ушёл шаблоном, и не утекает в следующий диалог", async (t) => {
+  const { crm, sent } = makeTemplateCrm(t, {
+    chatText: async () => "не должно вызываться",
+    chatJson: async () => ({ template_id: null }),
+  });
+
+  // Первое сообщение нового клиента — сразу возражение, не приветствие:
+  // classifyReactiveTemplate отвечает без ИИ, но клиент всё равно должен
+  // увидеть список категорий, как будто бы это было первое сообщение вообще.
+  await crm.receiveTelegram(templateMessage(801, "Дорого для меня, если честно"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(
+    sent.at(-1),
+    `Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?\n\n${FIRST_CONTACT_CATALOG_TEXT}`
+  );
+
+  // Второе сообщение того же клиента — снова шаблонный ответ (жалоба).
+  // Флаг для этого разговора уже снят, поэтому каталог второй раз не добавляется.
+  await crm.receiveTelegram(templateMessage(802, "Это просто ужасное обслуживание"));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(sent.at(-1), templateById("complaint"));
+
+  // Новый, отдельный клиент — его собственное первое сообщение с вопросом
+  // по существу тоже получает каталог, независимо от первого клиента.
+  await crm.receiveTelegram({
+    message_id: 803, date: 1_700_000_000, text: "Оптом можно брать?",
+    chat: { id: 1803, type: "private" }, from: { id: 1803, first_name: "Другой" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(sent.at(-1), /Вот наш актуальный каталог товаров/, "у второго нового клиента свой собственный флаг для первого сообщения");
 });

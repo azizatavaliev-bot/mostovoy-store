@@ -34,6 +34,20 @@ function parseJson(value) {
   }
 }
 
+// Плейсхолдеры {{PHONE_1}} и т.п. могут попасть в любое строковое поле
+// разобранного JSON (гипервизор пересказывает диалог, супервизор пишет
+// corrected_reply) — восстанавливаем рекурсивно, а не только в user-строке.
+function restoreMappingDeep(value, mapping) {
+  if (typeof value === "string") return restoreMapping(value, mapping);
+  if (Array.isArray(value)) return value.map((item) => restoreMappingDeep(item, mapping));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, restoreMappingDeep(item, mapping)])
+    );
+  }
+  return value;
+}
+
 function usageFromOpenAi(usage = {}) {
   return {
     prompt_tokens: Number(usage.input_tokens || 0),
@@ -138,18 +152,24 @@ class AiRouter {
   // DeepSeek идёт своим путём, а не через chatText: только у deepseek.chatJson
   // выставлены response_format: json_object и thinking: disabled — без них
   // V4 иногда тратит весь лимит токенов на рассуждения и отдаёт пустой или
-  // обрезанный текст вместо JSON ("Модель вернула невалидный JSON").
+  // обрезанный текст вместо JSON ("Модель вернула невалидный JSON"). chatText
+  // сама маскирует PII в user/messages — здесь делаем то же вручную, иначе
+  // телефон/адрес/имя клиента (JSON.stringify(history) в user) ушли бы в
+  // DeepSeek без маскирования.
   async chatJson({ system, user, model, temperature, maxTokens, onUsage }) {
     const info = modelInfo(model);
     if (info?.provider === "deepseek" && this.deepseek?.enabled) {
-      return this.deepseek.chatJson({
+      const mapping = buildMapping([user]);
+      const redactedUser = applyMapping(user, mapping);
+      const parsed = await this.deepseek.chatJson({
         system: `${system}\n\nВерни только валидный JSON без Markdown.`,
-        user,
+        user: redactedUser,
         model,
         temperature,
         maxTokens,
         onUsage,
       });
+      return restoreMappingDeep(parsed, mapping);
     }
     const text = await this.chatText({
       system: `${system}\n\nВерни только валидный JSON без Markdown.`,

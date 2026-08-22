@@ -1063,6 +1063,7 @@ class CrmService {
   }
 
   _publishOrderIfConfirmed(conversation, history, selection) {
+    if (isLabConversation(conversation)) return false;
     const messages = Array.isArray(history) ? history : [];
     const customerText = messages
       .filter((message) => message?.role === "user")
@@ -2298,6 +2299,18 @@ prompt_patch — не больше двух коротких предложен�
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }
 
+  // Первое сообщение нового клиента уже было вопросом (не просто «привет») —
+  // к первому же ответу (каким бы путём он ни ушёл: шаблон или ИИ) нужно
+  // дописать список категорий, иначе новый клиент так и не увидит каталог.
+  // Флаг обязательно снимаем здесь же — иначе он зависает в Set навсегда
+  // для диалогов, где первый ответ всегда уходит через шаблон, и текст
+  // каталога однажды приклеится к случайному более позднему ответу.
+  _withPendingCatalog(conversationId, text) {
+    if (!this._pendingFirstContactCatalog.has(conversationId)) return text;
+    this._pendingFirstContactCatalog.delete(conversationId);
+    return `${text}\n\n${FIRST_CONTACT_CATALOG_TEXT}`;
+  }
+
   async _autoReply(conversationId, incomingMessageId, options = {}) {
     if (!this.ai?.enabled) return;
     const detail = this.getConversation(conversationId);
@@ -2308,7 +2321,7 @@ prompt_patch — не больше двух коротких предложен�
     const salesTemplate = classifySalesTemplate(latestCustomerMessage);
     if (salesTemplate) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
-      await this._send(conversationId, salesTemplate.text, "assistant");
+      await this._send(conversationId, this._withPendingCatalog(conversationId, salesTemplate.text), "assistant");
       this._logEvent(conversationId, "info", "delivery", `reply.sent_template.${salesTemplate.kind}`, "Отправлен готовый сценарий магазина");
       if (salesTemplate.kind === "order") this._scheduleOrderIncompleteNudge(conversationId, null);
       else this._scheduleNudgeFollowUps(conversationId, null);
@@ -2317,7 +2330,7 @@ prompt_patch — не больше двух коротких предложен�
     const reactiveText = classifyReactiveTemplate(latestCustomerMessage);
     if (reactiveText) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
-      await this._send(conversationId, reactiveText, "assistant");
+      await this._send(conversationId, this._withPendingCatalog(conversationId, reactiveText), "assistant");
       this._logEvent(conversationId, "info", "delivery", "reply.sent_template", "Готовый ответ на возражение вместо генерации ИИ");
       this._scheduleNudgeFollowUps(conversationId, null);
       return;
@@ -2331,7 +2344,7 @@ prompt_patch — не больше двух коротких предложен�
     const localTemplate = classifyTemplate(latestCustomerMessage, { hasHistory });
     if (localTemplate) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
-      await this._send(conversationId, localTemplate.text, "assistant");
+      await this._send(conversationId, this._withPendingCatalog(conversationId, localTemplate.text), "assistant");
       this._logEvent(conversationId, "info", "delivery", `reply.sent_template.${localTemplate.kind}`, "Готовый шаблон по ключевым словам вместо генерации ИИ");
       if (localTemplate.kind === "complaint" || localTemplate.kind === "human_request") {
         this._publishImportantNotify(detail.conversation, `Клиент: ${latestCustomerMessage}`);
@@ -2345,7 +2358,7 @@ prompt_patch — не больше двух коротких предложен�
     const routedText = routedTemplateId ? templateById(routedTemplateId) : null;
     if (routedText) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
-      await this._send(conversationId, routedText, "assistant");
+      await this._send(conversationId, this._withPendingCatalog(conversationId, routedText), "assistant");
       this._logEvent(conversationId, "info", "delivery", `reply.routed_template.${routedTemplateId}`, "Готовый шаблон по решению роутера вместо генерации ИИ", { templateId: routedTemplateId });
       this._scheduleNudgeFollowUps(conversationId, null);
       return;
@@ -2394,10 +2407,7 @@ prompt_patch — не больше двух коротких предложен�
         });
         return;
       }
-      if (this._pendingFirstContactCatalog.has(conversationId)) {
-        this._pendingFirstContactCatalog.delete(conversationId);
-        reply = `${reply}\n\n${FIRST_CONTACT_CATALOG_TEXT}`;
-      }
+      reply = this._withPendingCatalog(conversationId, reply);
       if (settings.approvalEnabled && !options.bypassApproval) {
         const summary = await this._summarizeConversation(conversationId, history, settings);
         const customerMessage = [...detail.messages].reverse().find((message) => message.direction === "incoming")?.text || "";
@@ -2532,12 +2542,17 @@ prompt_patch — не больше двух коротких предложен�
       : /whatsapp/i.test(source)
         ? "whatsapp"
         : "amocrm";
+    // По external_key с префиксом amo:, а не по голому external_chat_id —
+    // тот не уникален между каналами (тот же числовой chat_id может
+    // совпасть у Telegram/GreenAPI/лаборатории), и ответ менеджера ушёл бы
+    // не в тот диалог.
+    const externalKey = `amo:${chatId}`;
     let conversation = this.db.prepare(
-      "SELECT * FROM crm_conversations WHERE external_chat_id = ? ORDER BY id DESC LIMIT 1"
-    ).get(String(chatId));
+      "SELECT * FROM crm_conversations WHERE external_key = ? ORDER BY id DESC LIMIT 1"
+    ).get(externalKey);
     if (!conversation) {
       conversation = this._upsertConversation({
-        externalKey: `amo:${chatId}`,
+        externalKey,
         source: normalizedSource,
         chatId: String(chatId),
         leadId: leadId || null,

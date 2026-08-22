@@ -38,6 +38,140 @@ test("AI router.chatJson для DeepSeek идёт через json_object+thinkin
   assert.equal(usageModel, "deepseek-v4-pro");
 });
 
+test("AI router.chatJson для DeepSeek маскирует телефон/адрес клиента и восстанавливает их в разобранном JSON", async () => {
+  let sentUser;
+  const deepseek = new DeepSeekClient({
+    apiKey: "test",
+    model: "deepseek-v4-flash",
+    maxRetries: 0,
+    rateLimitPerMinute: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      sentUser = body.messages.find((m) => m.role === "user").content;
+      // Модель эхом возвращает то, что увидела — так проверяем, что именно дошло до неё.
+      return {
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({ echo: sentUser }) } }] }),
+      };
+    },
+  });
+  const router = new AiRouter({ deepseek });
+
+  const result = await router.chatJson({
+    system: "Реши шаблон",
+    user: "Мой номер +996700123456, приезжайте на ул. Ленина 5",
+    model: "deepseek-v4-flash",
+  });
+
+  assert.doesNotMatch(sentUser, /\+996700123456/, "телефон не должен уйти в DeepSeek как есть");
+  assert.doesNotMatch(sentUser, /ул\. Ленина 5/, "адрес не должен уйти в DeepSeek как есть");
+  assert.match(result.echo, /\+996700123456/, "телефон должен вернуться в разобранном JSON");
+  assert.match(result.echo, /ул\. Ленина 5/, "адрес должен вернуться в разобранном JSON");
+});
+
+test("AI router: analyzeMedia предпочитает OpenAI, если заданы оба ключа, иначе Gemini", async (t) => {
+  const previousOpenAiKey = config.openai.apiKey;
+  const previousGeminiKey = config.gemini.apiKey;
+  t.after(() => { config.openai.apiKey = previousOpenAiKey; config.gemini.apiKey = previousGeminiKey; });
+
+  config.openai.apiKey = "openai-test";
+  config.gemini.apiKey = "gemini-test";
+  const calls = [];
+  const router = new AiRouter({
+    deepseek: { enabled: false },
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return { ok: true, json: async () => ({ output_text: "iPhone 17 Pro, синий" }) };
+    },
+  });
+
+  const text = await router.analyzeMedia({ kind: "image", bytes: Buffer.from("fake"), mimeType: "image/jpeg" });
+  assert.equal(text, "iPhone 17 Pro, синий");
+  assert.match(calls[0], /api\.openai\.com|openai/i);
+
+  config.openai.apiKey = "";
+  const calls2 = [];
+  const router2 = new AiRouter({
+    deepseek: { enabled: false },
+    fetchImpl: async (url) => {
+      calls2.push(String(url));
+      return { ok: true, json: async () => ({ output_text: "iPhone 17 Pro, синий" }) };
+    },
+  });
+  const text2 = await router2.analyzeMedia({ kind: "image", bytes: Buffer.from("fake"), mimeType: "image/jpeg" });
+  assert.equal(text2, "iPhone 17 Pro, синий");
+  assert.match(calls2[0], /generativelanguage|gemini/i);
+});
+
+test("AI router: без OPENAI_API_KEY и GEMINI_API_KEY analyzeMedia сразу даёт понятную ошибку", async () => {
+  const previousOpenAiKey = config.openai.apiKey;
+  const previousGeminiKey = config.gemini.apiKey;
+  config.openai.apiKey = "";
+  config.gemini.apiKey = "";
+  try {
+    const router = new AiRouter({ deepseek: { enabled: false } });
+    await assert.rejects(
+      () => router.analyzeMedia({ kind: "audio", bytes: Buffer.from("fake"), mimeType: "audio/ogg" }),
+      /OPENAI_API_KEY.*GEMINI_API_KEY/
+    );
+  } finally {
+    config.openai.apiKey = previousOpenAiKey;
+    config.gemini.apiKey = previousGeminiKey;
+  }
+});
+
+test("AI router: _openAiTranscribe отправляет multipart-форму с файлом и моделью транскрипции", async () => {
+  const previousKey = config.openai.apiKey;
+  config.openai.apiKey = "openai-test";
+  try {
+    let capturedForm;
+    const router = new AiRouter({
+      deepseek: { enabled: false },
+      fetchImpl: async (_url, options) => {
+        capturedForm = options.body;
+        return { ok: true, json: async () => ({ text: "Здравствуйте, есть ли доставка?" }) };
+      },
+    });
+    const text = await router.analyzeMedia({ kind: "audio", bytes: Buffer.from("fake-ogg-bytes"), mimeType: "audio/ogg" });
+    assert.equal(text, "Здравствуйте, есть ли доставка?");
+    assert.ok(capturedForm instanceof FormData);
+    assert.equal(capturedForm.get("model"), config.openai.transcriptionModel);
+    const file = capturedForm.get("file");
+    assert.ok(file instanceof Blob);
+    assert.equal(file.type, "audio/ogg");
+  } finally {
+    config.openai.apiKey = previousKey;
+  }
+});
+
+test("AI router: _geminiMedia кодирует байты в base64 и передаёт правильный mime_type для голосового", async () => {
+  const previousGeminiKey = config.gemini.apiKey;
+  const previousOpenAiKey = config.openai.apiKey;
+  config.gemini.apiKey = "gemini-test";
+  config.openai.apiKey = "";
+  try {
+    let capturedBody;
+    const router = new AiRouter({
+      deepseek: { enabled: false },
+      fetchImpl: async (_url, options) => {
+        capturedBody = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ output_text: "Клиент спрашивает про рассрочку" }) };
+      },
+    });
+    const bytes = Buffer.from("fake-ogg-bytes");
+    const text = await router.analyzeMedia({ kind: "audio", bytes, mimeType: "audio/ogg" });
+    assert.equal(text, "Клиент спрашивает про рассрочку");
+    const mediaPart = capturedBody.input.find((item) => item.type === "audio");
+    assert.ok(mediaPart, "запрос должен содержать часть типа audio");
+    assert.equal(mediaPart.mime_type, "audio/ogg");
+    assert.equal(mediaPart.data, bytes.toString("base64"));
+  } finally {
+    config.gemini.apiKey = previousGeminiKey;
+    config.openai.apiKey = previousOpenAiKey;
+  }
+});
+
+
 test("AI router показывает ChatGPT и Gemini и помечает доступность по ключам", (t) => {
   const previousOpenAi = config.openai.apiKey;
   const previousGemini = config.gemini.apiKey;

@@ -91,7 +91,7 @@ class DeepSeekClient {
     return Boolean(this.apiKey);
   }
 
-  async chatJson({ system, user, temperature = 0, maxTokens, onUsage }) {
+  async chatJson({ system, user, model, temperature = 0, maxTokens, onUsage }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }
@@ -105,7 +105,7 @@ class DeepSeekClient {
       }
       await this.limiter.acquire();
       try {
-        return await this._once({ system, user, temperature, maxTokens, onUsage });
+        return await this._once({ system, user, model, temperature, maxTokens, onUsage });
       } catch (e) {
         lastError = e;
         if (!(e instanceof DeepSeekError) || !e.retriable) throw e;
@@ -142,7 +142,7 @@ class DeepSeekClient {
     throw lastError;
   }
 
-  async _once({ system, user, temperature, maxTokens, onUsage }) {
+  async _once({ system, user, model, temperature, maxTokens, onUsage }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -155,7 +155,7 @@ class DeepSeekClient {
         },
         signal: ac.signal,
         body: JSON.stringify({
-          model: this.model,
+          model: model || this.model,
           messages: [
             { role: "system", content: system },
             { role: "user", content: user },
@@ -203,8 +203,8 @@ class DeepSeekClient {
     }
     const content = choice?.message?.content;
     const parsed = parseJsonStrict(content);
-    onUsage?.(data?.usage || {}, data?.model || this.model);
-    logger.debug("deepseek.ok", { model: this.model, usage: data?.usage });
+    onUsage?.(data?.usage || {}, data?.model || model || this.model);
+    logger.debug("deepseek.ok", { model: model || this.model, usage: data?.usage });
     return parsed;
   }
 

@@ -2,6 +2,41 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const config = require("../server/config");
 const { AiRouter } = require("../server/services/ai");
+const { DeepSeekClient } = require("../server/services/deepseek");
+
+test("AI router.chatJson для DeepSeek идёт через json_object+thinking:disabled, а не через обычный chatText", async () => {
+  let request;
+  const deepseek = new DeepSeekClient({
+    apiKey: "test",
+    model: "deepseek-v4-flash",
+    maxRetries: 0,
+    rateLimitPerMinute: 0,
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({ model: "deepseek-v4-pro", choices: [{ message: { content: '{"template_id":"reserve"}' } }] }),
+      };
+    },
+  });
+  const router = new AiRouter({ deepseek });
+  let usageModel;
+  const result = await router.chatJson({
+    system: "Выбери шаблон",
+    user: "Придержите модель",
+    model: "deepseek-v4-pro",
+    temperature: 0,
+    maxTokens: 60,
+    onUsage: (_usage, model) => { usageModel = model; },
+  });
+
+  assert.deepEqual(result, { template_id: "reserve" });
+  assert.deepEqual(request.thinking, { type: "disabled" });
+  assert.deepEqual(request.response_format, { type: "json_object" });
+  // Модель, выбранную в настройках бота (deepseek-v4-pro), а не дефолт клиента.
+  assert.equal(request.model, "deepseek-v4-pro");
+  assert.equal(usageModel, "deepseek-v4-pro");
+});
 
 test("AI router показывает ChatGPT и Gemini и помечает доступность по ключам", (t) => {
   const previousOpenAi = config.openai.apiKey;

@@ -135,10 +135,29 @@ class AiRouter {
     return this._geminiText({ system, messages, user, model, maxTokens, onUsage });
   }
 
-  async chatJson(args) {
+  // DeepSeek идёт своим путём, а не через chatText: только у deepseek.chatJson
+  // выставлены response_format: json_object и thinking: disabled — без них
+  // V4 иногда тратит весь лимит токенов на рассуждения и отдаёт пустой или
+  // обрезанный текст вместо JSON ("Модель вернула невалидный JSON").
+  async chatJson({ system, user, model, temperature, maxTokens, onUsage }) {
+    const info = modelInfo(model);
+    if (info?.provider === "deepseek" && this.deepseek?.enabled) {
+      return this.deepseek.chatJson({
+        system: `${system}\n\nВерни только валидный JSON без Markdown.`,
+        user,
+        model,
+        temperature,
+        maxTokens,
+        onUsage,
+      });
+    }
     const text = await this.chatText({
-      ...args,
-      system: `${args.system}\n\nВерни только валидный JSON без Markdown.`,
+      system: `${system}\n\nВерни только валидный JSON без Markdown.`,
+      user,
+      model,
+      maxTokens,
+      temperature,
+      onUsage,
     });
     return parseJson(text);
   }

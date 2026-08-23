@@ -691,6 +691,21 @@ const CATALOG_FAMILIES = [
   { request: /canon|кэнон|камер|фотоаппарат/i, terms: ["canon", "g7x"] },
 ];
 
+// official_name в базе — это полный SKU канала: память, цвет и тип SIM
+// зашиты прямо в название («Apple iPhone 15 Pro 1 TB (Black, Blue)»,
+// «Apple iPhone 15 Pro 256 GB Black Titanium»). Для списка линейки в
+// _categoryBrowseReply это бесполезно — 909 товаров дают полсотни строк на
+// одну модель разного объёма/цвета. Срезаем до базовой модели: убираем
+// бренд-префикс и всё начиная с объёма памяти (а с ним заодно и цвет, и
+// тип SIM, которые в названии всегда идут следом).
+function baseModelLine(name) {
+  return String(name || "")
+    .replace(/^(?:Apple|Samsung|Xiaomi|Garmin|Dyson|DJI|Sony|Canon|Google|Huawei)\s+/i, "")
+    .replace(/\s*\d+\s*(?:GB|TB)\b.*$/i, "")
+    .replace(/\s*\([^)]*\)\s*$/, "")
+    .trim();
+}
+
 function narrowCatalogForRequest(catalog, request) {
   try {
     const data = JSON.parse(catalog);
@@ -2345,7 +2360,9 @@ prompt_patch — не больше двух коротких предложен�
     const matches = (row) => family.terms.some((term) =>
       `${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU").includes(term)
     );
-    const names = [...new Set(rows.filter(matches).map((row) => row.name))].sort((a, b) => a.localeCompare(b, "ru"));
+    const names = [...new Set(
+      rows.filter(matches).map((row) => baseModelLine(row.name)).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
     if (names.length < 2) return null;
     const lines = names.map((name) => `• ${name}`).join("\n");
     return `У нас в наличии несколько моделей:\n${lines}\n\nКакая интересует? Назовите модель — сразу назову актуальную цену, цвета и объём памяти.`;
@@ -2762,4 +2779,5 @@ module.exports = {
   FIRST_CONTACT_CATALOG_TEXT,
   MOSTOVOY_SALES_TEMPLATES,
   classifySalesTemplate,
+  baseModelLine,
 };

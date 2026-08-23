@@ -14,6 +14,7 @@ const {
   telegramHtml,
   FIRST_CONTACT_CATALOG_TEXT,
   classifySalesTemplate,
+  baseModelLine,
 } = require("../server/services/crm");
 const { templateById } = require("../server/services/templates");
 const { parseAmoWebhook, parseAmoWebhooks } = require("../server/services/amocrm");
@@ -2081,4 +2082,18 @@ test("_isBareCategoryRequest не считает голым запрос с мо
   assert.equal(crm._isBareCategoryRequest("MacBook Air 256"), false, "есть цифры");
   assert.equal(crm._isBareCategoryRequest("Хочу macbook pro"), false, "есть модификатор pro");
   assert.equal(crm._isBareCategoryRequest("Хочу узнать, какие есть модели айфона с хорошей камерой для видеосъёмки"), false, "слишком длинное сообщение");
+});
+
+test("baseModelLine сводит полный SKU канала к короткому названию модели", () => {
+  // Реальные названия с прода — official_name зашивает память/цвет/SIM в строку.
+  assert.equal(baseModelLine("Apple iPhone 15 Pro Max 1 TB"), "iPhone 15 Pro Max");
+  assert.equal(baseModelLine("Apple iPhone 15 Pro 1 TB (Black, Blue)"), "iPhone 15 Pro");
+  assert.equal(baseModelLine("Apple iPhone 15 Pro 256 GB Black Titanium"), "iPhone 15 Pro");
+  assert.equal(baseModelLine("Apple iPhone 13 256GB Blue/Green"), "iPhone 13");
+  assert.equal(baseModelLine("Apple iPhone 16 Pro Max 256 GB Black Titanium (US)"), "iPhone 16 Pro Max");
+  assert.equal(baseModelLine("Apple iPhone 17 Pro Max 1TB физическая SIM + eSIM"), "iPhone 17 Pro Max");
+  assert.equal(baseModelLine("Apple iPhone 17 Pro Max 1TB eSIM"), "iPhone 17 Pro Max");
+  assert.equal(baseModelLine("iPhone 15 Pro Max"), "iPhone 15 Pro Max", "уже короткое название не трогаем");
+  assert.equal(baseModelLine("Apple iPhone 16e 128 GB"), "iPhone 16e");
+  assert.equal(baseModelLine("iPhone Air"), "iPhone Air", "без цифры и памяти — как есть");
 });

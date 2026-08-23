@@ -2299,6 +2299,43 @@ prompt_patch — не больше двух коротких предложен�
     return { stored: Boolean(inserted), conversationId: Number(conversation.id) };
   }
 
+  // Слова, из-за которых сообщение перестаёт быть «голым» запросом линейки:
+  // цифры (модель/память/год), явные модификаторы. Консервативно — при
+  // сомнении НЕ считаем запрос голым и отдаём его обычной генерации, а не
+  // наоборот (безопасный дефолт — старое поведение, а не новый шаг).
+  _isBareCategoryRequest(text) {
+    const value = String(text || "").trim();
+    if (!value) return false;
+    if (/\d/u.test(value)) return false;
+    if (/\b(?:pro|max|plus|mini|ultra|air|se|gb|tb|про|макс|плюс|мини|эйр|титан|titan)\b/iu.test(value)) return false;
+    const wordCount = value.split(/\s+/u).filter(Boolean).length;
+    return wordCount <= 6;
+  }
+
+  // Список реальных названий моделей линейки (Distinct по official_name из
+  // тех же активных структурированных карточек, что и основной каталог) —
+  // без цены и без вызова ИИ. null — линейка не распознана или в ней меньше
+  // двух разных моделей (тогда список бессмысленен, пусть отвечает ИИ сам).
+  _categoryBrowseReply(customerText) {
+    if (!this._isBareCategoryRequest(customerText)) return null;
+    const family = CATALOG_FAMILIES.find((item) => item.request.test(customerText));
+    if (!family) return null;
+    const rows = this.db.prepare(
+      `SELECT DISTINCT p.official_name AS name, p.brand AS brand, p.category AS category
+         FROM products p
+         JOIN message_products mp ON mp.product_id = p.id
+         JOIN telegram_messages tm ON tm.id = mp.message_id
+        WHERE p.status != 'hidden' AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL`
+    ).all();
+    const matches = (row) => family.terms.some((term) =>
+      `${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU").includes(term)
+    );
+    const names = [...new Set(rows.filter(matches).map((row) => row.name))].sort((a, b) => a.localeCompare(b, "ru"));
+    if (names.length < 2) return null;
+    const lines = names.map((name) => `• ${name}`).join("\n");
+    return `У нас в наличии несколько моделей:\n${lines}\n\nКакая интересует? Назовите модель — сразу назову актуальную цену, цвета и объём памяти.`;
+  }
+
   // Первое сообщение нового клиента уже было вопросом (не просто «привет») —
   // к первому же ответу (каким бы путём он ни ушёл: шаблон или ИИ) нужно
   // дописать список категорий, иначе новый клиент так и не увидит каталог.
@@ -2360,6 +2397,21 @@ prompt_patch — не больше двух коротких предложен�
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
       await this._send(conversationId, this._withPendingCatalog(conversationId, routedText), "assistant");
       this._logEvent(conversationId, "info", "delivery", `reply.routed_template.${routedTemplateId}`, "Готовый шаблон по решению роутера вместо генерации ИИ", { templateId: routedTemplateId });
+      this._scheduleNudgeFollowUps(conversationId, null);
+      return;
+    }
+    // Голый запрос по линейке («айфон», «покажите макбуки») без конкретной
+    // модели — список названий БЕЗ цены, без вызова ИИ. Модель путала цены
+    // именно на широких запросах: полный каталог (сотни товаров с ценами в
+    // 4 валютах каждый) заставлял её выбирать между похожими карточками.
+    // Когда клиент называет конкретную модель следующим сообщением, обычная
+    // генерация ниже почти всегда сужается до одного реального кандидата —
+    // цену перепутать почти не с чем.
+    const categoryBrowseText = this._categoryBrowseReply(latestCustomerMessage);
+    if (categoryBrowseText) {
+      if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
+      await this._send(conversationId, this._withPendingCatalog(conversationId, categoryBrowseText), "assistant");
+      this._logEvent(conversationId, "info", "delivery", "reply.category_browse", "Список моделей линейки без цены — клиент ещё не назвал конкретную модель");
       this._scheduleNudgeFollowUps(conversationId, null);
       return;
     }

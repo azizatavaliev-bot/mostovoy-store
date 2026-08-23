@@ -1976,3 +1976,78 @@ test("каталог категорий добавляется к первому
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.match(sent.at(-1), /Вот наш актуальный каталог товаров/, "у второго нового клиента свой собственный флаг для первого сообщения");
 });
+
+test("голый запрос по линейке даёт список моделей без цены, а конкретная модель — обычную генерацию", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)"
+  );
+  const p1 = insertProduct.run("iphone-15-t", "iphone-15-t", "iPhone 15", 900, "USD", "Apple", "Смартфоны").lastInsertRowid;
+  const p2 = insertProduct.run("iphone-15-pro-t", "iphone-15-pro-t", "iPhone 15 Pro", 1100, "USD", "Apple", "Смартфоны").lastInsertRowid;
+  const p3 = insertProduct.run("iphone-17-t", "iphone-17-t", "iPhone 17", 1300, "USD", "Apple", "Смартфоны").lastInsertRowid;
+  const macbook = insertProduct.run("macbook-air-t", "macbook-air-t", "MacBook Air", 1000, "USD", "Apple", "Ноутбуки").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, p1, 900, "USD");
+  link.run(message, p2, 1100, "USD");
+  link.run(message, p3, 1300, "USD");
+  link.run(message, macbook, 1000, "USD");
+
+  let aiCalled = false;
+  const crm = new CrmService({
+    db,
+    deepseek: {
+      enabled: true,
+      chatText: async () => { aiCalled = true; return "iPhone 15 Pro — 1100$. Оформляем?"; },
+      chatJson: async () => ({ template_id: null }),
+    },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
+      return { ok: true, status: 200 };
+    },
+    autoReplyDebounceMs: 0,
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+
+  const message1 = { date: 1_700_000_000, chat: { id: 2001, type: "private" }, from: { id: 2001, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message1, message_id: 1, text: "Привет" });
+  await crm.receiveTelegram({ ...message1, message_id: 2, text: "Айфон" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(aiCalled, false, "список моделей не требует вызова ИИ");
+  const conversation = crm.listConversations()[0];
+  let detail = crm.getConversation(conversation.id);
+  const browseReply = detail.messages.at(-1).text;
+  assert.match(browseReply, /iPhone 15\n/);
+  assert.match(browseReply, /iPhone 15 Pro/);
+  assert.match(browseReply, /iPhone 17/);
+  assert.doesNotMatch(browseReply, /MacBook/, "в список линейки не должны попасть чужие категории");
+  assert.doesNotMatch(browseReply, /\d{3,}\s*\$|900|1100|1300/, "в списке линейки не должно быть цены");
+
+  await crm.receiveTelegram({ ...message1, message_id: 3, text: "iPhone 15 Pro" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(aiCalled, true, "конкретная модель уже идёт в обычную генерацию с ценой");
+  detail = crm.getConversation(conversation.id);
+  assert.match(detail.messages.at(-1).text, /1100/);
+});
+
+test("_isBareCategoryRequest не считает голым запрос с моделью, объёмом памяти или модификатором", () => {
+  const db = createConnection(":memory:");
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  db.close();
+  assert.equal(crm._isBareCategoryRequest("Айфон"), true);
+  assert.equal(crm._isBareCategoryRequest("Покажите макбуки"), true);
+  assert.equal(crm._isBareCategoryRequest("iPhone 17 Pro Max"), false, "есть цифры и Pro/Max");
+  assert.equal(crm._isBareCategoryRequest("MacBook Air 256"), false, "есть цифры");
+  assert.equal(crm._isBareCategoryRequest("Хочу macbook pro"), false, "есть модификатор pro");
+  assert.equal(crm._isBareCategoryRequest("Хочу узнать, какие есть модели айфона с хорошей камерой для видеосъёмки"), false, "слишком длинное сообщение");
+});

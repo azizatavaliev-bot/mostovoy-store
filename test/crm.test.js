@@ -89,6 +89,37 @@ test("каталог для ИИ отдаёт структурированные
   assert.equal(catalog.products.some((product) => product.name === "Whoop 5.0 Peak"), false);
 });
 
+test("одинаковое название с разных постов канала не даёт ИИ двух карточек с разной ценой — остаётся только самая свежая", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'active')"
+  );
+  // Синк не распознал их как один и тот же товар и создал два разных product_id
+  // с одинаковым official_name — ровно то, что нашлось на проде (например,
+  // Apple iPhone 15 Pro Max 1 TB: $1970 и $1620 одновременно).
+  const stale = insertProduct.run("iphone-dup-old", "iphone-dup-old", "Apple iPhone 15 Pro Max 1 TB", 1, "USD").lastInsertRowid;
+  const fresh = insertProduct.run("iphone-dup-new", "iphone-dup-new", "Apple iPhone 15 Pro Max 1 TB", 1, "USD").lastInsertRowid;
+  const oldMessage = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2024-11-14T06:27:49.000Z', 'Старый пост', 'hash-old', 'ok')`
+  ).run().lastInsertRowid;
+  const newMessage = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 2, '2026-07-24T11:09:41.000Z', 'Новый пост', 'hash-new', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(oldMessage, stale, 1970, "USD");
+  link.run(newMessage, fresh, 1620, "USD");
+
+  const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
+  const matches = catalog.products.filter((product) => product.name === "Apple iPhone 15 Pro Max 1 TB");
+  assert.equal(matches.length, 1, "модель не должна видеть две карточки с одним названием и разной ценой");
+  assert.equal(matches[0].price, 1620, "должна остаться карточка из более свежего поста");
+});
+
 test("подбор по категории отбирает товары из канала без вызова ИИ", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

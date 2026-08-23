@@ -611,6 +611,21 @@ function buildTelegramCatalogForAssistant(db) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
+  // У части товаров синк создал НЕСКОЛЬКО разных строк products (разных
+  // product_id) под одним и тем же official_name — сопоставление с уже
+  // существующим товаром сработало не всегда. Каждая такая строка проходит
+  // через "самое новое активное упоминание" САМА ПО СЕБЕ (см. подзапрос
+  // выше), поэтому в products может остаться две-три карточки с одинаковым
+  // названием и РАЗНЫМИ ценами — модель не может понять, какую называть, и
+  // путает цену (проверено на проде: 65 из 651 названий имели конфликт
+  // цены между такими карточками). ORDER BY выше уже отдаёт самую свежую
+  // запись первой — оставляем на каждое название только её.
+  const seenProductNames = new Set();
+  const dedupedProducts = products.filter((p) => {
+    if (seenProductNames.has(p.official_name)) return false;
+    seenProductNames.add(p.official_name);
+    return true;
+  });
   // Новый или отредактированный пост сначала имеет статус raw. Добавляем
   // его в payload товароведа сразу: он новее структурированной карточки и
   // должен иметь приоритет до фонового разбора всей истории.
@@ -626,9 +641,9 @@ function buildTelegramCatalogForAssistant(db) {
     text: post.telegram_original_text,
   }));
 
-  if (products.length || pendingPosts.length) return JSON.stringify({
+  if (dedupedProducts.length || pendingPosts.length) return JSON.stringify({
     source: "telegram_channel",
-    products: products.map((p) => ({
+    products: dedupedProducts.map((p) => ({
       name: p.official_name,
       brand: p.brand || null,
       category: p.category || null,

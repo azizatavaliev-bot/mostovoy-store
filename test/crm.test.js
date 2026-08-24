@@ -2107,6 +2107,9 @@ test("_isBareCategoryRequest не считает голым запрос с мо
   assert.equal(crm._isBareCategoryRequest("MacBook Air 256"), false, "есть цифры");
   assert.equal(crm._isBareCategoryRequest("Хочу macbook pro"), false, "есть модификатор pro");
   assert.equal(crm._isBareCategoryRequest("Хочу узнать, какие есть модели айфона с хорошей камерой для видеосъёмки"), false, "слишком длинное сообщение");
+  assert.equal(crm._isBareCategoryRequest("Мне не нужна приставка"), false, "отказ, не запрос — баг с прода: показывало список консолей");
+  assert.equal(crm._isBareCategoryRequest("Не хочу макбук"), false, "отказ от категории");
+  assert.equal(crm._isBareCategoryRequest("Без приставки обойдусь"), false, "отказ через «без»");
 });
 
 test("baseModelLine сводит полный SKU канала к короткому названию модели", () => {

@@ -2371,6 +2371,10 @@ prompt_patch — не больше двух коротких предложен�
     if (!value) return false;
     if (/\d/u.test(value)) return false;
     if (/\b(?:pro|max|plus|mini|ultra|air|se|gb|tb|про|макс|плюс|мини|эйр|титан|titan)\b/iu.test(value)) return false;
+    // «Мне не нужна приставка» матчит семью по слову «пристав», но это
+    // отказ, а не запрос — без этой проверки список консолей вылезал на
+    // прямое «не нужна» (найдено на проде вместе с багом enforceCatalogAvailabilityReply).
+    if (/не\s+нуж(?:ен|на|но)|не\s+хочу|без\s+/iu.test(value)) return false;
     const wordCount = value.split(/\s+/u).filter(Boolean).length;
     return wordCount <= 6;
   }

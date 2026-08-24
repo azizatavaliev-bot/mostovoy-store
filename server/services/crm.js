@@ -536,14 +536,47 @@ function enforceCatalogPriceReply({ reply, request, context = request, selection
 // помечен доступным (замечено на iPhone 17 при исправных данных). Работает
 // как enforceCatalogPriceReply выше: не переписывает промптом, а ловит уже
 // готовый ответ и подменяет его, если он противоречит каталогу.
-function enforceCatalogAvailabilityReply({ reply, selection }) {
-  const products = productsFromSelection(selection);
-  if (!products.length) return reply;
+// Есть ли у request/context хоть одно значимое слово общее с названием
+// хотя бы одного товара — грубая, но дешёвая проверка «это вообще о том,
+// что спросил клиент», без учёта отсечения Pro/mm-размеров и т.п. из
+// relevantProductsForContext (та функция при отсутствии совпадений
+// возвращает ВСЕ кандидаты как есть — этого достаточно для «сузить
+// подборку», но недостаточно для «доверять ли странице целиком»).
+function productsMentionRequest(products, request, context = request) {
+  const normalize = (value) => String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gu, " ")
+    .trim();
+  const recent = normalize(String(context || request || "").slice(-1600));
+  const stop = new Set(["для", "есть", "стоит", "цена", "модель", "хочу", "нужен", "нужна", "нужно", "какой", "какая", "какие"]);
+  return products.some((product) =>
+    normalize(product.name).split(" ").some((token) => token.length >= 3 && !stop.has(token) && recent.includes(token))
+  );
+}
+
+function enforceCatalogAvailabilityReply({ reply, request, context = request, selection }) {
+  const candidates = productsFromSelection(selection);
+  if (!candidates.length) return reply;
   const output = String(reply || "");
   // \b не распознаёт кириллицу как word-символ, поэтому границы слов здесь
   // не через \b, а через явные разделители/пробелы.
   const claimsUnavailable = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu.test(output);
   if (!claimsUnavailable) return reply;
+  // Раньше здесь брались первые 5 товаров ИЗ ВСЕЙ подборки без фильтрации —
+  // на проде это выглядело так: клиент несколько сообщений подряд спрашивал
+  // про Garmin Lily 2 (которого нет в базе), ИИ честно писал «в наличии
+  // нет», а эта страховка подменяла ответ на первые 5 позиций из подборки,
+  // которая после более раннего вопроса про игровые приставки состояла из
+  // PlayStation 5, Steam Deck, Meta Quest и OneBlade. Клиент вместо ответа
+  // про часы получал один и тот же список приставок на каждое сообщение.
+  // Сужаем как в enforceCatalogPriceReply, и — раз это страховка именно от
+  // ГАЛЛЮЦИНАЦИИ, а не общий «покажи что есть» — дополнительно проверяем,
+  // что в подборке в принципе есть товар, который называется похоже на то,
+  // что спросил клиент. Нет совпадения — значит клиента скорее всего
+  // спросили про то, чего у нас правда нет, и «в наличии нет» от ИИ верно.
+  const products = relevantProductsForContext(candidates, request, context);
+  if (!productsMentionRequest(products, request, context)) return reply;
   const lines = products.slice(0, 5).map((product) => {
     const details = [product.storage, product.color].filter(Boolean).join(", ");
     const value = roundAssistantPrice(Number(product.priceKgs), "KGS");
@@ -1762,7 +1795,7 @@ prompt_patch — не больше двух коротких предложен�
       draft: reply,
     });
     reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
-    reply = enforceCatalogAvailabilityReply({ reply, selection });
+    reply = enforceCatalogAvailabilityReply({ reply, request: text, context: catalogRequest, selection });
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
       latencyMs: Date.now() - startedAt,
@@ -2484,7 +2517,7 @@ prompt_patch — не больше двух коротких предложен�
       });
       reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
-      reply = enforceCatalogAvailabilityReply({ reply, selection });
+      reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {
           incomingMessageId,

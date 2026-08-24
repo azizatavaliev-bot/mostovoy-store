@@ -367,6 +367,7 @@ test("галлюцинация «в наличии нет» заменяется
 
   const fixed = enforceCatalogAvailabilityReply({
     reply: "Здравствуйте! Сейчас подтверждённых iPhone 17 в наличии нет. Могу предложить варианты, когда они появятся.",
+    request: "Есть iPhone 17?",
     selection,
   });
   assert.match(fixed, /Есть в наличии/);
@@ -376,9 +377,33 @@ test("галлюцинация «в наличии нет» заменяется
 
   const untouched = enforceCatalogAvailabilityReply({
     reply: "iPhone 17, 256 ГБ — 76 560 сом. В наличии.",
+    request: "Есть iPhone 17?",
     selection,
   });
   assert.equal(untouched, "iPhone 17, 256 ГБ — 76 560 сом. В наличии.");
+});
+
+test("честное «в наличии нет» на товар, которого правда нет в подборке, не подменяется чужим списком", () => {
+  // Ровно баг с прода: клиент несколько сообщений подряд спрашивал про
+  // Garmin Lily 2 (которого нет в каталоге), а подборка на тот момент
+  // диалога — игровые приставки из более раннего вопроса. ИИ честно писал
+  // «в наличии нет», страховка подменяла ответ на список приставок.
+  const selection = `АКТУАЛЬНЫЙ КАТАЛОГ:\n${JSON.stringify({
+    products: [
+      { name: "PlayStation 5 Slim", price: 620, currency: "USD", priceKgs: 54560, available: true },
+      { name: "PlayStation 5 Pro", price: 765, currency: "USD", priceKgs: 67320, available: true },
+      { name: "Valve Steam Deck OLED 512 GB", price: 550, currency: "USD", priceKgs: 48400, available: true },
+    ],
+  })}`;
+
+  const untouched = enforceCatalogAvailabilityReply({
+    reply: "К сожалению, Garmin Lily 2 в наличии нет.",
+    request: "Garmin lily 2",
+    context: "КЛИЕНТ: A lily 2?\nКЛИЕНТ: Желательно фиолет\nКЛИЕНТ: Ну или другой\nКЛИЕНТ: Цвет\nКЛИЕНТ: Garmin lily 2",
+    selection,
+  });
+  assert.equal(untouched, "К сожалению, Garmin Lily 2 в наличии нет.");
+  assert.doesNotMatch(untouched, /PlayStation/);
 });
 
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {

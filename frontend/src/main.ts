@@ -836,7 +836,9 @@ function applyProductLineQuery(query: string): void {
 }
 
 function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual"], product: Product | null): string {
-  const source = product?.image || product?.img;
+  // Кураторское фото на белом фоне в приоритете: сырые фото из базы бывают
+  // со скриншотами прозрачности/коллажами поставщика (см. mediaHTML).
+  const source = (product && curatedPhoto(product.name || "")) || product?.image || product?.img;
   if (source) {
     return `<img class="product-family__image product-family__image--contain" src="${optimizedImageUrl(source, 640)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`;
   }

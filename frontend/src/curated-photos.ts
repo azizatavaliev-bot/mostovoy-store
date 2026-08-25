@@ -52,7 +52,8 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /dji mic/i, image: "/images/products/other/dji-mic-3.webp" },  // DJI Mic
   { test: /playstation|switch|steam deck/i, image: "/images/products/other/ps5-pro.webp" },  // Игровые приставки
   { test: /canon|instax/i, image: "/images/products/other/canon-g7x.webp" },  // Камеры
-  { test: /dyson|philips|airwrap|airstrait|oneblade/i, image: "/images/products/dyson/airwrap.webp" },  // Красота
+  { test: /oneblade|styleshaver/i, image: "/images/products/other/philips-oneblade.webp" },  // Philips-бритвы (раньше перед общим правилом ниже)
+  { test: /dyson|philips|airwrap|airstrait/i, image: "/images/products/dyson/airwrap.webp" },  // Красота
   { test: /kindle/i, image: "/images/products/other/kindle-paperwhite.webp" },  // Электронные книги
   { test: /pencil|keyboard|mouse|расч/i, image: "/images/products/apple/apple-pencil-pro.webp" },  // Аксессуары
 

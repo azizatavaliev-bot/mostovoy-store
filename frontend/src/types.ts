@@ -31,6 +31,10 @@ export interface Product {
   discountLabel?: string | null;
   salePrice?: number | null;
   // Поля для SVG-рендера телефона (только у товаров из data.js).
+  // forceSvg: явная просьба показать векторный рендер вместо фото (выбран
+  // цвет, для которого нет отдельного фото) — не путать с image=null,
+  // означающим просто "фото ещё не загружено в базу".
+  forceSvg?: boolean;
   tone?: string;
   lenses?: number;
   style?: string;

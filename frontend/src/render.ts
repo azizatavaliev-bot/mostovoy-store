@@ -95,9 +95,9 @@ export function mediaHTML(p: Product, cls: string): string {
   const originalSrc = p.image || p.img || fromFeed || (p.id ? `/images/${p.id}.webp` : "");
   const feedSrc = optimizedImageUrl(originalSrc, cls === "gallery" ? 1200 : 640);
   // Для известных моделей показываем отобранное фото на белом фоне,
-  // фото из базы остаётся запасным вариантом. image: null означает, что
+  // фото из базы остаётся запасным вариантом. forceSvg означает, что
   // вызывающий код намеренно просит векторный рендер (выбран другой цвет).
-  const curated = p.image === null ? "" : curatedPhoto(p.name || "");
+  const curated = p.forceSvg ? "" : curatedPhoto(p.name || "");
   const src = curated || feedSrc;
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);

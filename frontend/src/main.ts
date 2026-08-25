@@ -634,7 +634,7 @@ const cardColor = new Map<string, number>();
 function cardMedia(p: Product): string {
   const idx = cardColor.get(p.id) || 0;
   if (!p.swatches?.length || idx === 0) return mediaHTML(p, "card__media");
-  return mediaHTML({ ...p, tone: p.swatches[idx][1], image: null }, "card__media");
+  return mediaHTML({ ...p, tone: p.swatches[idx][1], forceSvg: true }, "card__media");
 }
 
 function swatchesHTML(p: Product): string {

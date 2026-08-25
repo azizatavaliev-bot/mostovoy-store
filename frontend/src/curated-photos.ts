@@ -62,6 +62,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   // Samsung. «Galaxy Watch Ultra» должен сработать раньше Apple Watch Ultra.
   { test: /galaxy watch ultra/i, image: "/images/products/samsung/galaxy-watch-ultra.webp" },
   { test: /watch ?6 classic/i, image: "/images/products/samsung/galaxy-watch6-classic.webp" },
+  { test: /fold ?8/i, image: "/images/products/samsung/galaxy-z-fold-8.webp" },  // Galaxy Z Fold 8 (раньше Fold 6/5, чтобы не перехватывались)
   { test: /z fold ?6/i, image: "/images/products/samsung/galaxy-z-fold-6.webp" },
   { test: /z fold ?5/i, image: "/images/products/samsung/galaxy-z-fold-5.webp" },
   { test: /z flip ?6/i, image: "/images/products/samsung/galaxy-z-flip-6.webp" },
@@ -151,6 +152,13 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   // Прочее.
   { test: /insta360/i, image: "/images/products/other/insta360-x3.webp" },
   { test: /plaud/i, image: "/images/products/other/plaud-note.webp" },
+
+  // Meta Starfire, Omega, DJI — частные правила раньше общих (osmo mobile / osmo nano / pocket 3).
+  { test: /starfire/i, image: "/images/products/meta/meta-starfire.webp" },  // Meta Starfire (Kylie Edition)
+  { test: /seamaster/i, image: "/images/products/other/omega-seamaster.webp" },  // Omega Seamaster
+  { test: /osmo mobile/i, image: "/images/products/other/dji-osmo-mobile-8p.webp" },  // DJI Osmo Mobile 8P
+  { test: /osmo nano/i, image: "/images/products/other/dji-osmo-nano.webp" },  // DJI Osmo Nano
+  { test: /pocket ?3/i, image: "/images/products/other/dji-pocket-3.webp" },  // DJI Pocket 3
 ]
 
 /** Путь к отобранному фото для товара — или пустая строка, если его нет. */

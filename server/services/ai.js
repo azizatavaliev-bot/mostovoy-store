@@ -48,6 +48,35 @@ function restoreMappingDeep(value, mapping) {
   return value;
 }
 
+// Инструкция для анализа кадров Instagram Story/Highlight (см.
+// server/services/instagram/storyAnalyzer.js). Строго структурированный
+// JSON, никакого ответа клиенту — это preprocessing для основного
+// AI-менеджера, не второй чат-бот.
+const STORY_VISION_PROMPT = `Ты анализируешь кадры из Instagram Stories/Highlights магазина техники — НЕ отвечаешь клиенту напрямую, только описываешь, что видно на кадрах, для внутреннего использования продавцом-консультантом.
+
+Верни ТОЛЬКО валидный JSON без markdown строго такой формы:
+{
+  "summary": "краткое описание того, что происходит на кадрах, 1-2 предложения",
+  "products_visible": [
+    {
+      "name_guess": "как визуально выглядит товар, например «чёрные прямоугольные солнцезащитные очки»",
+      "category": "категория товара или null, если не ясно",
+      "brand": "бренд ТОЛЬКО если он реально виден на кадре (лого, надпись, упаковка) — иначе null",
+      "model": "модель ТОЛЬКО если она реально видна или названа текстом на кадре — иначе null",
+      "confidence": 0.0-1.0
+    }
+  ],
+  "visible_text": ["текст, реально видимый на кадрах, каждая строка отдельным элементом"],
+  "important_details": ["важные визуальные детали: цвет, форма, материал и т.п."],
+  "contains_product": true или false
+}
+
+Правила:
+- Никогда не выдумывай бренд, модель, цену или наличие товара, если это нельзя определить по кадрам. Если не уверен — null, а не догадка.
+- products_visible может быть пустым массивом, если на кадрах не видно конкретного товара (например только человек говорит на камеру без предмета).
+- confidence отражает твою реальную уверенность в том, что это за товар, а не в том, что товар вообще есть на кадре.
+- Если кадров несколько — это кадры ОДНОГО и того же Story/Highlight, синтезируй общее описание, а не описывай каждый кадр отдельно.`;
+
 function usageFromOpenAi(usage = {}) {
   return {
     prompt_tokens: Number(usage.input_tokens || 0),
@@ -194,6 +223,69 @@ class AiRouter {
       return this._openAiImage({ bytes, mimeType, caption, onUsage });
     }
     return this._geminiMedia({ kind, bytes, mimeType, caption, onUsage });
+  }
+
+  // До трёх кадров Story/Highlight — один вызов, структурированный JSON.
+  // Тот же выбор провайдера, что и analyzeMedia (OpenAI приоритетнее, Gemini
+  // как запасной вариант) — оба уже умеют смотреть на изображения, третьего
+  // провайдера заводить незачем.
+  async analyzeStoryFrames({ images, caption = "", onUsage }) {
+    if (!Array.isArray(images) || !images.length) throw new Error("Нет кадров для анализа");
+    const selected = config.openai.apiKey
+      ? "openai"
+      : config.gemini.apiKey
+        ? "gemini"
+        : null;
+    if (!selected) throw new Error("Для анализа Story настройте OPENAI_API_KEY или GEMINI_API_KEY");
+    const parsed = selected === "openai"
+      ? await this._openAiStoryFrames({ images, caption, onUsage })
+      : await this._geminiStoryFrames({ images, caption, onUsage });
+    if (!parsed || typeof parsed !== "object") throw new Error("Vision вернул невалидный ответ");
+    return parsed;
+  }
+
+  async _openAiStoryFrames({ images, caption, onUsage }) {
+    const data = await this._jsonRequest(`${config.openai.baseUrl}/responses`, {
+      headers: { authorization: `Bearer ${config.openai.apiKey}` },
+      body: {
+        model: config.openai.model,
+        instructions: STORY_VISION_PROMPT,
+        input: [{
+          role: "user",
+          content: [
+            ...images.map((image) => ({
+              type: "input_image",
+              image_url: `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString("base64")}`,
+            })),
+            { type: "input_text", text: caption || "Опиши, что на этих кадрах Story." },
+          ],
+        }],
+        max_output_tokens: 700,
+      },
+      provider: "OpenAI",
+    });
+    onUsage?.(usageFromOpenAi(data.usage), data.model || config.openai.model);
+    const text = outputText(data);
+    if (!text) throw new Error("OpenAI не смог проанализировать Story");
+    return parseJson(text);
+  }
+
+  async _geminiStoryFrames({ images, caption, onUsage }) {
+    const data = await this._jsonRequest(`${config.gemini.baseUrl}/interactions`, {
+      headers: { "x-goog-api-key": config.gemini.apiKey, "Api-Revision": "2026-05-20" },
+      body: {
+        model: config.gemini.model,
+        input: [
+          { type: "text", text: [STORY_VISION_PROMPT, caption].filter(Boolean).join("\n") },
+          ...images.map((image) => ({ type: "image", data: Buffer.from(image.bytes).toString("base64"), mime_type: image.mimeType })),
+        ],
+      },
+      provider: "Gemini",
+    });
+    onUsage?.(usageFromGemini(data.usage), data.model || config.gemini.model);
+    const text = outputText(data);
+    if (!text) throw new Error("Gemini не смог проанализировать Story");
+    return parseJson(text);
   }
 
   async _openAiText({ system, messages, user, model, maxTokens, onUsage }) {

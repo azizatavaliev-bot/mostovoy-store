@@ -81,6 +81,22 @@ const config = {
     timeoutMs: int(process.env.CRM_TIMEOUT_MS, 5000),
   },
 
+  // Instagram Story/Highlight по ссылке от клиента — резолвится через
+  // HikerAPI (hikerapi.com), см. services/instagram/. Без ключа фича просто
+  // выключена: ссылка остаётся в тексте сообщения как есть, ИИ отвечает без
+  // контекста Story.
+  instagram: {
+    hikerApiKey: process.env.HIKER_API_KEY || "",
+    hikerApiBaseUrl: (process.env.HIKER_API_BASE_URL || "https://api.hikerapi.com").replace(/\/+$/, ""),
+    hikerApiTimeoutMs: int(process.env.HIKER_API_TIMEOUT_MS, 20000),
+    downloadTimeoutMs: int(process.env.INSTAGRAM_STORY_DOWNLOAD_TIMEOUT_MS, 20000),
+    maxMediaBytes: int(process.env.INSTAGRAM_STORY_MAX_MEDIA_BYTES, 30 * 1024 * 1024),
+    frameMaxSide: int(process.env.INSTAGRAM_STORY_FRAME_MAX_SIDE, 1280),
+    frameJpegQuality: int(process.env.INSTAGRAM_STORY_FRAME_QUALITY, 82),
+    storyCacheTtlHours: int(process.env.INSTAGRAM_STORY_CACHE_TTL_HOURS, 36),
+    highlightCacheTtlHours: int(process.env.INSTAGRAM_HIGHLIGHT_CACHE_TTL_HOURS, 24 * 14),
+  },
+
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || "",
     baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, ""),
@@ -204,6 +220,7 @@ config.features = {
   adminLogin: Boolean(config.admin.username && config.admin.passwordHash && config.admin.sessionSecret),
   amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
   greenapi: Boolean(config.greenapi.idInstance && config.greenapi.apiTokenInstance),
+  instagramStory: Boolean(config.instagram.hikerApiKey),
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
   crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
 };

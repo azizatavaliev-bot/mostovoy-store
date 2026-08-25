@@ -7,6 +7,8 @@ const { MODELS, modelInfo } = require("./ai");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
 const { classifyTemplate, templateById, ROUTED_TEMPLATE_IDS, ROUTE_TOOL_DESCRIPTION } = require("./templates");
 const { toGreenApiChatId } = require("./greenapi");
+const { findInstagramStoryUrls } = require("./instagram/parser");
+const { formatStoryContext } = require("./instagram/contextFormatter");
 
 // Диалоги лаборатории WhatsApp (external_key "lab:…"): проходят ровно тот же
 // пайплайн, что настоящие клиенты, но ничего не уходит наружу — ни в Green
@@ -864,7 +866,7 @@ function toConversation(row) {
 }
 
 class CrmService {
-  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, greenapi, fetchImpl, autoReplyDebounceMs, now } = {}) {
+  constructor({ db, ai, deepseek, amocrm, azisCrm, crmDeals, greenapi, storyResolver, fetchImpl, autoReplyDebounceMs, now } = {}) {
     this.db = db;
     this.deepseek = deepseek;
     this.ai = ai || deepseek;
@@ -874,6 +876,9 @@ class CrmService {
     // WhatsApp напрямую через Green API (без amoCRM). Необязателен: без него
     // канал просто выключен, как amocrm без токена.
     this.greenapi = greenapi;
+    // Instagram Story/Highlight по ссылке (HikerAPI + vision) — необязателен,
+    // без HIKER_API_KEY просто ничего не резолвит (см. _augmentWithInstagramStory).
+    this.storyResolver = storyResolver;
     this.fetchImpl = fetchImpl || globalThis.fetch;
     this._autoReplyDebounceMs = autoReplyDebounceMs ?? AUTO_REPLY_DEBOUNCE_MS;
     // Инжектируемые часы — только чтобы тесты «тихих часов» не зависели от
@@ -2016,6 +2021,7 @@ prompt_patch — не больше двух коротких предложен�
         this._logEvent(conversation.id, "error", "media", "media.failed", error.message);
       }
     }
+    text = await this._augmentWithInstagramStory(text, conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: String(message.message_id),
       direction: "incoming",
@@ -2134,6 +2140,7 @@ prompt_patch — не больше двух коротких предложен�
   // immediate: true — ответить сразу и дождаться (лаборатория), иначе
   // через debounce, как для настоящих клиентов.
   async _handleInboundText(conversation, { externalMessageId, text, raw, createdAt, sourceLabel, isNewConversation, immediate = false, bypassApproval = false }) {
+    text = await this._augmentWithInstagramStory(text, conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId,
       direction: "incoming",
@@ -2316,6 +2323,7 @@ prompt_patch — не больше двух коротких предложен�
         this._logEvent(conversation.id, "error", "media", "media.failed", error.message);
       }
     }
+    incomingText = await this._augmentWithInstagramStory(incomingText, conversation.id);
     const inserted = this._storeMessage(conversation.id, {
       externalMessageId: incoming.messageId,
       direction: "incoming",
@@ -2415,6 +2423,37 @@ prompt_patch — не больше двух коротких предложен�
     if (!this._pendingFirstContactCatalog.has(conversationId)) return text;
     this._pendingFirstContactCatalog.delete(conversationId);
     return `${text}\n\n${FIRST_CONTACT_CATALOG_TEXT}`;
+  }
+
+  // Клиент прислал ссылку на Instagram Story/Highlight — резолвим её через
+  // storyResolver (HikerAPI + vision, см. services/instagram/) и дописываем
+  // результат в текст сообщения тем же приёмом, что и [Изображение: ...]/
+  // [Аудио: ...] в receiveTelegram/receiveAmo: контекст для ИИ, а не второй
+  // чат-бот — сам ответ клиенту формирует обычная генерация ниже. Падение
+  // резолвера НЕ бросается наружу — либо контекст, либо честный
+  // story_analysis_failed-блок с просьбой уточнить, но не выдумка.
+  async _augmentWithInstagramStory(text, conversationId) {
+    if (!this.storyResolver?.enabled) return text;
+    const urls = findInstagramStoryUrls(text);
+    if (!urls.length) return text;
+    // Одно сообщение — одна ссылка на практике; если клиент прислал
+    // несколько, резолвим только первую, чтобы не плодить параллельные
+    // download+vision на одно сообщение.
+    let result;
+    try {
+      result = await this.storyResolver.resolve(urls[0].normalizedUrl);
+    } catch (error) {
+      // storyResolver.resolve() сам ловит свои ошибки и возвращает
+      // { story_analysis_failed: true } — сюда попадаем только если сам
+      // вызов подвис/упал неожиданно (например storyResolver сконфигурирован
+      // некорректно). Тред клиента это не должно останавливать.
+      this._logEvent(conversationId, "warn", "instagram", "instagram_story.failed", error.message);
+      result = { ok: false, story_analysis_failed: true, reason: "resolver_error" };
+    }
+    const context = formatStoryContext(result);
+    if (!context) return text;
+    this._logEvent(conversationId, result.ok ? "info" : "warn", "instagram", "instagram_story.resolved", result.ok ? "Story проанализирована" : "Story не удалось получить/проанализировать", { reason: result.reason || null, cached: result.cached || false });
+    return [text, context].filter(Boolean).join("\n");
   }
 
   async _autoReply(conversationId, incomingMessageId, options = {}) {

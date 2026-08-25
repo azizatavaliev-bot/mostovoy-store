@@ -23,8 +23,11 @@ const { CrmDealsClient } = require("./services/crm-deals");
 const { createAzisCrmRouter } = require("./routes/azis-crm");
 const { createGreenApiRouter } = require("./routes/greenapi");
 const { GreenApiClient } = require("./services/greenapi");
+const { HikerApiClient } = require("./services/instagram/hikerClient");
+const { StoryCache } = require("./services/instagram/storyCache");
+const { StoryResolver } = require("./services/instagram/storyResolver");
 
-function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, crmDeals, greenapi } = {}) {
+function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, crmDeals, greenapi, storyResolver } = {}) {
   const deepseekClient = deepseek || new DeepSeekClient();
   const aiRouter = ai || new AiRouter({ deepseek: deepseekClient });
   const researchService =
@@ -40,6 +43,12 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
   const azisCrmClient = azisCrm || new AzisCrmClient();
   const crmDealsClient = crmDeals || new CrmDealsClient();
   const greenApiClient = greenapi || new GreenApiClient();
+  const storyResolverService = storyResolver || new StoryResolver({
+    db,
+    hikerClient: new HikerApiClient(),
+    ai: aiRouter,
+    cache: new StoryCache({ db }),
+  });
   const crmService = crm || new CrmService({
     db,
     ai: aiRouter,
@@ -48,6 +57,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
     azisCrm: azisCrmClient,
     crmDeals: crmDealsClient,
     greenapi: greenApiClient,
+    storyResolver: storyResolverService,
   });
 
   const app = express();
@@ -99,6 +109,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
     amocrm: amoCrmClient,
     azisCrm: azisCrmClient,
     greenapi: greenApiClient,
+    storyResolver: storyResolverService,
   };
   return app;
 }

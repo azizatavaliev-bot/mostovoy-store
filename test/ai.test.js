@@ -223,3 +223,88 @@ test("AI router отправляет текст в выбранную модел
   assert.equal(request.body.model, "gpt-5.6-sol");
   assert.equal(usage.total_tokens, 12);
 });
+
+test("analyzeStoryFrames: несколько кадров уходят OpenAI одним запросом с input_image на каждый + JSON-инструкция", async (t) => {
+  const previousKey = config.openai.apiKey;
+  config.openai.apiKey = "openai-test";
+  t.after(() => { config.openai.apiKey = previousKey; });
+
+  let capturedBody;
+  const router = new AiRouter({
+    deepseek: { enabled: false },
+    fetchImpl: async (_url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({ output_text: JSON.stringify({ summary: "тест", products_visible: [], visible_text: [], important_details: [], contains_product: false }) }),
+      };
+    },
+  });
+
+  const result = await router.analyzeStoryFrames({
+    images: [
+      { bytes: Buffer.from("frame1"), mimeType: "image/jpeg" },
+      { bytes: Buffer.from("frame2"), mimeType: "image/jpeg" },
+      { bytes: Buffer.from("frame3"), mimeType: "image/jpeg" },
+    ],
+    caption: "Аккаунт: @mostovoyshop",
+  });
+
+  assert.equal(result.summary, "тест");
+  const content = capturedBody.input[0].content;
+  const imageParts = content.filter((part) => part.type === "input_image");
+  assert.equal(imageParts.length, 3);
+  assert.match(imageParts[0].image_url, /^data:image\/jpeg;base64,/);
+  assert.match(capturedBody.instructions, /Верни ТОЛЬКО валидный JSON/);
+  assert.match(capturedBody.instructions, /Никогда не выдумывай бренд/);
+});
+
+test("analyzeStoryFrames: без OpenAI и без Gemini даёт понятную ошибку", async () => {
+  const previousOpenAi = config.openai.apiKey;
+  const previousGemini = config.gemini.apiKey;
+  config.openai.apiKey = "";
+  config.gemini.apiKey = "";
+  try {
+    const router = new AiRouter({ deepseek: { enabled: false } });
+    await assert.rejects(
+      () => router.analyzeStoryFrames({ images: [{ bytes: Buffer.from("x"), mimeType: "image/jpeg" }] }),
+      /OPENAI_API_KEY.*GEMINI_API_KEY/
+    );
+  } finally {
+    config.openai.apiKey = previousOpenAi;
+    config.gemini.apiKey = previousGemini;
+  }
+});
+
+test("analyzeStoryFrames: без кадров бросает ошибку, не дожидаясь ответа модели", async () => {
+  const router = new AiRouter({ deepseek: { enabled: false } });
+  await assert.rejects(() => router.analyzeStoryFrames({ images: [] }), /кадров/i);
+});
+
+test("analyzeStoryFrames: Gemini получает несколько частей типа image в одном запросе", async (t) => {
+  const previousOpenAi = config.openai.apiKey;
+  const previousGemini = config.gemini.apiKey;
+  config.openai.apiKey = "";
+  config.gemini.apiKey = "gemini-test";
+  t.after(() => { config.openai.apiKey = previousOpenAi; config.gemini.apiKey = previousGemini; });
+
+  let capturedBody;
+  const router = new AiRouter({
+    deepseek: { enabled: false },
+    fetchImpl: async (_url, options) => {
+      capturedBody = JSON.parse(options.body);
+      return { ok: true, json: async () => ({ output_text: JSON.stringify({ summary: "gemini-тест", products_visible: [], visible_text: [], important_details: [], contains_product: false }) }) };
+    },
+  });
+
+  const result = await router.analyzeStoryFrames({
+    images: [
+      { bytes: Buffer.from("frame1"), mimeType: "image/jpeg" },
+      { bytes: Buffer.from("frame2"), mimeType: "image/jpeg" },
+    ],
+  });
+  assert.equal(result.summary, "gemini-тест");
+  const imageParts = capturedBody.input.filter((part) => part.type === "image");
+  assert.equal(imageParts.length, 2);
+  assert.equal(imageParts[0].data, Buffer.from("frame1").toString("base64"));
+});

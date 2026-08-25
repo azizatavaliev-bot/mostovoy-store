@@ -508,4 +508,20 @@ module.exports = [
       CREATE INDEX idx_nudge_follow_ups_conversation ON nudge_follow_ups(conversation_id, kind);
     `,
   },
+  {
+    // Кэш анализа Instagram Story/Highlight по cache_key ("instagram_story:<id>"
+    // / "instagram_highlight:<id>") — Redis в проекте нет, SQLite тот же, что
+    // и для всего остального. expires_at решает TTL: Story истекает быстрее
+    // (24-48ч), Highlight живёт дольше.
+    name: "018_instagram_story_cache",
+    sql: `
+      CREATE TABLE instagram_story_cache (
+        cache_key    TEXT PRIMARY KEY,
+        payload      TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at   TEXT NOT NULL
+      );
+      CREATE INDEX idx_instagram_story_cache_expires ON instagram_story_cache(expires_at);
+    `,
+  },
 ];

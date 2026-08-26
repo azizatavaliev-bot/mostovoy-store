@@ -406,6 +406,56 @@ test("честное «в наличии нет» на товар, которо�
   assert.doesNotMatch(untouched, /PlayStation/);
 });
 
+test("productsMentionRequest не считает товар «упомянутым», если это сказал сам бот, а не клиент", () => {
+  // Ровно баг с прода: бот один раз ошибочно предложил Xiaomi вместо iPhone,
+  // и дальше эта же страховка держала Xiaomi в ответах вечно, потому что
+  // «Xiaomi» лежало в истории — просто со стороны КОНСУЛЬТАНТА, а не клиента.
+  const selection = `АКТУАЛЬНЫЙ КАТАЛОГ:\n${JSON.stringify({
+    products: [{ name: "Xiaomi Redmi Note 14 Pro Plus", price: 370, currency: "USD", priceKgs: 32560, available: true }],
+  })}`;
+  const untouched = enforceCatalogAvailabilityReply({
+    reply: "Такой конфигурации iPhone 17 Pro в наличии нет.",
+    request: "Я имел ввиду айфон 17 про 256 физ сим",
+    context: "КЛИЕНТ: Есть 17 про 256 сим?\nКОНСУЛЬТАНТ: Есть в наличии: Xiaomi Redmi Note 14 Pro Plus — 32 500 c\nКЛИЕНТ: Я имел ввиду айфон 17 про 256 физ сим",
+    selection,
+  });
+  assert.equal(untouched, "Такой конфигурации iPhone 17 Pro в наличии нет.");
+  assert.doesNotMatch(untouched, /Xiaomi/);
+});
+
+test("enforceCatalogPriceReply не подменяет ответ случайными товарами, если уверенного совпадения не нашлось", () => {
+  // Ровно баг с прода: на вопрос "И почём?" про iPhone 17 Pro 256 клиент
+  // получал цены Steam Deck и Xiaomi — ни один товар в большом каталоге не
+  // набрал score >= 2 (кириллические "про"/"сим" не матчатся с латинскими
+  // "Pro"/"SIM" в названиях), relevantProductsForContext честно отдала ВЕСЬ
+  // список как safe-дефолт для себя самой, а страховка слепо взяла из него
+  // первые 3 позиции — по сути просто первые товары в базе, не по теме.
+  const decoys = Array.from({ length: 12 }, (_, i) => ({
+    name: `Товар-заглушка №${i}`, price: 100 + i, currency: "USD", priceKgs: (100 + i) * 88, available: true,
+  }));
+  const products = [
+    { name: "Valve Steam Deck OLED 512 GB", price: 550, currency: "USD", priceKgs: 48400, available: true },
+    { name: "Xiaomi Redmi Note 14 Pro Plus 512 GB", price: 370, currency: "USD", priceKgs: 32500, available: true },
+    { name: "Xiaomi Poco F7 512 GB", price: 505, currency: "USD", priceKgs: 44500, available: true },
+    { name: "Apple iPhone 17 Pro 256GB физическая SIM", price: 1200, currency: "USD", priceKgs: 105600, available: true },
+    ...decoys,
+  ];
+  // relevantProductsForContext сверяет товар только с последними ~1600
+  // символами контекста — «17 про 256» с исходного вопроса на живом диалоге
+  // успевает вытесниться более поздними репликами (в т.ч. неправильным
+  // прошлым ответом бота) до того, как придёт «И почём?». Здесь это же
+  // воспроизведено явным заполнителем.
+  const padding = "КОНСУЛЬТАНТ: Секунду, уточняю актуальный ассортимент по вашему запросу прямо сейчас.\n".repeat(25);
+  const reply = enforceCatalogPriceReply({
+    reply: "Уточню актуальную цену на эту конфигурацию.",
+    request: "И почем?",
+    context: `КЛИЕНТ: Есть 17 про 256 сим?\n${padding}КЛИЕНТ: Какие цвета?\nКЛИЕНТ: И почем?`,
+    selection: `АКТУАЛЬНЫЙ КАТАЛОГ:\n${JSON.stringify({ products })}`,
+  });
+  assert.equal(reply, "Уточню актуальную цену на эту конфигурацию.");
+  assert.doesNotMatch(reply, /Steam Deck|Xiaomi/);
+});
+
 test("личное сообщение Telegram создаёт CRM-диалог без дублей", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
@@ -1001,7 +1051,9 @@ test("гипервизор получает только историю диал
 
 test("супервизор переписывает черновик, который ложно утверждает отсутствие товара", async (t) => {
   const db = createConnection(":memory:");
-  t.after(() => db.close());
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
   let sentText = null;
   let reviewCalled = false;
   const deepseek = {
@@ -1043,7 +1095,9 @@ test("супервизор переписывает черновик, котор
 
 test("супервизор отключается настройкой и не вызывается", async (t) => {
   const db = createConnection(":memory:");
-  t.after(() => db.close());
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
   let sentText = null;
   let reviewCalled = false;
   const deepseek = {
@@ -2095,6 +2149,41 @@ test("голый запрос по линейке даёт список моде
   assert.equal(aiCalled, true, "конкретная модель уже идёт в обычную генерацию с ценой");
   detail = crm.getConversation(conversation.id);
   assert.match(detail.messages.at(-1).text, /1100/);
+});
+
+test("новые семейства каталога: экшн-камеры (DJI Osmo) и петлички распознаются как отдельные категории", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)"
+  );
+  const osmo3 = insertProduct.run("dji-osmo-action-3", "dji-osmo-action-3", "DJI Osmo Action 3", 300, "USD", "DJI", "Экшн-камеры").lastInsertRowid;
+  const osmo4 = insertProduct.run("dji-osmo-action-4", "dji-osmo-action-4", "DJI Osmo Action 4", 350, "USD", "DJI", "Экшн-камеры").lastInsertRowid;
+  const mic2 = insertProduct.run("dji-mic-2", "dji-mic-2", "DJI Mic 2", 250, "USD", "DJI", "Петлички").lastInsertRowid;
+  const mic3 = insertProduct.run("dji-mic-3", "dji-mic-3", "DJI Mic 3", 280, "USD", "DJI", "Петлички").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, osmo3, 300, "USD");
+  link.run(message, osmo4, 350, "USD");
+  link.run(message, mic2, 250, "USD");
+  link.run(message, mic3, 280, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+
+  const cameraReply = crm._categoryBrowseReply("Осмо есть?");
+  assert.match(cameraReply, /Osmo Action 3/);
+  assert.match(cameraReply, /Osmo Action 4/);
+  assert.doesNotMatch(cameraReply, /Mic/, "камеры и петлички — разные категории");
+
+  const micReply = crm._categoryBrowseReply("Петлички какие есть");
+  assert.match(micReply, /Mic 2/);
+  assert.match(micReply, /Mic 3/);
+  assert.doesNotMatch(micReply, /Osmo/, "петлички и камеры — разные категории");
 });
 
 test("_isBareCategoryRequest не считает голым запрос с моделью, объёмом памяти или модификатором", () => {

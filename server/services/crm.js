@@ -507,6 +507,18 @@ function classifyImportantEscalation(text) {
 function enforceCatalogPriceReply({ reply, request, context = request, selection }) {
   const products = relevantProductsForContext(productsFromSelection(selection), request, context);
   if (!products.length) return reply;
+  // relevantProductsForContext иногда не находит уверенного совпадения и
+  // возвращает ВЕСЬ список товаров как есть (см. её собственный комментарий
+  // про best >= 2) — это осознанный безопасный дефолт ДЛЯ НЕЁ, но не для
+  // нас: ниже мы бы взяли первые 3 товара из этого списка как «то, о чём
+  // спросил клиент», а это буквально просто последние посты канала. Именно
+  // так на вопрос про iPhone 17 клиент получал Steam Deck и Xiaomi — товары,
+  // которые никак не пересекались по смыслу с запросом, а просто раньше
+  // всех оказались в неотфильтрованном списке. Когда уверенного сужения не
+  // произошло, безопаснее довериться черновику ИИ (он видел тот же каталог
+  // целиком), чем подменять его случайной тройкой.
+  const CONFIDENT_MATCH_LIMIT = 10;
+  if (products.length > CONFIDENT_MATCH_LIMIT) return reply;
 
   const text = String(request || "");
   const explicitCurrency = requestedReplyCurrency(text, context);
@@ -550,7 +562,17 @@ function productsMentionRequest(products, request, context = request) {
     .replace(/ё/g, "е")
     .replace(/[^a-zа-я0-9]+/gu, " ")
     .trim();
-  const recent = normalize(String(context || request || "").slice(-1600));
+  // Только строки клиента — если считать и «КОНСУЛЬТАНТ:», собственная более
+  // ранняя (и, возможно, ошибочная) фраза бота навсегда «подтверждает» сама
+  // себя на каждом следующем сообщении. На проде это выглядело так: бот один
+  // раз ошибочно предложил Xiaomi вместо iPhone, и дальше эта же страховка
+  // считала Xiaomi «упомянутым в разговоре», хотя клиент говорил только про
+  // iPhone — держало неверный ответ в цикле.
+  const customerText = String(context || request || "")
+    .split("\n")
+    .filter((line) => !line.startsWith("КОНСУЛЬТАНТ:"))
+    .join("\n");
+  const recent = normalize(`${customerText}\n${request || ""}`.slice(-1600));
   const stop = new Set(["для", "есть", "стоит", "цена", "модель", "хочу", "нужен", "нужна", "нужно", "какой", "какая", "какие"]);
   return products.some((product) =>
     normalize(product.name).split(" ").some((token) => token.length >= 3 && !stop.has(token) && recent.includes(token))
@@ -716,14 +738,19 @@ const CATALOG_FAMILIES = [
   { request: /apple watch|эпл вотч|часы apple/i, terms: ["apple watch"] },
   { request: /samsung|самсунг/i, terms: ["samsung", "galaxy"] },
   { request: /xiaomi|сяоми|poco/i, terms: ["xiaomi", "poco"] },
-  { request: /dyson|дайсон|фен|стайлер/i, terms: ["dyson", "airwrap", "airstrait"] },
+  { request: /dyson|дайсон|фен\b|стайлер|выпрямител|пылесос/i, terms: ["dyson", "airwrap", "airstrait", "v15", "v16", "supersonic"] },
   { request: /garmin|гармин/i, terms: ["garmin"] },
   { request: /whoop|вуп/i, terms: ["whoop"] },
   { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray-ban", "rayban", "ray•ban", "meta oakley"] },
   { request: /пристав|playstation|xbox|nintendo|steam deck/i, terms: ["playstation", "sony 5", "xbox", "nintendo", "steam deck"] },
   { request: /бритв|триммер|oneblade|philips/i, terms: ["oneblade", "one blade", "philips"] },
   { request: /яндекс|станци|колонк/i, terms: ["яндекс", "станция"] },
-  { request: /canon|кэнон|камер|фотоаппарат/i, terms: ["canon", "g7x"] },
+  // Фотоаппараты и экшн-камеры — отдельно от петличек ниже: это разные
+  // товары, хотя оба всплывают на слово «камера».
+  { request: /canon|кэнон|фотоаппарат|экшн.?камер|осмо|osmo|dji\s*(?:osmo|action|pocket)|gopro|гопро|камер/i, terms: ["canon", "g7x", "osmo", "dji osmo", "gopro", "action"] },
+  // Петлички/микрофоны (DJI Mic и подобные) — отдельная категория, раньше
+  // не распознавалась вообще ни одним семейством.
+  { request: /петличк|петлич|микрофон|dji\s*mic|lavalier/i, terms: ["dji mic", "петличк", "микрофон", "lavalier", "wireless mic"] },
 ];
 
 // official_name в базе — это полный SKU канала: память, цвет и тип SIM

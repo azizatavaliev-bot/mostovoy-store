@@ -19,6 +19,7 @@ export default defineConfig({
         trade: path.resolve(__dirname, "trade.html"),
         news: path.resolve(__dirname, "news.html"),
         admin: path.resolve(__dirname, "admin.html"),
+        quickAdd: path.resolve(__dirname, "quick-add.html"),
       },
     },
   },

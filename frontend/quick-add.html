@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="robots" content="noindex, nofollow" />
-  <title>МОСТОВОЙ — CRM</title>
+  <title>МОСТОВОЙ — Быстрое добавление</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 </head>
@@ -16,23 +16,16 @@
         <span class="logo__text">МОСТОВОЙ</span>
       </a>
       <nav class="nav" id="nav">
-        <a href="quick-add.html">Быстрое добавление</a>
+        <a href="admin.html">Вся CRM</a>
         <a href="index.html">На сайт</a>
       </nav>
-      <button type="button" class="admin-theme" id="btnTheme" aria-label="Переключить тему">☾</button>
-      <button type="button" class="btn btn--sm header__cta" id="btnLogout" hidden>Выйти</button>
     </div>
   </header>
 
-  <main class="container admin" id="admin">
-    <!-- Заполняется admin-page.ts: форма логина либо панель управления -->
+  <main class="container admin" id="quickAdd">
+    <!-- Заполняется quick-add.ts -->
   </main>
 
-  <button type="button" class="admin-to-top" id="btnToTop" aria-label="Наверх" title="Наверх">
-    <span aria-hidden="true">↑</span>
-    <b>Наверх</b>
-  </button>
-
-  <script type="module" src="/src/admin-page.ts"></script>
+  <script type="module" src="/src/quick-add.ts"></script>
 </body>
 </html>

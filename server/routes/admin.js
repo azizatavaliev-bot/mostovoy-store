@@ -22,6 +22,7 @@ const { verifyImageUrl } = require("../services/images");
 const { verifyPassword, createSession, verifySession, LoginThrottle } = require("../lib/auth");
 const { imageSize } = require("../services/images");
 const { createCrmAdminRoutes } = require("./crm-admin");
+const { safeFetch, readLimited, FetchGuardError } = require("../lib/safeFetch");
 
 const CURRENCIES = ["USD", "KGS", "RUB"];
 const SESSION_COOKIE = "mostovoy_admin_session";
@@ -190,6 +191,63 @@ function validateBody(body, { partial = false } = {}) {
   if (!partial || body.discountLabel !== undefined) out.discountLabel = str(body.discountLabel, { max: 60 });
 
   return out;
+}
+
+// --- Быстрое добавление по ссылке -------------------------------------------
+// Разбирает страницу товара любого магазина: Open Graph / JSON-LD (schema.org
+// Product) — без headless-браузера, без сторонних библиотек парсинга HTML.
+// Даёт черновик (название/фото/цена), сохраняет админ уже осознанно.
+
+function metaContent(html, patterns) {
+  for (const re of patterns) {
+    const m = html.match(re);
+    if (m && m[1]) return m[1].trim();
+  }
+  return "";
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || "")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
+function metaTag(html, property) {
+  const attr = String.raw`(?:property|name|itemprop)=["']${property}["']`;
+  const content = `content=["']([^"']*)["']`;
+  return metaContent(html, [
+    new RegExp(`<meta[^>]*${attr}[^>]*${content}`, "i"),
+    new RegExp(`<meta[^>]*${content}[^>]*${attr}`, "i"),
+  ]);
+}
+
+function findJsonLdProduct(html) {
+  const blocks = html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  for (const [, raw] of blocks) {
+    let parsed;
+    try {
+      parsed = JSON.parse(raw.trim());
+    } catch {
+      continue;
+    }
+    const candidates = Array.isArray(parsed) ? parsed : parsed["@graph"] || [parsed];
+    for (const item of candidates) {
+      const type = item && item["@type"];
+      const isProduct = type === "Product" || (Array.isArray(type) && type.includes("Product"));
+      if (isProduct) return item;
+    }
+  }
+  return null;
+}
+
+function firstOfferPrice(offers) {
+  const offer = Array.isArray(offers) ? offers[0] : offers;
+  if (!offer) return {};
+  return { price: offer.price ?? offer.lowPrice, currency: offer.priceCurrency };
 }
 
 // --- Проверка фото перед сохранением ---------------------------------------
@@ -363,6 +421,58 @@ function createAdminRouter({ db, crm }) {
 
   createPostsRoutes(router, db);
   if (crm) createCrmAdminRoutes(router, crm);
+
+  router.post("/import-url", express.json(), async (req, res) => {
+    const url = str(req.body?.url, { max: 2000 });
+    if (!url || !/^https:\/\//i.test(url)) {
+      return res.status(400).json({ error: "Нужна ссылка на страницу товара (https://...)" });
+    }
+    try {
+      const { res: response } = await safeFetch(url, {
+        timeoutMs: 10000,
+        maxBytes: 3 * 1024 * 1024,
+        headers: { accept: "text/html,application/xhtml+xml" },
+      });
+      if (!response.ok) throw new AdminError(422, `Страница недоступна (HTTP ${response.status})`);
+      const contentType = (response.headers.get("content-type") || "").toLowerCase();
+      if (!contentType.includes("html")) throw new AdminError(422, "По ссылке не HTML-страница");
+      const html = (await readLimited(response, 3 * 1024 * 1024)).toString("utf8");
+
+      const ld = findJsonLdProduct(html) || {};
+      const ldOffer = firstOfferPrice(ld.offers);
+
+      const name = decodeHtmlEntities(ld.name || metaTag(html, "og:title") || metaContent(html, [/<title[^>]*>([^<]*)<\/title>/i]));
+      const image = ld.image
+        ? Array.isArray(ld.image)
+          ? ld.image[0]
+          : typeof ld.image === "object"
+            ? ld.image.url
+            : ld.image
+        : metaTag(html, "og:image");
+
+      const rawPrice = ldOffer.price || metaTag(html, "product:price:amount") || metaTag(html, "og:price:amount");
+      const priceMatch = String(rawPrice || "").match(/[\d\s.,]+/);
+      const price = priceMatch ? Number(priceMatch[0].replace(/\s/g, "").replace(",", ".")) : null;
+
+      const currencyRaw = (ldOffer.currency || metaTag(html, "product:price:currency") || metaTag(html, "og:price:currency") || "").toUpperCase();
+      const currency = CURRENCIES.includes(currencyRaw) ? currencyRaw : null;
+
+      if (!name && !image && !price) {
+        throw new AdminError(422, "Не нашли ни название, ни фото, ни цену на странице — вводите вручную");
+      }
+
+      res.json({
+        name: decodeHtmlEntities(name).slice(0, 200),
+        image: image ? new URL(image, url).href : "",
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        currency,
+        sourceUrl: url,
+      });
+    } catch (e) {
+      if (e instanceof FetchGuardError) return res.status(422).json({ error: e.message });
+      handleError(res, e, "admin.import_url_failed");
+    }
+  });
 
   router.post("/upload", (req, res) => {
     upload.single("file")(req, res, async (err) => {

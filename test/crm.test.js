@@ -1832,6 +1832,17 @@ test("ответ ИИ не отправляется, если менеджер �
   assert.equal(crm.getConversation(conversation.id).messages.some((message) => message.sender === "assistant"), false);
 });
 
+test("одиночное «беру» внутри фразы без названной модели не прыгает сразу в оформление", async () => {
+  // Найдено на проде: «мне бы самую жирную, я для жены беру» — модель ещё
+  // не названа и цена не показана, а бот сразу отвечал готовым шаблоном
+  // «Пришлите имя, телефон...», как будто заказ уже согласован.
+  assert.equal(classifySalesTemplate("Мне бы самую жирную, я для жены беру"), null);
+  assert.equal(classifySalesTemplate("Беру эту"), null);
+  // Явные формулировки оформления по-прежнему работают.
+  assert.equal(classifySalesTemplate("Оформляйте")?.kind, "order");
+  assert.equal(classifySalesTemplate("Хочу заказать")?.kind, "order");
+});
+
 test("клиент, сказавший «беру» и пропавший, получает одно напоминание вместо обычной цепочки", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;

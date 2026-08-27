@@ -111,11 +111,53 @@ test("chatTextWithTools: forceToolOnFirstRound шлёт tool_choice только
   assert.equal(reply, "Готово");
   assert.deepEqual(requests[0].tool_choice, { type: "function", function: { name: "search_catalog" } });
   assert.equal("tool_choice" in requests[1], false, "на втором раунде выбор снова свободный");
-  // DeepSeek отвечает 400 "Thinking mode does not support this tool_choice",
-  // если thinking включён одновременно с принудительным tool_choice —
-  // на проде это реально сломало ответ бота (regression, поймана вживую).
-  assert.deepEqual(requests[0].thinking, { type: "disabled" }, "на раунде с принудительным tool_choice thinking должен быть отключён");
-  assert.equal("thinking" in requests[1], false, "на свободном раунде thinking не трогаем");
+  // Живьём на проде поймано ДВЕ разные ошибки DeepSeek 400 из-за thinking:
+  // 1) "Thinking mode does not support this tool_choice" — с включённым
+  //    thinking и принудительным tool_choice одновременно;
+  // 2) "The reasoning_content in the thinking mode must be passed back to
+  //    the API" — если thinking выключить только на одном раунде, а потом
+  //    включить снова на следующем без reasoning_content в истории.
+  // Поэтому thinking отключён на ВСЕХ раундах цикла инструментов, не только
+  // на раунде с tool_choice.
+  assert.deepEqual(requests[0].thinking, { type: "disabled" });
+  assert.deepEqual(requests[1].thinking, { type: "disabled" });
+});
+
+test("chatTextWithTools: сообщение ассистента с tool_calls прокидывается в историю целиком (не теряет reasoning_content)", async () => {
+  const requests = [];
+  const client = new DeepSeekClient({
+    apiKey: "test",
+    maxRetries: 0,
+    rateLimitPerMinute: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: {
+              role: "assistant",
+              content: null,
+              reasoning_content: "думаю, надо вызвать поиск",
+              tool_calls: [{ id: "c1", function: { name: "search_catalog", arguments: "{}" } }],
+            } }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "Готово" } }] }) };
+    },
+  });
+
+  await client.chatTextWithTools({
+    system: "s", user: "u",
+    tools: [{ type: "function", function: { name: "search_catalog" } }],
+    executeTool: async () => ({ products: [] }),
+    forceToolOnFirstRound: "search_catalog",
+  });
+
+  const assistantMessageInHistory = requests[1].messages.find((m) => m.role === "assistant" && m.tool_calls);
+  assert.equal(assistantMessageInHistory.reasoning_content, "думаю, надо вызвать поиск");
 });
 
 test("chatTextWithTools: бесконечные вызовы инструмента обрываются по maxRounds честной ошибкой", async () => {

@@ -174,11 +174,14 @@ class DeepSeekClient {
       const toolChoice = round === 0 && forceToolOnFirstRound
         ? { type: "function", function: { name: forceToolOnFirstRound } }
         : undefined;
-      // DeepSeek отвечает 400 "Thinking mode does not support this tool_choice",
-      // если thinking включён (по умолчанию) одновременно с принудительным
-      // tool_choice — отключаем thinking только на этом раунде, свободные
-      // раунды (в том числе финальный текстовый ответ) его не теряют.
-      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, toolChoice, disableThinking: Boolean(toolChoice), temperature, maxTokens, model });
+      // Thinking-режим DeepSeek несовместим с tool_choice ("Thinking mode
+      // does not support this tool_choice"), а если отключить его только на
+      // одном раунде — следующий раунд с thinking снова включённым требует
+      // reasoning_content в предыдущем сообщении ассистента, которого не
+      // было (thinking был выключен) — тоже 400. Оба случая пойманы вживую
+      // на проде. Проще и надёжнее выключить thinking на все раунды цикла
+      // инструментов сразу — как уже сделано для chatJson.
+      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, toolChoice, disableThinking: true, temperature, maxTokens, model });
       if (usage) {
         totalUsage.prompt_tokens += Number(usage.prompt_tokens || 0);
         totalUsage.completion_tokens += Number(usage.completion_tokens || 0);
@@ -191,7 +194,13 @@ class DeepSeekClient {
         if (!content) throw new DeepSeekError("Пустой ответ модели", { code: "empty_response", retriable: true });
         return content;
       }
-      chatMessages.push({ role: "assistant", content: message.content || null, tool_calls: message.tool_calls });
+      // Пушим весь message от API как есть, а не пересобираем его из
+      // content+tool_calls: в режиме thinking DeepSeek требует, чтобы
+      // reasoning_content того же ответа вернулся обратно в истории на
+      // следующем раунде ("The reasoning_content in the thinking mode must
+      // be passed back to the API") — при пересборке это поле терялось,
+      // и второй раунд (уже без tool_choice, thinking снова включён) падал.
+      chatMessages.push({ role: "assistant", ...message });
       for (const call of message.tool_calls) {
         let result;
         try {

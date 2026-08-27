@@ -1386,6 +1386,55 @@ test("фото одного товара отправляется только �
   assert.equal(crm.listEvents().filter((event) => event.event === "product_photo.sent").length, 1);
 });
 
+test("общее приветствие со списком категорий не прилипает к фото случайного товара", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  const previousPublicUrl = config.publicUrl;
+  config.telegram.botToken = "test-token";
+  config.publicUrl = "https://store.example";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    config.publicUrl = previousPublicUrl;
+    db.close();
+  });
+  // На проде «iPhone 17» — короткое название легаси-товара, которое трактовалось
+  // как совпадение внутри обычного приветствия («...свежие iPhone 17, MacBook,
+  // Apple Watch, Dyson...»), хотя это лишь пример категории, а не рекомендация.
+  db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, main_image_url)
+     VALUES ('iphone-17-generic', 'iphone-17-generic', 'iPhone 17', 885, 'USD', 'active', '/iphone17.webp')`
+  ).run();
+  db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, main_image_url)
+     VALUES ('macbook-generic', 'macbook-generic', 'MacBook', 999, 'USD', 'active', '/macbook.webp')`
+  ).run();
+  const requests = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      requests.push(url);
+      return { ok: true, status: 200 };
+    },
+  });
+  await crm.receiveTelegram({
+    message_id: 492,
+    text: "Привет",
+    chat: { id: 492, type: "private" },
+    from: { id: 492, first_name: "Клиент" },
+  });
+  const conversation = crm.listConversations()[0];
+
+  await crm._send(
+    conversation.id,
+    "Здравствуйте! У нас есть всё: свежие iPhone 17, MacBook, Apple Watch, Dyson и много другой техники в наличии. Что ищете?",
+    "assistant"
+  );
+
+  assert.equal(requests.filter((url) => url.includes("/sendPhoto")).length, 0, "приветствие с несколькими товарами не должно слать фото ни одного из них");
+});
+
 test("первое входящее заводит сделку, а смена этапа делает безопасный upsert", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

@@ -2759,7 +2759,26 @@ prompt_patch — не больше двух коротких предложен�
        WHERE status != 'hidden' AND main_image_url IS NOT NULL AND main_image_url != ''
        ORDER BY length(official_name) DESC`
     ).all();
-    return products.find((product) => reply.includes(String(product.official_name).toLocaleLowerCase("ru-RU"))) || null;
+    const matches = products.filter((product) => reply.includes(String(product.official_name).toLocaleLowerCase("ru-RU")));
+    // Короткое совпадение, целиком входящее в более длинное («iPhone 17»
+    // внутри «iPhone 17 Pro Max 256GB Black»), — тот же товар, не считаем
+    // отдельным.
+    const maximal = matches.filter((product) => {
+      const name = String(product.official_name).toLocaleLowerCase("ru-RU");
+      return !matches.some((other) =>
+        other !== product
+        && other.official_name.length > product.official_name.length
+        && String(other.official_name).toLocaleLowerCase("ru-RU").includes(name)
+      );
+    });
+    const distinct = [...new Map(maximal.map((product) => [product.official_name, product])).values()];
+    // Если в ответе упомянуто несколько РАЗНЫХ товаров (например общий список
+    // категорий в приветствии — «iPhone 17, MacBook, Apple Watch, Dyson...»),
+    // это не конкретная рекомендация: непонятно, к какому товару относить
+    // фото. На проде из-за этого к обычному приветствию прилипало случайное
+    // фото iPhone 17, хотя клиент ещё ничего не спросил.
+    if (distinct.length !== 1) return null;
+    return distinct[0];
   }
 
   async _sendTelegramProductPhoto(conversation, product) {

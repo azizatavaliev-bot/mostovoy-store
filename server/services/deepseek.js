@@ -174,7 +174,11 @@ class DeepSeekClient {
       const toolChoice = round === 0 && forceToolOnFirstRound
         ? { type: "function", function: { name: forceToolOnFirstRound } }
         : undefined;
-      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, toolChoice, temperature, maxTokens, model });
+      // DeepSeek отвечает 400 "Thinking mode does not support this tool_choice",
+      // если thinking включён (по умолчанию) одновременно с принудительным
+      // tool_choice — отключаем thinking только на этом раунде, свободные
+      // раунды (в том числе финальный текстовый ответ) его не теряют.
+      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, toolChoice, disableThinking: Boolean(toolChoice), temperature, maxTokens, model });
       if (usage) {
         totalUsage.prompt_tokens += Number(usage.prompt_tokens || 0);
         totalUsage.completion_tokens += Number(usage.completion_tokens || 0);
@@ -203,7 +207,7 @@ class DeepSeekClient {
     throw new DeepSeekError("Превышено число обращений к инструментам", { code: "tool_loop_limit", retriable: false });
   }
 
-  async _toolsOnce({ messages, tools, toolChoice, temperature, maxTokens, model }) {
+  async _toolsOnce({ messages, tools, toolChoice, disableThinking, temperature, maxTokens, model }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -220,6 +224,7 @@ class DeepSeekClient {
           messages,
           tools,
           ...(toolChoice ? { tool_choice: toolChoice } : {}),
+          ...(disableThinking ? { thinking: { type: "disabled" } } : {}),
           temperature,
           max_tokens: maxTokens || this.maxTokens,
           stream: false,

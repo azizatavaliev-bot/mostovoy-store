@@ -111,6 +111,11 @@ test("chatTextWithTools: forceToolOnFirstRound шлёт tool_choice только
   assert.equal(reply, "Готово");
   assert.deepEqual(requests[0].tool_choice, { type: "function", function: { name: "search_catalog" } });
   assert.equal("tool_choice" in requests[1], false, "на втором раунде выбор снова свободный");
+  // DeepSeek отвечает 400 "Thinking mode does not support this tool_choice",
+  // если thinking включён одновременно с принудительным tool_choice —
+  // на проде это реально сломало ответ бота (regression, поймана вживую).
+  assert.deepEqual(requests[0].thinking, { type: "disabled" }, "на раунде с принудительным tool_choice thinking должен быть отключён");
+  assert.equal("thinking" in requests[1], false, "на свободном раунде thinking не трогаем");
 });
 
 test("chatTextWithTools: бесконечные вызовы инструмента обрываются по maxRounds честной ошибкой", async () => {

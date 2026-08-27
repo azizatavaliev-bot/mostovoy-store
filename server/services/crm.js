@@ -833,7 +833,11 @@ const CATALOG_FAMILIES = [
   { request: /dyson|дайсон/i, terms: ["dyson", "airwrap", "airstrait", "corrale", "supersonic", "v15", "v16", "sv50", "gen5", "ph04", "tp09"] },
   { request: /garmin|гармин/i, terms: ["garmin"] },
   { request: /whoop|вуп/i, terms: ["whoop"] },
-  { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray-ban", "rayban", "ray•ban", "meta oakley"] },
+  // noColors: у очков цвет/оправа — часть самого названия модели (Matte
+  // Black, Shiny Black и т.п.), после baseModelLine это всё равно
+  // срезается вместе с объёмом памяти — отдельно перечислять цвета здесь
+  // избыточно и просто задвоит то, что уже видно в названии.
+  { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray-ban", "rayban", "ray•ban", "meta oakley"], noColors: true },
   { request: /пристав|playstation|xbox|nintendo|steam deck/i, terms: ["playstation", "sony 5", "xbox", "nintendo", "steam deck"] },
   { request: /бритв|триммер|oneblade|philips/i, terms: ["oneblade", "one blade", "philips"] },
   { request: /яндекс|станци|колонк/i, terms: ["яндекс", "станция"] },
@@ -2613,7 +2617,7 @@ prompt_patch — не больше двух коротких предложен�
     const family = CATALOG_FAMILIES.find((item) => item.request.test(customerText));
     if (!family) return null;
     const rows = this.db.prepare(
-      `SELECT DISTINCT p.official_name AS name, p.brand AS brand, p.category AS category
+      `SELECT DISTINCT p.official_name AS name, p.brand AS brand, p.category AS category, p.color AS color, p.specifications AS specifications
          FROM products p
          JOIN message_products mp ON mp.product_id = p.id
          JOIN telegram_messages tm ON tm.id = mp.message_id
@@ -2622,12 +2626,24 @@ prompt_patch — не больше двух коротких предложен�
     const matches = (row) => family.terms.some((term) =>
       `${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU").includes(term)
     );
-    const names = [...new Set(
-      rows.filter(matches).map((row) => baseModelLine(row.name)).filter(Boolean)
-    )].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
+    // Цвета группируем по базовой модели (та же группировка, что даёт
+    // короткий список моделей) — иначе клиент видит название линейки, но не
+    // знает, есть ли она в нужном цвете, не спрашивая отдельно.
+    const byModel = new Map();
+    for (const row of rows.filter(matches)) {
+      const base = baseModelLine(row.name);
+      if (!base) continue;
+      if (!byModel.has(base)) byModel.set(base, new Set());
+      const color = row.color || specFallback(row.specifications, "Цвета");
+      if (color) byModel.get(base).add(color);
+    }
+    const names = [...byModel.keys()].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
     if (names.length < 2) return null;
-    const lines = names.map((name) => `• ${name}`).join("\n");
-    return `У нас в наличии несколько моделей:\n${lines}\n\nКакая интересует? Назовите модель — сразу назову актуальную цену, цвета и объём памяти.`;
+    const lines = names.map((name) => {
+      const colors = family.noColors ? null : [...byModel.get(name)];
+      return colors?.length ? `• ${name} — ${colors.join(", ")}` : `• ${name}`;
+    }).join("\n");
+    return `У нас в наличии несколько моделей:\n${lines}\n\nКакая интересует? Назовите модель — сразу назову актуальную цену и объём памяти.`;
   }
 
   // Первое сообщение нового клиента уже было вопросом (не просто «привет») —
@@ -2971,13 +2987,23 @@ prompt_patch — не больше двух коротких предложен�
       );
     });
     const distinct = [...new Map(maximal.map((product) => [product.official_name, product])).values()];
-    // Если в ответе упомянуто несколько РАЗНЫХ товаров (например общий список
-    // категорий в приветствии — «iPhone 17, MacBook, Apple Watch, Dyson...»),
-    // это не конкретная рекомендация: непонятно, к какому товару относить
-    // фото. На проде из-за этого к обычному приветствию прилипало случайное
-    // фото iPhone 17, хотя клиент ещё ничего не спросил.
-    if (distinct.length !== 1) return null;
-    return distinct[0];
+    // Несколько РАЗНЫХ конфигураций одной и той же модели («iPhone 17 Pro
+    // Max 256GB», «...512GB», «...1TB» — обычный ответ с полным списком
+    // вариантов памяти после search_catalog) — это ОДИН товар для фото, не
+    // несколько. Группируем по базовому названию модели: если все
+    // совпадения — варианты одной модели, фото всё равно шлём.
+    const byBaseModel = new Map();
+    for (const product of distinct) {
+      const base = baseModelLine(product.official_name);
+      if (!byBaseModel.has(base)) byBaseModel.set(base, product);
+    }
+    // Несколько РАЗНЫХ товаров (например общий список категорий в
+    // приветствии — «iPhone 17, MacBook, Apple Watch, Dyson...») — это не
+    // конкретная рекомендация: непонятно, к какому товару относить фото. На
+    // проде из-за этого к обычному приветствию прилипало случайное фото
+    // iPhone 17, хотя клиент ещё ничего не спросил.
+    if (byBaseModel.size !== 1) return null;
+    return [...byBaseModel.values()][0];
   }
 
   async _sendTelegramProductPhoto(conversation, product) {

@@ -1491,6 +1491,57 @@ test("общее приветствие со списком категорий �
   assert.equal(requests.filter((url) => url.includes("/sendPhoto")).length, 0, "приветствие с несколькими товарами не должно слать фото ни одного из них");
 });
 
+test("ответ с несколькими конфигурациями ОДНОЙ модели (256/512/1TB) всё равно шлёт фото — это один товар", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  const previousPublicUrl = config.publicUrl;
+  config.telegram.botToken = "test-token";
+  config.publicUrl = "https://store.example";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    config.publicUrl = previousPublicUrl;
+    db.close();
+  });
+  // После перехода на search_catalog бот часто перечисляет сразу все
+  // конфигурации памяти одной модели («iPhone 17 Pro Max 256GB»,
+  // «...512GB», «...1TB») — это разные официальные названия в БД, и старая
+  // проверка «ровно один товар» считала их РАЗНЫМИ товарами и блокировала
+  // фото (найдено на проде: бот вообще перестал слать фото).
+  db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, main_image_url)
+     VALUES ('iphone-17-pro-max-256', 'iphone-17-pro-max-256', 'iPhone 17 Pro Max 256GB', 1235, 'USD', 'active', '/256.webp')`
+  ).run();
+  db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, main_image_url)
+     VALUES ('iphone-17-pro-max-512', 'iphone-17-pro-max-512', 'iPhone 17 Pro Max 512GB', 1400, 'USD', 'active', '/512.webp')`
+  ).run();
+  const requests = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url) => {
+      requests.push(url);
+      return { ok: true, status: 200 };
+    },
+  });
+  await crm.receiveTelegram({
+    message_id: 493,
+    text: "Привет",
+    chat: { id: 493, type: "private" },
+    from: { id: 493, first_name: "Клиент" },
+  });
+  const conversation = crm.listConversations()[0];
+
+  await crm._send(
+    conversation.id,
+    "iPhone 17 Pro Max 256GB — 1235$, iPhone 17 Pro Max 512GB — 1400$. Какой вариант вам ближе?",
+    "assistant"
+  );
+
+  assert.equal(requests.filter((url) => url.includes("/sendPhoto")).length, 1, "разные варианты памяти одной модели — это один товар, фото должно уйти");
+});
+
 test("первое входящее заводит сделку, а смена этапа делает безопасный upsert", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
@@ -2265,6 +2316,55 @@ test("голый запрос по линейке даёт список моде
   assert.equal(aiCalled, true, "конкретная модель уже идёт в обычную генерацию с ценой");
   detail = crm.getConversation(conversation.id);
   assert.match(detail.messages.at(-1).text, /1100/);
+});
+
+test("_categoryBrowseReply показывает доступные цвета у каждой модели в списке линейки", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)"
+  );
+  const p1 = insertProduct.run("iphone-17-black", "iphone-17-black", "iPhone 17 256GB Black", 900, "USD", "Apple", "Смартфоны", "Black").lastInsertRowid;
+  const p2 = insertProduct.run("iphone-17-white", "iphone-17-white", "iPhone 17 256GB White", 900, "USD", "Apple", "Смартфоны", "White").lastInsertRowid;
+  const p3 = insertProduct.run("iphone-17-pro-t", "iphone-17-pro-t", "iPhone 17 Pro 256GB Silver", 1100, "USD", "Apple", "Смартфоны", "Silver").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, p1, 900, "USD");
+  link.run(message, p2, 900, "USD");
+  link.run(message, p3, 1100, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("Айфон");
+  assert.match(reply, /iPhone 17 — Black, White|iPhone 17 — White, Black/);
+  assert.match(reply, /iPhone 17 Pro — Silver/);
+});
+
+test("_categoryBrowseReply не показывает цвета для очков — они уже часть названия модели", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)"
+  );
+  const p1 = insertProduct.run("rayban-1", "rayban-1", "Ray-Ban Meta Wayfarer Matte Black", 300, "USD", "Meta", "Очки", "Matte Black").lastInsertRowid;
+  const p2 = insertProduct.run("rayban-2", "rayban-2", "Ray-Ban Meta Wayfarer Shiny Black", 320, "USD", "Meta", "Очки", "Shiny Black").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, p1, 300, "USD");
+  link.run(message, p2, 320, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("Очки Ray-Ban есть?");
+  assert.doesNotMatch(reply, / — Matte Black| — Shiny Black/, "цвет уже в названии модели, дублировать не нужно");
 });
 
 test("новые семейства каталога: экшн-камеры (DJI Osmo) и петлички распознаются как отдельные категории", (t) => {

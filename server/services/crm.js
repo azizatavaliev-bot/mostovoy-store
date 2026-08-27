@@ -1913,23 +1913,42 @@ prompt_patch — не больше двух коротких предложен�
   // Если провайдер не поддерживает function calling (только DeepSeek
   // поддержан в AiRouter.chatTextWithTools) —тихо откатываемся на обычный
   // chatText, чтобы бот не переставал отвечать.
-  async _chatWithCatalogTool({ system, messages, user, model, onUsage }) {
+  async _chatWithCatalogTool({ system, messages, user, model, onUsage, conversationId = null }) {
     if (typeof this.ai.chatTextWithTools !== "function") {
       return this.ai.chatText({ system, messages, user, model, onUsage });
     }
+    let toolCalled = false;
     try {
-      return await this.ai.chatTextWithTools({
+      const reply = await this.ai.chatTextWithTools({
         system,
         messages,
         user,
         model,
         tools: [CATALOG_SEARCH_TOOL],
+        // Инструкция в промпте "обязательно вызови search_catalog" модель
+        // может проигнорировать, если ей кажется, что она и так знает ответ
+        // из каталога в системном промпте (проверено на проде: один раз
+        // ответила про Canon вместо Garmin Fenix 8, ни разу не вызвав
+        // инструмент). tool_choice на первом раунде убирает этот выбор —
+        // ответить текстом сразу физически нельзя.
+        forceToolOnFirstRound: "search_catalog",
         executeTool: async (name, args) => {
           if (name !== "search_catalog") return { error: "неизвестная функция" };
-          return { products: searchCatalogProducts(this.db, args?.query) };
+          toolCalled = true;
+          const products = searchCatalogProducts(this.db, args?.query);
+          this._logEvent(conversationId, "info", "generation", "tool.search_catalog", "Модель запросила каталог через инструмент", {
+            query: args?.query,
+            resultCount: products.length,
+            resultNames: products.slice(0, 5).map((p) => p.name),
+          });
+          return { products };
         },
         onUsage,
       });
+      if (!toolCalled) {
+        this._logEvent(conversationId, "warn", "generation", "tool.search_catalog_skipped", "Модель ответила, ни разу не вызвав search_catalog");
+      }
+      return reply;
     } catch (error) {
       if (/Function calling пока поддержан только для DeepSeek/.test(error.message)) {
         return this.ai.chatText({ system, messages, user, model, onUsage });
@@ -2687,6 +2706,7 @@ prompt_patch — не больше двух коротких предложен�
         messages: history,
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
+        conversationId,
       });
       reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });

@@ -166,7 +166,7 @@ class AiRouter {
   // вместо того, чтобы придумывать цифры самой. Поддерживается только для
   // DeepSeek (единственный провайдер, реально используемый в проде) —
   // остальные провайдеры пока не подключены к этому пути.
-  async chatTextWithTools({ system, messages = [], user, model, tools, executeTool, maxTokens = 1800, temperature, onUsage }) {
+  async chatTextWithTools({ system, messages = [], user, model, tools, executeTool, maxTokens = 1800, temperature, onUsage, forceToolOnFirstRound }) {
     const info = modelInfo(model);
     if (!info || info.provider !== "deepseek" || !this.deepseek?.enabled) {
       throw new Error("Function calling пока поддержан только для DeepSeek");
@@ -184,6 +184,7 @@ class AiRouter {
       maxTokens,
       temperature,
       onUsage,
+      forceToolOnFirstRound,
     });
     return restoreMapping(text, mapping);
   }

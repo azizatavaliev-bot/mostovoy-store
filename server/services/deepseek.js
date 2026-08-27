@@ -148,7 +148,15 @@ class DeepSeekClient {
   // а не придумывала модель: см. server/services/crm.js search_catalog.
   // maxRounds — страховка от зацикливания (модель вызывает инструмент,
   // не получая от этого финального текста).
-  async chatTextWithTools({ system, messages = [], user, tools, executeTool, temperature = 0.35, maxTokens = 1800, model, onUsage, maxRounds = 4 }) {
+  //
+  // forceToolOnFirstRound: инструкция в системном промпте «обязательно
+  // вызови функцию» модель может проигнорировать, если ей кажется, что она
+  // и так знает ответ из текста промпта (проверено на проде: с большим
+  // каталогом в системном промпте модель иногда отвечала напрямую, ни разу
+  // не вызвав search_catalog, и один раз перепутала товар). tool_choice
+  // с конкретной функцией на первом раунде убирает этот выбор совсем —
+  // модель физически не может ответить текстом, не вызвав инструмент.
+  async chatTextWithTools({ system, messages = [], user, tools, executeTool, temperature = 0.35, maxTokens = 1800, model, onUsage, maxRounds = 4, forceToolOnFirstRound = null }) {
     if (!this.enabled) {
       throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
     }
@@ -163,7 +171,10 @@ class DeepSeekClient {
     let lastModel = model || this.model;
     for (let round = 0; round < maxRounds; round++) {
       await this.limiter.acquire();
-      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, temperature, maxTokens, model });
+      const toolChoice = round === 0 && forceToolOnFirstRound
+        ? { type: "function", function: { name: forceToolOnFirstRound } }
+        : undefined;
+      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, toolChoice, temperature, maxTokens, model });
       if (usage) {
         totalUsage.prompt_tokens += Number(usage.prompt_tokens || 0);
         totalUsage.completion_tokens += Number(usage.completion_tokens || 0);
@@ -192,7 +203,7 @@ class DeepSeekClient {
     throw new DeepSeekError("Превышено число обращений к инструментам", { code: "tool_loop_limit", retriable: false });
   }
 
-  async _toolsOnce({ messages, tools, temperature, maxTokens, model }) {
+  async _toolsOnce({ messages, tools, toolChoice, temperature, maxTokens, model }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
     let res;
@@ -208,6 +219,7 @@ class DeepSeekClient {
           model: model || this.model,
           messages,
           tools,
+          ...(toolChoice ? { tool_choice: toolChoice } : {}),
           temperature,
           max_tokens: maxTokens || this.maxTokens,
           stream: false,

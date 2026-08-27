@@ -78,6 +78,41 @@ test("chatTextWithTools: модель вызывает инструмент, п�
   assert.deepEqual(usageTotal, { prompt_tokens: 30, completion_tokens: 13, total_tokens: 43 });
 });
 
+test("chatTextWithTools: forceToolOnFirstRound шлёт tool_choice только на первом раунде, не на втором", async () => {
+  const requests = [];
+  const client = new DeepSeekClient({
+    apiKey: "test",
+    maxRetries: 0,
+    rateLimitPerMinute: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      if (requests.length === 1) {
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { role: "assistant", tool_calls: [
+              { id: "c1", function: { name: "search_catalog", arguments: "{}" } },
+            ] } }],
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "Готово" } }] }) };
+    },
+  });
+
+  const reply = await client.chatTextWithTools({
+    system: "s", user: "u",
+    tools: [{ type: "function", function: { name: "search_catalog" } }],
+    executeTool: async () => ({ products: [] }),
+    forceToolOnFirstRound: "search_catalog",
+  });
+
+  assert.equal(reply, "Готово");
+  assert.deepEqual(requests[0].tool_choice, { type: "function", function: { name: "search_catalog" } });
+  assert.equal("tool_choice" in requests[1], false, "на втором раунде выбор снова свободный");
+});
+
 test("chatTextWithTools: бесконечные вызовы инструмента обрываются по maxRounds честной ошибкой", async () => {
   const client = new DeepSeekClient({
     apiKey: "test",

@@ -142,6 +142,99 @@ class DeepSeekClient {
     throw lastError;
   }
 
+  // Function calling (OpenAI-совместимый формат tools/tool_calls) — модель
+  // сама решает, вызвать ли инструмент, прежде чем ответить текстом.
+  // Используется, чтобы цену/наличие товара брал код из БД (executeTool),
+  // а не придумывала модель: см. server/services/crm.js search_catalog.
+  // maxRounds — страховка от зацикливания (модель вызывает инструмент,
+  // не получая от этого финального текста).
+  async chatTextWithTools({ system, messages = [], user, tools, executeTool, temperature = 0.35, maxTokens = 1800, model, onUsage, maxRounds = 4 }) {
+    if (!this.enabled) {
+      throw new DeepSeekError("DEEPSEEK_API_KEY не задан", { code: "not_configured" });
+    }
+    const chatMessages = [
+      { role: "system", content: system },
+      ...messages
+        .filter((m) => m && (m.role === "user" || m.role === "assistant") && String(m.content || "").trim())
+        .map((m) => ({ role: m.role, content: String(m.content) })),
+      ...(user ? [{ role: "user", content: user }] : []),
+    ];
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    let lastModel = model || this.model;
+    for (let round = 0; round < maxRounds; round++) {
+      await this.limiter.acquire();
+      const { message, usage, respondedModel } = await this._toolsOnce({ messages: chatMessages, tools, temperature, maxTokens, model });
+      if (usage) {
+        totalUsage.prompt_tokens += Number(usage.prompt_tokens || 0);
+        totalUsage.completion_tokens += Number(usage.completion_tokens || 0);
+        totalUsage.total_tokens += Number(usage.total_tokens || 0);
+      }
+      lastModel = respondedModel || lastModel;
+      if (!message.tool_calls?.length) {
+        onUsage?.(totalUsage, lastModel);
+        const content = String(message.content || "").trim();
+        if (!content) throw new DeepSeekError("Пустой ответ модели", { code: "empty_response", retriable: true });
+        return content;
+      }
+      chatMessages.push({ role: "assistant", content: message.content || null, tool_calls: message.tool_calls });
+      for (const call of message.tool_calls) {
+        let result;
+        try {
+          const args = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+          result = await executeTool(call.function?.name, args);
+        } catch (error) {
+          result = { error: error.message };
+        }
+        chatMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result ?? null) });
+      }
+    }
+    onUsage?.(totalUsage, lastModel);
+    throw new DeepSeekError("Превышено число обращений к инструментам", { code: "tool_loop_limit", retriable: false });
+  }
+
+  async _toolsOnce({ messages, tools, temperature, maxTokens, model }) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
+    let res;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`,
+        },
+        signal: ac.signal,
+        body: JSON.stringify({
+          model: model || this.model,
+          messages,
+          tools,
+          temperature,
+          max_tokens: maxTokens || this.maxTokens,
+          stream: false,
+        }),
+      });
+    } catch (e) {
+      throw new DeepSeekError(
+        e.name === "AbortError" ? "Таймаут запроса к DeepSeek" : `Сеть: ${e.message}`,
+        { code: e.name === "AbortError" ? "timeout" : "network", retriable: true }
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new DeepSeekError(`DeepSeek ответил ${res.status}: ${body.slice(0, 300)}`, {
+        code: `http_${res.status}`,
+        status: res.status,
+        retriable: res.status === 429 || res.status >= 500,
+      });
+    }
+    const data = await res.json().catch(() => null);
+    const message = data?.choices?.[0]?.message;
+    if (!message) throw new DeepSeekError("Пустой ответ модели", { code: "empty_response", retriable: true });
+    return { message, usage: data?.usage, respondedModel: data?.model };
+  }
+
   async _once({ system, user, model, temperature, maxTokens, onUsage }) {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);

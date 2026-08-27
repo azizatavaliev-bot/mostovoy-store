@@ -69,6 +69,59 @@ test("AI router.chatJson для DeepSeek маскирует телефон/ад�
   assert.match(result.echo, /ул\. Ленина 5/, "адрес должен вернуться в разобранном JSON");
 });
 
+test("AI router.chatTextWithTools: маскирует PII, прокидывает executeTool в DeepSeek и восстанавливает телефон в финальном тексте", async () => {
+  let sentUser;
+  const deepseek = new DeepSeekClient({
+    apiKey: "test",
+    model: "deepseek-v4-flash",
+    maxRetries: 0,
+    rateLimitPerMinute: 0,
+    fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const round = body.messages.some((m) => m.role === "tool") ? 2 : 1;
+      if (round === 1) {
+        sentUser = body.messages.find((m) => m.role === "user").content;
+        return {
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { role: "assistant", tool_calls: [
+              { id: "c1", function: { name: "search_catalog", arguments: '{"query":"iPhone 17"}' } },
+            ] } }],
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { role: "assistant", content: "iPhone 17 — 885$. Перезвоните на +996700123456, если что." } }],
+        }),
+      };
+    },
+  });
+  const router = new AiRouter({ deepseek });
+
+  let toolArgs = null;
+  const reply = await router.chatTextWithTools({
+    system: "Ты продавец",
+    user: "Сколько стоит iPhone 17? Мой номер +996700123456",
+    model: "deepseek-v4-flash",
+    tools: [{ type: "function", function: { name: "search_catalog" } }],
+    executeTool: async (name, args) => { toolArgs = args; return { products: [] }; },
+  });
+
+  assert.doesNotMatch(sentUser, /\+996700123456/, "телефон не должен уйти в DeepSeek как есть");
+  assert.deepEqual(toolArgs, { query: "iPhone 17" });
+  assert.equal(reply, "iPhone 17 — 885$. Перезвоните на +996700123456, если что.");
+});
+
+test("AI router.chatTextWithTools: для не-DeepSeek модели явно говорит, что function calling не поддержан", async () => {
+  const router = new AiRouter({ deepseek: { enabled: false } });
+  await assert.rejects(
+    () => router.chatTextWithTools({ system: "s", user: "u", model: "gpt-5.6-sol", tools: [], executeTool: async () => ({}) }),
+    /Function calling пока поддержан только для DeepSeek/
+  );
+});
+
 test("AI router: analyzeMedia предпочитает OpenAI, если заданы оба ключа, иначе Gemini", async (t) => {
   const previousOpenAiKey = config.openai.apiKey;
   const previousGeminiKey = config.gemini.apiKey;

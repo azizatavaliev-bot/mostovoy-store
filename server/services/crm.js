@@ -646,10 +646,13 @@ function specFallback(specifications, key) {
   }
 }
 
-function buildTelegramCatalogForAssistant(db) {
-  // Товаровед работает со структурированной базой, полученной только из
-  // публикаций канала. Для каждой позиции берём самое новое активное
-  // упоминание — старая цена той же модели в подсказку не попадёт.
+// Источник истины по актуальной цене/наличию — самое новое активное
+// упоминание товара в постах канала, без дублей по official_name (см.
+// комментарий ниже про конфликт цены между карточками одного названия).
+// Используется и в buildTelegramCatalogForAssistant (текст для промпта),
+// и в search_catalog (инструмент, который вызывает модель вместо того,
+// чтобы придумывать цифры самой).
+function getDedupedCatalogProducts(db) {
   const products = db.prepare(
     `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
             mp.price, mp.currency, mp.available,
@@ -668,21 +671,86 @@ function buildTelegramCatalogForAssistant(db) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
-  // У части товаров синк создал НЕСКОЛЬКО разных строк products (разных
-  // product_id) под одним и тем же official_name — сопоставление с уже
-  // существующим товаром сработало не всегда. Каждая такая строка проходит
-  // через "самое новое активное упоминание" САМА ПО СЕБЕ (см. подзапрос
-  // выше), поэтому в products может остаться две-три карточки с одинаковым
-  // названием и РАЗНЫМИ ценами — модель не может понять, какую называть, и
-  // путает цену (проверено на проде: 65 из 651 названий имели конфликт
-  // цены между такими карточками). ORDER BY выше уже отдаёт самую свежую
-  // запись первой — оставляем на каждое название только её.
   const seenProductNames = new Set();
-  const dedupedProducts = products.filter((p) => {
+  return products.filter((p) => {
     if (seenProductNames.has(p.official_name)) return false;
     seenProductNames.add(p.official_name);
     return true;
   });
+}
+
+// Нормализация под поиск по токенам: без регистра, «ё»→«е», знаки препинания
+// в пробелы — то же самое, что делает productsMentionRequest ниже.
+function normalizeSearchText(value) {
+  return String(value || "")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/gu, " ")
+    .trim();
+}
+
+const SEARCH_STOP_WORDS = new Set(["для", "есть", "стоит", "цена", "модель", "хочу", "нужен", "нужна", "нужно", "какой", "какая", "какие", "сколько", "почем", "почём"]);
+
+// Инструмент search_catalog для tool calling (см. AiRouter.chatTextWithTools):
+// модель обязана вызвать его перед тем, как назвать клиенту цену/наличие
+// конкретного товара, вместо того чтобы придумывать цифры самой — цена и
+// наличие приходят из БД, а не генерируются текстом.
+function searchCatalogProducts(db, query) {
+  const products = getDedupedCatalogProducts(db);
+  const tokens = normalizeSearchText(query).split(" ").filter((t) => t.length >= 2 && !SEARCH_STOP_WORDS.has(t));
+  if (!tokens.length) return [];
+  const scored = products.map((p) => {
+    const haystack = normalizeSearchText(`${p.official_name} ${p.brand || ""} ${p.category || ""} ${p.color || ""} ${p.storage || ""}`);
+    const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? 1 : 0), 0);
+    return { p, score };
+  }).filter((item) => item.score > 0);
+  scored.sort((a, b) => b.score - a.score || String(a.p.official_name).localeCompare(String(b.p.official_name), "ru"));
+  // Те же готовые поля priceKgs/priceUsd/priceRub/priceKzt, что и в тексте
+  // каталога (см. ASSISTANT_PRICE_POLICY) — модель не должна сама переводить
+  // валюту, а сумма без округления такая же, как в остальном каталоге.
+  return scored.slice(0, 12).map(({ p }) => ({
+    name: p.official_name,
+    brand: p.brand || null,
+    category: p.category || null,
+    storage: p.storage || specFallback(p.specifications, "Память") || null,
+    color: p.color || specFallback(p.specifications, "Цвета") || null,
+    price: Number(p.price),
+    currency: p.currency,
+    priceKgs: Math.ceil(convertAssistantPrice(p.price, p.currency, "KGS")),
+    priceUsd: Math.ceil(convertAssistantPrice(p.price, p.currency, "USD")),
+    priceRub: Math.ceil(convertAssistantPrice(p.price, p.currency, "RUB")),
+    priceKzt: Math.ceil(convertAssistantPrice(p.price, p.currency, "KZT")),
+    available: Boolean(p.available),
+  }));
+}
+
+const CATALOG_SEARCH_TOOL = {
+  type: "function",
+  function: {
+    name: "search_catalog",
+    description: "Ищет товары в РЕАЛЬНОМ каталоге магазина по названию модели, бренду или категории и возвращает точную цену, валюту и наличие на складе. Обязательно вызывай эту функцию перед тем, как назвать клиенту цену, наличие, цвет или объём памяти КОНКРЕТНОГО товара — никогда не придумывай и не вспоминай эти цифры сам, используй только то, что вернула функция. Если функция ничего не нашла — так и скажи клиенту, не выдумывай товар.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Что искать: название модели, бренд или категория, например «iPhone 17 Pro 256» или «Гармин»",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+function buildTelegramCatalogForAssistant(db) {
+  // Товаровед работает со структурированной базой, полученной только из
+  // публикаций канала. Для каждой позиции берём самое новое активное
+  // упоминание — старая цена той же модели в подсказку не попадёт. У части
+  // товаров синк создал НЕСКОЛЬКО разных строк products (разных product_id)
+  // под одним и тем же official_name с РАЗНЫМИ ценами — getDedupedCatalogProducts
+  // оставляет только самую свежую запись на каждое название (проверено на
+  // проде: 65 из 651 названий имели такой конфликт цены).
+  const dedupedProducts = getDedupedCatalogProducts(db);
   // Новый или отредактированный пост сначала имеет статус raw. Добавляем
   // его в payload товароведа сразу: он новее структурированной карточки и
   // должен иметь приоритет до фонового разбора всей истории.
@@ -826,6 +894,9 @@ const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Если клиент прямо просит показать все модели категории целиком («покажи все айфоны», «весь ассортимент MacBook», «какие вообще есть модели») — лимит 2–3 не действует: перечисли КАЖДУЮ модель и конфигурацию этой категории, которая есть в каталоге ниже, а не только последнее поколение и не только «самые популярные». Для длинного списка группируй по модели и объёму памяти, чтобы легко читалось. Данные в каталоге ниже уже включают все категории и поколения товара — никогда не отказывайся показать список и не говори, что не можешь его вывести, если категория есть в каталоге.
 Если клиент коротко уточняет валюту («в сомах?», «в $?», «а в тенге?»), товар уже указан в контексте диалога и его надо взять из подборки. Никогда не отвечай, что точной суммы в другой валюте нет: готовые priceKgs, priceUsd, priceRub и priceKzt уже являются подтверждённым пересчётом цены канала.
 Если клиент просит цену в валюте, которой нет среди готовых полей (евро, лиры, сум, любая другая) — переведи цену из priceUsd в нужную валюту по своему приблизительному знанию текущего рыночного курса и явно скажи, что это ориентировочный курс, а не фиксированный курс магазина: точную сумму нужно уточнять на момент оплаты. Если совсем не уверен в порядке курса этой валюты — честно скажи, что не можешь точно перевести, и назови цену в долларах или сомах.
+
+ПРОВЕРКА ЧЕРЕЗ search_catalog:
+У тебя есть функция search_catalog — она обращается напрямую к базе магазина и возвращает точную и самую свежую цену/наличие/цвет по названию, бренду или категории. Каталог выше уже даёт тебе общую картину, но прежде чем НАЗВАТЬ клиенту конкретную цифру (цену, наличие, цвет, объём памяти) по конкретному товару — обязательно вызови search_catalog по этому товару и возьми числа из её ответа, а не из своей памяти о каталоге выше: между сборкой этого сообщения и твоим ответом каталог мог обновиться. Если search_catalog не нашла товар, которого не было и в каталоге выше — так и скажи клиенту, не выдумывай.
 
 ТОВАРЫ ПОД ЗАКАЗ БЕЗ УКАЗАННОЙ ЦЕНЫ:
 Если товар отмечен как «под заказ» и цена для него не указана, не говори, что цена отсутствует, неизвестна или временно недоступна. Сообщи, что стоимость договорная и зависит от выбранной конфигурации и условий заказа; не придумывай примерную цену и не рассчитывай её сам.
@@ -1812,7 +1883,7 @@ prompt_patch — не больше двух коротких предложен�
       .map((message) => message.content)
       .join("\n");
     const finance = financeToolContext(financeRequest, selection);
-    let reply = await this.ai.chatText({
+    let reply = await this._chatWithCatalogTool({
       system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
@@ -1833,6 +1904,38 @@ prompt_patch — не больше двух коротких предложен�
       latencyMs: Date.now() - startedAt,
     });
     return { reply, model: selectedModel, latencyMs: Date.now() - startedAt };
+  }
+
+  // Основная генерация ответа: та же самая система/история/пользовательское
+  // сообщение, что и раньше через ai.chatText, но модели дополнительно дан
+  // инструмент search_catalog (см. CATALOG_SEARCH_TOOL) — он бьёт напрямую в
+  // БД, поэтому цена/наличие в его ответе не могут быть выдумкой модели.
+  // Если провайдер не поддерживает function calling (только DeepSeek
+  // поддержан в AiRouter.chatTextWithTools) —тихо откатываемся на обычный
+  // chatText, чтобы бот не переставал отвечать.
+  async _chatWithCatalogTool({ system, messages, user, model, onUsage }) {
+    if (typeof this.ai.chatTextWithTools !== "function") {
+      return this.ai.chatText({ system, messages, user, model, onUsage });
+    }
+    try {
+      return await this.ai.chatTextWithTools({
+        system,
+        messages,
+        user,
+        model,
+        tools: [CATALOG_SEARCH_TOOL],
+        executeTool: async (name, args) => {
+          if (name !== "search_catalog") return { error: "неизвестная функция" };
+          return { products: searchCatalogProducts(this.db, args?.query) };
+        },
+        onUsage,
+      });
+    } catch (error) {
+      if (/Function calling пока поддержан только для DeepSeek/.test(error.message)) {
+        return this.ai.chatText({ system, messages, user, model, onUsage });
+      }
+      throw error;
+    }
   }
 
   _composePrompt(settings, catalog) {
@@ -2579,7 +2682,7 @@ prompt_patch — не больше двух коротких предложен�
       incomingMessageId,
     });
     try {
-      let reply = await this.ai.chatText({
+      let reply = await this._chatWithCatalogTool({
         system: prompt,
         messages: history,
         model: settings.model,

@@ -162,6 +162,32 @@ class AiRouter {
     return restoreMapping(text, mapping);
   }
 
+  // Как chatText, но с function calling: модель вызывает executeTool
+  // вместо того, чтобы придумывать цифры самой. Поддерживается только для
+  // DeepSeek (единственный провайдер, реально используемый в проде) —
+  // остальные провайдеры пока не подключены к этому пути.
+  async chatTextWithTools({ system, messages = [], user, model, tools, executeTool, maxTokens = 1800, temperature, onUsage }) {
+    const info = modelInfo(model);
+    if (!info || info.provider !== "deepseek" || !this.deepseek?.enabled) {
+      throw new Error("Function calling пока поддержан только для DeepSeek");
+    }
+    const mapping = buildMapping([...messages.map((item) => item.content), user]);
+    const redactedMessages = messages.map((item) => ({ ...item, content: applyMapping(item.content, mapping) }));
+    const redactedUser = applyMapping(user, mapping);
+    const text = await this.deepseek.chatTextWithTools({
+      system,
+      messages: redactedMessages,
+      user: redactedUser,
+      model,
+      tools,
+      executeTool,
+      maxTokens,
+      temperature,
+      onUsage,
+    });
+    return restoreMapping(text, mapping);
+  }
+
   async _dispatchChatText({ system, messages = [], user, model, maxTokens = 900, temperature, onUsage }) {
     const info = modelInfo(model);
     if (!info) throw new Error("Неизвестная модель");

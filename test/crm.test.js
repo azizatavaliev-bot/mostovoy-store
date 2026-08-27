@@ -2235,6 +2235,59 @@ test("новые семейства каталога: экшн-камеры (DJI
   assert.doesNotMatch(micReply, /Osmo/, "петлички и камеры — разные категории");
 });
 
+test("search_catalog: инструмент отдаёт модели точную цену/наличие из БД, а не выдуманные моделью числа", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+
+  const productId = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, available)
+     VALUES ('iphone-17-tool', 'iphone-17-tool', 'iPhone 17', 885, 'USD', 'active', 'Apple', 'Смартфоны', 1)`
+  ).run().lastInsertRowid;
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 601, '2026-08-01T10:00:00.000Z', 'iPhone 17 885$', 'hash-tool', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 885, 'USD', 1, 1)"
+  ).run(messageId, productId);
+
+  let toolQuery = null;
+  const ai = {
+    enabled: true,
+    chatJson: async () => ({ template_id: null }),
+    // Мок сам "звонит" в executeTool ровно как это делает DeepSeekClient —
+    // так тест проверяет реальную цепочку CrmService → AiRouter → инструмент,
+    // а не просто заглушку текста.
+    chatTextWithTools: async ({ executeTool }) => {
+      const result = await executeTool("search_catalog", { query: "iPhone 17" });
+      toolQuery = result;
+      const product = result.products[0];
+      return `${product.name} — ${product.priceKgs} сом. Оформляем?`;
+    },
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) }),
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+
+  const message = { date: 1_700_000_000, chat: { id: 601, type: "private" }, from: { id: 601, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message, message_id: 601, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 602, text: "Сколько стоит iPhone 17?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(toolQuery.products.length, 1);
+  assert.equal(toolQuery.products[0].price, 885);
+  assert.equal(toolQuery.products[0].currency, "USD");
+  assert.equal(toolQuery.products[0].available, true);
+
+  const conversation = crm.listConversations()[0];
+  const detail = crm.getConversation(conversation.id);
+  assert.match(detail.messages.at(-1).text, /iPhone 17 — \d[\d\s]* сом/);
+});
+
 test("_isBareCategoryRequest не считает голым запрос с моделью, объёмом памяти или модификатором", () => {
   const db = createConnection(":memory:");
   const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });

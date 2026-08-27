@@ -849,6 +849,21 @@ const CATALOG_FAMILIES = [
   { request: /петличк|петлич|микрофон|dji\s*mic|lavalier/i, terms: ["dji mic", "петличк", "микрофон", "lavalier", "wireless mic"] },
 ];
 
+// Наивный String.includes() для CATALOG_FAMILIES.terms ловил случайные
+// совпадения внутри слов — «Ray Ban» находился ВНУТРИ «...Leather and
+// Gray Bands» (цвет ремешка часов Garmin), и запрос про очки Ray-Ban
+// притягивал в список ещё и Garmin Fenix. Границы слова через \b здесь не
+// подходят: \b не считает кириллицу словесным символом (см. комментарий у
+// CATALOG_FAMILIES про «фен\b»), а термины бывают и кириллические —
+// поэтому границы проверяются вручную по классу [a-zа-я0-9].
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function termMatchesWholeWord(haystack, term) {
+  const re = new RegExp(`(?<![a-zа-я0-9])${escapeRegExp(term)}(?![a-zа-я0-9])`, "u");
+  return re.test(haystack);
+}
+
 // official_name в базе — это полный SKU канала: память, цвет и тип SIM
 // зашиты прямо в название («Apple iPhone 15 Pro 1 TB (Black, Blue)»,
 // «Apple iPhone 15 Pro 256 GB Black Titanium»). Для списка линейки в
@@ -2624,7 +2639,7 @@ prompt_patch — не больше двух коротких предложен�
         WHERE p.status != 'hidden' AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL`
     ).all();
     const matches = (row) => family.terms.some((term) =>
-      `${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU").includes(term)
+      termMatchesWholeWord(`${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU"), term)
     );
     // Цвета группируем по базовой модели (та же группировка, что даёт
     // короткий список моделей) — иначе клиент видит название линейки, но не
@@ -2633,15 +2648,23 @@ prompt_patch — не больше двух коротких предложен�
     for (const row of rows.filter(matches)) {
       const base = baseModelLine(row.name);
       if (!base) continue;
-      if (!byModel.has(base)) byModel.set(base, new Set());
+      if (!byModel.has(base)) byModel.set(base, new Map());
       const color = row.color || specFallback(row.specifications, "Цвета");
-      if (color) byModel.get(base).add(color);
+      // Дедуп без учёта регистра и порядка слов через «/» — исходные посты
+      // канала пишут один и тот же цвет по-разному («Синий / белый»,
+      // «белый/синий»), простой Set по точной строке их не считал дублями.
+      if (color) {
+        const key = color.toLocaleLowerCase("ru-RU").split(/\s*\/\s*/).sort().join("/");
+        if (!byModel.get(base).has(key)) byModel.get(base).set(key, color);
+      }
     }
     const names = [...byModel.keys()].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
     if (names.length < 2) return null;
     const lines = names.map((name) => {
-      const colors = family.noColors ? null : [...byModel.get(name)];
-      return colors?.length ? `• ${name} — ${colors.join(", ")}` : `• ${name}`;
+      const colors = family.noColors ? null : [...byModel.get(name).values()];
+      if (!colors?.length) return `• ${name}`;
+      const shown = colors.length > 5 ? [...colors.slice(0, 5), "и другие"] : colors;
+      return `• ${name} — ${shown.join(", ")}`;
     }).join("\n");
     return `У нас в наличии несколько моделей:\n${lines}\n\nКакая интересует? Назовите модель — сразу назову актуальную цену и объём памяти.`;
   }

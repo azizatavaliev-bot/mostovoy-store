@@ -2367,6 +2367,36 @@ test("_categoryBrowseReply не показывает цвета для очко�
   assert.doesNotMatch(reply, / — Matte Black| — Shiny Black/, "цвет уже в названии модели, дублировать не нужно");
 });
 
+test("_categoryBrowseReply: наивное совпадение подстроки не путает термин с частью другого слова", (t) => {
+  // Найдено на проде: «Ray Ban» находился ВНУТРИ «...Leather and Gray
+  // Bands» (цвет ремешка часов Garmin) через обычный String.includes(),
+  // и запрос про очки Ray-Ban заодно приносил Garmin Fenix в списке.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)"
+  );
+  const fenix = insertProduct.run("fenix8-51", "fenix8-51", "Garmin Fenix 8 51mm AMOLED Sapphire Titanium with Leather and Gray Bands", 1180, "USD", "Garmin", "Смарт-часы", "Titanium with Leather and Gray Bands").lastInsertRowid;
+  const rayban = insertProduct.run("rayban-3", "rayban-3", "Meta Ray-Ban Wayfarer Gen 2 Matte Black", 300, "USD", "Meta", "Очки", "Matte Black").lastInsertRowid;
+  const oakley = insertProduct.run("oakley-1", "oakley-1", "Meta Oakley Vanguard Black Prizm 24K S52", 400, "USD", "Meta", "Очки", "Black Prizm").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, fenix, 1180, "USD");
+  link.run(message, rayban, 300, "USD");
+  link.run(message, oakley, 400, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("Очки Ray-Ban есть?");
+  assert.doesNotMatch(reply, /Fenix/, "часы Garmin не должны попадать в список очков через случайное совпадение подстроки");
+  assert.match(reply, /Ray-Ban/);
+  assert.match(reply, /Oakley/);
+});
+
 test("новые семейства каталога: экшн-камеры (DJI Osmo) и петлички распознаются как отдельные категории", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

@@ -2302,6 +2302,44 @@ test("новые семейства каталога: экшн-камеры (DJI
   assert.doesNotMatch(micReply, /Osmo/, "петлички и камеры — разные категории");
 });
 
+test("Dyson: фен/стайлер и пылесос — разные семейства, не показываются вперемешку", (t) => {
+  // Найдено на проде: спросили про фен Dyson, получили список из 50+
+  // позиций, где вперемешку с фенами и стайлерами были реальные пылесосы
+  // (V15, V16, SV50) — один общий триггер "dyson" отдавал весь бренд разом.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)"
+  );
+  const airwrap = insertProduct.run("dyson-airwrap-hs05", "dyson-airwrap-hs05", "Dyson Airwrap HS05 Long Ceramic Pink", 610, "USD", "Dyson", "Стайлеры").lastInsertRowid;
+  const supersonic = insertProduct.run("dyson-supersonic-hd07", "dyson-supersonic-hd07", "Dyson Supersonic HD07", 380, "USD", "Dyson", "Фены").lastInsertRowid;
+  const v15 = insertProduct.run("dyson-v15-absolute", "dyson-v15-absolute", "Dyson V15 Absolute", 700, "USD", "Dyson", "Пылесосы").lastInsertRowid;
+  const v16 = insertProduct.run("dyson-v16-piston", "dyson-v16-piston", "Dyson V16 Piston Animal", 900, "USD", "Dyson", "Пылесосы").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, airwrap, 610, "USD");
+  link.run(message, supersonic, 380, "USD");
+  link.run(message, v15, 700, "USD");
+  link.run(message, v16, 900, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+
+  const hairReply = crm._categoryBrowseReply("Дайсон фен есть?");
+  assert.match(hairReply, /Airwrap/);
+  assert.match(hairReply, /Supersonic/);
+  assert.doesNotMatch(hairReply, /V15|V16/, "пылесосы не должны попадать в ответ про фен");
+
+  const vacuumReply = crm._categoryBrowseReply("Пылесос Дайсон есть?");
+  assert.match(vacuumReply, /V15/);
+  assert.match(vacuumReply, /V16/);
+  assert.doesNotMatch(vacuumReply, /Airwrap|Supersonic/, "фены и стайлеры не должны попадать в ответ про пылесос");
+});
+
 test("search_catalog: инструмент отдаёт модели точную цену/наличие из БД, а не выдуманные моделью числа", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;

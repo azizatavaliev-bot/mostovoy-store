@@ -429,13 +429,13 @@ function relevantProductsForContext(products, request, context = request) {
 
   // «обычный / просто / не Pro» — это явное отрицание Pro, а не повод
   // выбрать первый Pro из каталога. Обратное правило действует для явного Pro.
-  const nonPro = /(?:обычн|не\s+(?:pro|про)\b|просто\s+(?:garmin\s+)?(?:fenix\s+)?\d)/u.test(`${recent} ${latest}`);
-  const explicitPro = !nonPro && /(?:\bpro\b|\bпро\b)/u.test(latest || recent.slice(-500));
+  const nonPro = /(?:обычн|не\s+(?:pro\b|про(?![а-яё]))|просто\s+(?:garmin\s+)?(?:fenix\s+)?\d)/u.test(`${recent} ${latest}`);
+  const explicitPro = !nonPro && /(?:\bpro\b|(?<![а-яё])про(?![а-яё]))/u.test(latest || recent.slice(-500));
   if (nonPro) {
-    const filtered = candidates.filter((product) => !/(?:\bpro\b|\bпро\b)/u.test(normalize(product.name)));
+    const filtered = candidates.filter((product) => !/(?:\bpro\b|(?<![а-яё])про(?![а-яё]))/u.test(normalize(product.name)));
     if (filtered.length) candidates = filtered;
   } else if (explicitPro) {
-    const filtered = candidates.filter((product) => /(?:\bpro\b|\bпро\b)/u.test(normalize(product.name)));
+    const filtered = candidates.filter((product) => /(?:\bpro\b|(?<![а-яё])про(?![а-яё]))/u.test(normalize(product.name)));
     if (filtered.length) candidates = filtered;
   }
 
@@ -489,10 +489,13 @@ function hasPriceInReply(reply) {
 
 function stageActionForInbound(text) {
   const value = String(text || "").toLowerCase().replace(/ё/g, "е");
-  if (/(?:оформ(?:ить|ляйте)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(value)) {
+  // \b не распознаёт границу слова после кириллицы (см. комментарий у Dyson
+  // в CATALOG_FAMILIES) — «беру\b» и «хочу\b» никогда не матчились,
+  // заменено на отрицательный lookahead по кириллице.
+  if (/(?:оформ(?:ить|ляйте)|заказ(?:ать|ываю)?|беру(?![а-яё])|покупаю(?![а-яё])|заброниру|резервиру)/iu.test(value)) {
     return "ready_to_buy";
   }
-  if (/(?:хочу\b|подходит|устраивает|интересует|готов\s+(?:взять|купить)|давайте\s+(?:этот|эту|его|ее))/iu.test(value)) {
+  if (/(?:хочу(?![а-яё])|подходит|устраивает|интересует|готов\s+(?:взять|купить)|давайте\s+(?:этот|эту|его|ее))/iu.test(value)) {
     return "interest_confirmed";
   }
   if (/(?:iphone|айфон|macbook|макбук|airpods|наушник|dyson|дайсон|whoop|garmin|samsung|playstation|xbox|nintendo|бюджет|до\s+\d|цвет|памят|trade.?in|трейд.?ин|обмен|рассроч)/iu.test(value)) {
@@ -814,7 +817,20 @@ const CATALOG_FAMILIES = [
   { request: /apple watch|эпл вотч|часы apple/i, terms: ["apple watch"] },
   { request: /samsung|самсунг/i, terms: ["samsung", "galaxy"] },
   { request: /xiaomi|сяоми|poco/i, terms: ["xiaomi", "poco"] },
-  { request: /dyson|дайсон|фен\b|стайлер|выпрямител|пылесос/i, terms: ["dyson", "airwrap", "airstrait", "v15", "v16", "supersonic"] },
+  // У Dyson несколько совсем разных линеек товаров под одним брендом — один
+  // общий триггер на "dyson" отдавал фены, стайлеры, пылесосы и очистители
+  // воздуха одним списком на 50+ позиций (найдено на проде: спросили про
+  // фен, получили вперемешку ещё и реальные пылесосы V15/V16/SV50).
+  // Специфичные запросы (фен/стайлер/пылесос/очиститель) разведены по своим
+  // семействам; общий "Dyson" без уточнения остаётся как раньше — единственный
+  // случай, где показать весь бренд действительно уместно.
+  // \b не распознаёт границу слова после кириллицы (не считает «н» словесным
+  // символом) — «фен\b» никогда не матчился и запрос молча проваливался в
+  // общее семейство ниже. Проверено: /фен\b/i.test("Дайсон фен есть?") === false.
+  { request: /фен(?:а|ом|ы)?(?:\s|$|[?!.,])|стайлер|выпрямител|укладк|airwrap|airstrait|corrale|supersonic/i, terms: ["airwrap", "airstrait", "corrale", "supersonic", "расческа"] },
+  { request: /пылесос|\bvacuum\b|\bv1[0-9]\b|sv50|pencil\s*vac/i, terms: ["v15", "v16", "sv50", "gen5", "pencil vac"] },
+  { request: /увлажнител|очистител.{0,12}возду|purifier|\bph0\d\b|\btp0\d\b/i, terms: ["ph04", "tp09", "purifier", "humidify"] },
+  { request: /dyson|дайсон/i, terms: ["dyson", "airwrap", "airstrait", "corrale", "supersonic", "v15", "v16", "sv50", "gen5", "ph04", "tp09"] },
   { request: /garmin|гармин/i, terms: ["garmin"] },
   { request: /whoop|вуп/i, terms: ["whoop"] },
   { request: /очки|ray.?ban|meta/i, terms: ["ray ban", "ray-ban", "rayban", "ray•ban", "meta oakley"] },
@@ -1250,7 +1266,7 @@ class CrmService {
       : "";
     // Заказ появляется после явного подтверждения клиента. Сообщения вроде
     // «сколько стоит» или обычная подборка заказом не считаются.
-    const explicitOrder = /(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру\b|покупаю\b|заброниру|резервиру)/iu.test(latestCustomerText);
+    const explicitOrder = /(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру(?![а-яё])|покупаю(?![а-яё])|заброниру|резервиру)/iu.test(latestCustomerText);
     const confirmedOffer = /^(?:да|давайте|конечно|хорошо|согласен|согласна|беру|оформляйте)[.!\s]*$/iu.test(latestCustomerText.trim())
       && /(?:оформ|заказ|резерв|покуп)/iu.test(previousAssistantText);
     if (!explicitOrder && !confirmedOffer) return false;

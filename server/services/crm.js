@@ -1899,8 +1899,17 @@ prompt_patch — не больше двух коротких предложен�
       draft: reply,
       groundedProductNames: generated.groundedProductNames,
     });
-    reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
-    reply = enforceCatalogAvailabilityReply({ reply, request: text, context: catalogRequest, selection });
+    // Если search_catalog реально подтвердил товар в этом ответе — доверяем
+    // ему, а не старой эвристике relevantProductsForContext ниже. Та
+    // выбирает "то, о чём спросил клиент" по пересечению ключевых слов и при
+    // неуверенном совпадении может подставить случайный товар из непричастной
+    // части каталога (проверено на проде: подменила верный Garmin Fenix 8 на
+    // Canon PowerShot). search_catalog — код, бьющий в БД по факту, ему
+    // подмена не грозит в принципе.
+    if (!generated.groundedProductNames.size) {
+      reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
+      reply = enforceCatalogAvailabilityReply({ reply, request: text, context: catalogRequest, selection });
+    }
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
       latencyMs: Date.now() - startedAt,
@@ -2740,8 +2749,15 @@ prompt_patch — не больше двух коротких предложен�
       });
       let reply = generated.reply;
       reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply, groundedProductNames: generated.groundedProductNames });
-      reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
-      reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
+      // См. комментарий в testBot: если search_catalog подтвердил товар,
+      // старой эвристике relevantProductsForContext ниже доверять не нужно —
+      // она может подменить проверенный товар на случайный при слабом
+      // совпадении по ключевым словам (проверено на проде: Garmin Fenix 8 →
+      // Canon PowerShot).
+      if (!generated.groundedProductNames.size) {
+        reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
+        reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
+      }
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {
           incomingMessageId,

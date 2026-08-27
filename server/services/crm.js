@@ -1883,19 +1883,21 @@ prompt_patch — не больше двух коротких предложен�
       .map((message) => message.content)
       .join("\n");
     const finance = financeToolContext(financeRequest, selection);
-    let reply = await this._chatWithCatalogTool({
+    const generated = await this._chatWithCatalogTool({
       system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
       onUsage: this._usageRecorder("laboratory", null, selectedModel),
     });
+    let reply = generated.reply;
     reply = await this._reviewReply({
       conversationId: null,
       settings: { ...settings, model: selectedModel },
       history: Array.isArray(history) ? history : [],
       customerRequest: text,
       draft: reply,
+      groundedProductNames: generated.groundedProductNames,
     });
     reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
     reply = enforceCatalogAvailabilityReply({ reply, request: text, context: catalogRequest, selection });
@@ -1913,11 +1915,19 @@ prompt_patch — не больше двух коротких предложен�
   // Если провайдер не поддерживает function calling (только DeepSeek
   // поддержан в AiRouter.chatTextWithTools) —тихо откатываемся на обычный
   // chatText, чтобы бот не переставал отвечать.
+  // Возвращает { reply, groundedProductNames } — groundedProductNames это
+  // union всех товаров, которые search_catalog реально вернул по запросам
+  // модели за этот ответ. Нужны отдельно от текста ответа, чтобы супервизор
+  // (см. _reviewReply) не мог подменить проверенный товар на выдуманный —
+  // такое найдено на проде: супервизор переписал верный черновик про Garmin
+  // Fenix 8 (после успешного tool call) на случайный Canon.
   async _chatWithCatalogTool({ system, messages, user, model, onUsage, conversationId = null }) {
     if (typeof this.ai.chatTextWithTools !== "function") {
-      return this.ai.chatText({ system, messages, user, model, onUsage });
+      const reply = await this.ai.chatText({ system, messages, user, model, onUsage });
+      return { reply, groundedProductNames: new Set() };
     }
     let toolCalled = false;
+    const groundedProductNames = new Set();
     try {
       const reply = await this.ai.chatTextWithTools({
         system,
@@ -1936,6 +1946,7 @@ prompt_patch — не больше двух коротких предложен�
           if (name !== "search_catalog") return { error: "неизвестная функция" };
           toolCalled = true;
           const products = searchCatalogProducts(this.db, args?.query);
+          products.forEach((p) => groundedProductNames.add(p.name));
           this._logEvent(conversationId, "info", "generation", "tool.search_catalog", "Модель запросила каталог через инструмент", {
             query: args?.query,
             resultCount: products.length,
@@ -1948,10 +1959,11 @@ prompt_patch — не больше двух коротких предложен�
       if (!toolCalled) {
         this._logEvent(conversationId, "warn", "generation", "tool.search_catalog_skipped", "Модель ответила, ни разу не вызвав search_catalog");
       }
-      return reply;
+      return { reply, groundedProductNames };
     } catch (error) {
       if (/Function calling пока поддержан только для DeepSeek/.test(error.message)) {
-        return this.ai.chatText({ system, messages, user, model, onUsage });
+        const reply = await this.ai.chatText({ system, messages, user, model, onUsage });
+        return { reply, groundedProductNames: new Set() };
       }
       throw error;
     }
@@ -2011,7 +2023,7 @@ prompt_patch — не больше двух коротких предложен�
   // ревью, как финальная страховка на случай, если сам супервизор ошибся.
   // Сбой или таймаут ревью не блокирует ответ клиенту — уходит исходный
   // черновик (fail-open, тот же принцип, что и у остальных вызовов ИИ здесь).
-  async _reviewReply({ conversationId, settings, history, customerRequest, draft }) {
+  async _reviewReply({ conversationId, settings, history, customerRequest, draft, groundedProductNames }) {
     if (!settings.supervisorEnabled || !this.ai?.enabled || typeof this.ai.chatJson !== "function") return draft;
     try {
       const result = await this.ai.chatJson({
@@ -2029,6 +2041,24 @@ prompt_patch — не больше двух коротких предложен�
       const status = String(result?.status || "approved");
       const corrected = String(result?.corrected_reply || "").trim();
       if (status === "rewrite" && corrected) {
+        // Супервизор — отдельный вызов ИИ без доступа к search_catalog: он
+        // может переписать формулировку и заодно подменить проверенный товар
+        // на выдуманный (найдено на проде: верный черновик про Garmin Fenix 8
+        // после успешного tool call супервизор переписал на случайный Canon,
+        // якобы исправляя незакрытый тег в тексте). Если этот ответ уже был
+        // проверен через search_catalog (draft ссылается на один из найденных
+        // товаров), исправление обязано сохранить ссылку хотя бы на один из
+        // них — иначе это не исправление формулировки, а подмена факта.
+        const draftIsGrounded = groundedProductNames?.size > 0
+          && [...groundedProductNames].some((name) => draft.includes(name));
+        const correctedKeepsGrounding = !groundedProductNames?.size
+          || [...groundedProductNames].some((name) => corrected.includes(name));
+        if (draftIsGrounded && !correctedKeepsGrounding) {
+          this._logEvent(conversationId, "warn", "supervisor", "supervisor.rewrite_rejected", "Исправление супервизора потеряло проверенный через search_catalog товар — оставлен черновик", {
+            issue: String(result?.issue || "").slice(0, 300),
+          });
+          return draft;
+        }
         this._logEvent(conversationId, "info", "supervisor", "supervisor.rewrite", "Супервизор исправил черновик", {
           issue: String(result?.issue || "").slice(0, 300),
         });
@@ -2701,14 +2731,15 @@ prompt_patch — не больше двух коротких предложен�
       incomingMessageId,
     });
     try {
-      let reply = await this._chatWithCatalogTool({
+      const generated = await this._chatWithCatalogTool({
         system: prompt,
         messages: history,
         model: settings.model,
         onUsage: this._usageRecorder("sales_agent", conversationId, settings.model),
         conversationId,
       });
-      reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply });
+      let reply = generated.reply;
+      reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply, groundedProductNames: generated.groundedProductNames });
       reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
       reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {

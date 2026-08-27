@@ -1093,6 +1093,62 @@ test("супервизор переписывает черновик, котор
   assert.equal(sentText, "iPhone 17 есть в наличии, 850$. Оформляем?");
 });
 
+test("супервизор не может подменить товар, проверенный через search_catalog, на выдуманный", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  const productId = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, available)
+     VALUES ('garmin-fenix-8-tool', 'garmin-fenix-8-tool', 'Garmin Fenix 8', 980, 'USD', 'active', 'Garmin', 'Часы', 1)`
+  ).run().lastInsertRowid;
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 701, '2026-08-01T10:00:00.000Z', 'Garmin Fenix 8 980$', 'hash-fenix', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 980, 'USD', 1, 1)"
+  ).run(messageId, productId);
+  let sentText = null;
+  const ai = {
+    enabled: true,
+    // Модель честно вызывает search_catalog, находит Garmin Fenix 8 и
+    // отвечает про него — черновик грамотный и проверенный кодом.
+    chatTextWithTools: async ({ executeTool }) => {
+      await executeTool("search_catalog", { query: "Garmin Fenix 8" });
+      return "Garmin Fenix 8 — 980$. Оформляем?";
+    },
+    // Супервизор (отдельный вызов без доступа к search_catalog) находит
+    // мнимую проблему форматирования и "исправляет" её, подменяя товар на
+    // случайный — именно так это произошло на проде.
+    chatJson: async () => ({
+      status: "rewrite",
+      corrected_reply: "Canon PowerShot G7 X Mark III — 108 240 с. В наличии.",
+      issue: "В черновике был незакрытый тег",
+    }),
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false });
+  const message = { date: 1_700_000_000, chat: { id: 142, type: "private" }, from: { id: 142, first_name: "Клиент" } };
+
+  await crm.receiveTelegram({ ...message, message_id: 142, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 143, text: "Сколько стоит Гармин Fenix 8?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // enforceCatalogPriceReply может ещё раз переформатировать текст после
+  // супервизора — проверяем не дословное совпадение, а что подмена товара
+  // не прошла: Canon отклонён, Garmin Fenix 8 остался.
+  assert.doesNotMatch(sentText, /Canon/, "исправление супервизора с выдуманным товаром отклонено");
+  assert.match(sentText, /Garmin Fenix 8/, "ушёл проверенный через search_catalog черновик");
+  assert.ok(crm.listEvents().some((event) => event.event === "supervisor.rewrite_rejected"));
+});
+
 test("супервизор отключается настройкой и не вызывается", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;

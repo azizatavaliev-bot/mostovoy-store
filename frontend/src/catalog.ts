@@ -39,7 +39,7 @@ const STORE_KEYS = { currency: "mostovoy_currency", cart: "mostovoy_cart" };
 
 export function getDisplayCurrency(): CurrencyCode {
   const saved = localStorage.getItem(STORE_KEYS.currency) as CurrencyCode | null;
-  return saved && CURRENCIES[saved] ? saved : "USD";
+  return saved && CURRENCIES[saved] ? saved : "KGS";
 }
 
 export function setDisplayCurrency(code: string): void {

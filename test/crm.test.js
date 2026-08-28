@@ -1205,6 +1205,44 @@ test("модель говорит «нет в наличии» вопреки с
   assert.match(sentText, /белый\/синий/, "реально доступный вариант показан вместо отказа");
 });
 
+test("search_catalog видит ОБА цвета, если у товара общее official_name (цвет не зашит в название)", async (t) => {
+  // Настоящая причина того, что бело-синий iPhone 17 Pro 256GB с
+  // физической SIM пропадал из search_catalog целиком: дедуп каталога
+  // раньше группировал только по official_name, а у этой линейки цвет —
+  // отдельное поле, не часть названия. «Apple iPhone 17 Pro 256GB
+  // физическая SIM + eSIM» оранжевый и бело-синий — одна и та же строка
+  // official_name, дедуп оставлял только одну из двух карточек.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color, storage, available) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, 1)"
+  );
+  const orange = insertProduct.run("iphone-17-pro-256-orange", "iphone-17-pro-256-orange", "Apple iPhone 17 Pro 256GB физическая SIM + eSIM", 1315, "USD", "Apple", "Смартфоны", "оранжевый", "256GB").lastInsertRowid;
+  const blueWhite = insertProduct.run("iphone-17-pro-256-bw", "iphone-17-pro-256-bw", "Apple iPhone 17 Pro 256GB физическая SIM + eSIM", 1200, "USD", "Apple", "Смартфоны", "белый/синий", "256GB").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, orange, 1315, "USD");
+  link.run(message, blueWhite, 1200, "USD");
+
+  let toolResult = null;
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async ({ executeTool }) => {
+      toolResult = await executeTool("search_catalog", { query: "iPhone 17 Pro 256 физическая SIM" });
+      return "ок";
+    },
+  };
+  const crm = new CrmService({ db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0 });
+  const result = await crm.testBot({ message: "Есть iPhone 17 Pro 256 физическая SIM?" });
+  assert.equal(toolResult.products.length, 2, "оба цвета должны прийти отдельными позициями");
+  const colors = toolResult.products.map((p) => p.color).sort();
+  assert.deepEqual(colors, ["белый/синий", "оранжевый"]);
+});
+
 test("супервизор отключается настройкой и не вызывается", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;

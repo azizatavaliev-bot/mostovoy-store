@@ -720,10 +720,21 @@ function getDedupedCatalogProducts(db) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
-  const seenProductNames = new Set();
+  // Дедуп нужен, чтобы у одного и того же товара не было двух записей с
+  // РАЗНЫМИ ценами из-за сбоя синка (та самая причина завести этот дедуп —
+  // 65 из 651 названий имели конфликт цены между карточками). Но ключ
+  // только по official_name слишком широкий: цвет в названии часто не
+  // зашит («Apple iPhone 17 Pro 256GB физическая SIM + eSIM» — общее имя
+  // для оранжевого И бело-синего), и дедуп по имени тихо выбрасывал ВЕСЬ
+  // второй цвет из каталога целиком (найдено на проде: search_catalog
+  // никогда не видел бело-синий 256ГБ с физ. SIM, хотя он есть в базе).
+  // Ключ — имя+цвет+память: разные цвета/объёмы остаются разными
+  // позициями, а конфликт цены одного и того же цвета всё ещё гасится.
+  const seenProductKeys = new Set();
   return products.filter((p) => {
-    if (seenProductNames.has(p.official_name)) return false;
-    seenProductNames.add(p.official_name);
+    const key = `${p.official_name} ${p.color || ""} ${p.storage || ""}`;
+    if (seenProductKeys.has(key)) return false;
+    seenProductKeys.add(key);
     return true;
   });
 }

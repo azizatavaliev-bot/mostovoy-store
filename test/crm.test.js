@@ -1159,6 +1159,52 @@ test("супервизор не может подменить товар, про
   assert.ok(crm.listEvents().some((event) => event.event === "supervisor.rewrite_rejected"));
 });
 
+test("модель говорит «нет в наличии» вопреки собственным результатам search_catalog — исправляется по факту", async (t) => {
+  // Найдено на проде: клиент спросил про синий/белый iPhone 17 Pro 256ГБ с
+  // физической SIM, search_catalog вернул этот вариант доступным, а модель
+  // всё равно ответила, что его нет — типичная галлюцинация поверх уже
+  // правильных данных инструмента.
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  const productId = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color, storage, available)
+     VALUES ('iphone-17-pro-256-bw', 'iphone-17-pro-256-bw', 'Apple iPhone 17 Pro 256GB физическая SIM + eSIM', 1200, 'USD', 'active', 'Apple', 'Смартфоны', 'белый/синий', '256GB', 1)`
+  ).run().lastInsertRowid;
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 702, '2026-08-01T10:00:00.000Z', 'iPhone 17 Pro 256 бело-синий 1200$', 'hash-iphone17pro', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 1200, 'USD', 1, 1)"
+  ).run(messageId, productId);
+  let sentText = null;
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async ({ executeTool }) => {
+      await executeTool("search_catalog", { query: "iPhone 17 Pro 256 физическая синий белый" });
+      return "К сожалению, синий/белый в этой конфигурации сейчас нет.";
+    },
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+  const message = { date: 1_700_000_000, chat: { id: 143, type: "private" }, from: { id: 143, first_name: "Клиент" } };
+
+  await crm.receiveTelegram({ ...message, message_id: 144, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 145, text: "С физической есть синий белый?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.doesNotMatch(sentText, /сейчас нет|в наличии нет/, "ложное «нет в наличии» исправлено по данным search_catalog");
+  assert.match(sentText, /белый\/синий/, "реально доступный вариант показан вместо отказа");
+});
+
 test("супервизор отключается настройкой и не вызывается", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;

@@ -606,6 +606,28 @@ function productsMentionRequest(products, request, context = request) {
   );
 }
 
+// Тот же класс галлюцинации, что и enforceCatalogAvailabilityReply ниже
+// («в наличии нет» вопреки реальным данным), но проверяется по РЕЗУЛЬТАТАМ
+// search_catalog за этот же ответ, а не по старой эвристике
+// relevantProductsForContext. Найдено на проде: клиент спросил про
+// конкретный цвет 256 ГБ с физической SIM, search_catalog вернул этот
+// вариант доступным, а модель всё равно написала «сейчас нет» — тул уже
+// подтвердил наличие, эвристика здесь не нужна и не может ошибиться так,
+// как ошибалась старая (нет риска подставить случайный чужой товар,
+// products уже те самые, что видела модель для этого ответа).
+function enforceGroundedAvailabilityReply({ reply, groundedProducts }) {
+  const output = String(reply || "");
+  const claimsUnavailable = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu.test(output);
+  if (!claimsUnavailable) return reply;
+  const available = (groundedProducts || []).filter((product) => product.available);
+  if (!available.length) return reply;
+  const lines = available.slice(0, 5).map((product) => {
+    const details = [product.storage, product.color].filter(Boolean).join(", ");
+    return `• ${product.name}${details ? `, ${details}` : ""} — ${Math.ceil(Number(product.priceKgs)).toLocaleString("ru-RU")} с`;
+  });
+  return `Есть в наличии:\n${lines.join("\n")}\n\nКакой вариант вас интересует?`;
+}
+
 function enforceCatalogAvailabilityReply({ reply, request, context = request, selection }) {
   const candidates = productsFromSelection(selection);
   if (!candidates.length) return reply;
@@ -1968,6 +1990,11 @@ prompt_patch — не больше двух коротких предложен�
     if (!generated.groundedProductNames.size) {
       reply = enforceCatalogPriceReply({ reply, request: text, context: catalogRequest, selection });
       reply = enforceCatalogAvailabilityReply({ reply, request: text, context: catalogRequest, selection });
+    } else {
+      // «Нет в наличии» вопреки собственным результатам search_catalog —
+      // проверяем по ним напрямую, не через старую эвристику (см. коммент
+      // у enforceGroundedAvailabilityReply).
+      reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
     }
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
@@ -1992,10 +2019,11 @@ prompt_patch — не больше двух коротких предложен�
   async _chatWithCatalogTool({ system, messages, user, model, onUsage, conversationId = null }) {
     if (typeof this.ai.chatTextWithTools !== "function") {
       const reply = await this.ai.chatText({ system, messages, user, model, onUsage });
-      return { reply, groundedProductNames: new Set() };
+      return { reply, groundedProductNames: new Set(), groundedProducts: [] };
     }
     let toolCalled = false;
     const groundedProductNames = new Set();
+    const groundedProductsByName = new Map();
     try {
       const reply = await this.ai.chatTextWithTools({
         system,
@@ -2014,7 +2042,10 @@ prompt_patch — не больше двух коротких предложен�
           if (name !== "search_catalog") return { error: "неизвестная функция" };
           toolCalled = true;
           const products = searchCatalogProducts(this.db, args?.query);
-          products.forEach((p) => groundedProductNames.add(p.name));
+          products.forEach((p) => {
+            groundedProductNames.add(p.name);
+            groundedProductsByName.set(p.name, p);
+          });
           this._logEvent(conversationId, "info", "generation", "tool.search_catalog", "Модель запросила каталог через инструмент", {
             query: args?.query,
             resultCount: products.length,
@@ -2027,11 +2058,11 @@ prompt_patch — не больше двух коротких предложен�
       if (!toolCalled) {
         this._logEvent(conversationId, "warn", "generation", "tool.search_catalog_skipped", "Модель ответила, ни разу не вызвав search_catalog");
       }
-      return { reply, groundedProductNames };
+      return { reply, groundedProductNames, groundedProducts: [...groundedProductsByName.values()] };
     } catch (error) {
       if (/Function calling пока поддержан только для DeepSeek/.test(error.message)) {
         const reply = await this.ai.chatText({ system, messages, user, model, onUsage });
-        return { reply, groundedProductNames: new Set() };
+        return { reply, groundedProductNames: new Set(), groundedProducts: [] };
       }
       throw error;
     }
@@ -2841,6 +2872,8 @@ prompt_patch — не больше двух коротких предложен�
       if (!generated.groundedProductNames.size) {
         reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
         reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
+      } else {
+        reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
       }
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {

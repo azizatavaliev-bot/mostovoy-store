@@ -23,6 +23,7 @@ const { verifyPassword, createSession, verifySession, LoginThrottle } = require(
 const { imageSize } = require("../services/images");
 const { createCrmAdminRoutes } = require("./crm-admin");
 const { safeFetch, readLimited, FetchGuardError } = require("../lib/safeFetch");
+const { syncPublicChannelPosts } = require("../cli/import-public-channel");
 
 const CURRENCIES = ["USD", "KGS", "RUB"];
 const SESSION_COOKIE = "mostovoy_admin_session";
@@ -722,6 +723,40 @@ function createAdminRouter({ db, crm }) {
     db.prepare("UPDATE products SET status = 'active', updated_at = datetime('now') WHERE id = ?").run(row.id);
     logger.info("admin.product_restored", { slug: row.slug });
     res.json({ product: toAdminJson({ ...row, status: "active" }) });
+  });
+
+  // Перечитать канал и обновить цены/наличие всех товаров из Telegram.
+  // Сначала подтягиваем свежую публичную ленту, затем прогоняем через
+  // тот же SyncService, что и обычный webhook (force=true — игнорирует
+  // совпадение хеша текста, чтобы точно пересчитать цену).
+  router.post("/resync", async (req, res) => {
+    try {
+      const imported = await syncPublicChannelPosts({ db });
+      const sync = req.app.locals.services.sync;
+      const rows = db.prepare("SELECT * FROM telegram_messages WHERE is_deleted = 0 ORDER BY id").all();
+      const stats = { created: 0, updated: 0, deactivated: 0, failed: 0 };
+      for (const row of rows) {
+        try {
+          const r = await sync.syncMessage({
+            chatId: row.telegram_chat_id,
+            messageId: row.telegram_message_id,
+            text: row.telegram_original_text,
+            messageUpdatedAt: row.telegram_message_updated_at,
+            force: true,
+          });
+          stats.created += r.created || 0;
+          stats.updated += r.updated || 0;
+          stats.deactivated += r.deactivated || 0;
+        } catch (e) {
+          stats.failed++;
+          logger.error("admin.resync_message_failed", { messageId: row.telegram_message_id, error: e.message });
+        }
+      }
+      logger.info("admin.resync_done", { imported: imported.found, messages: rows.length, ...stats });
+      res.json({ imported, messages: rows.length, ...stats });
+    } catch (e) {
+      handleError(res, e, "admin.resync_failed");
+    }
   });
 
   // Вкладка «Обновления»: когда и где менялась цена.

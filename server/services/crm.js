@@ -738,10 +738,16 @@ function specFallback(specifications, key) {
 // Используется и в buildTelegramCatalogForAssistant (текст для промпта),
 // и в search_catalog (инструмент, который вызывает модель вместо того,
 // чтобы придумывать цифры самой).
+// Наличие берём из p.available (агрегированное поле products, которое
+// правит и recomputeAvailability по всем постам, и админка при ручном
+// изменении), а НЕ из mp.available одного конкретного поста — иначе смена
+// наличия из админки товара, который параллельно ещё связан с постом
+// канала, тихо игнорируется: search_catalog продолжает отвечать по
+// availability из того поста, admin.js её никогда не трогает.
 function getDedupedCatalogProducts(db) {
   const products = db.prepare(
     `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
-            mp.price, mp.currency, mp.available,
+            mp.price, mp.currency, p.available,
             tm.telegram_message_id, tm.telegram_message_updated_at
        FROM products p
        JOIN message_products mp ON mp.product_id = p.id

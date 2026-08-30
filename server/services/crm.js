@@ -642,11 +642,23 @@ function enforceGroundedAvailabilityReply({ reply, groundedProducts }) {
 function enforceGroundedUnavailabilityReply({ reply, groundedProducts }) {
   const output = String(reply || "");
   if (CLAIMS_UNAVAILABLE_PATTERN.test(output)) return reply;
-  const claimsAvailable = /точно\s+есть\b|есть\s+в\s+наличии|в\s+наличии\s+есть|(?:^|\s)в\s+наличии(?!\s*[^.!?\n]{0,10}нет)/iu.test(output);
+  // Кириллица не считается word-символом для \b (см. другие комментарии
+  // про \b в этом файле) — границы через явные разделители/пробелы, не \b.
+  const claimsAvailable = /точно\s+есть(?=[\s.,!?]|$)|есть\s+в\s+наличии|в\s+наличии\s+есть|(?:^|\s)в\s+наличии(?!\s*[^.!?\n]{0,10}нет)/iu.test(output);
   if (!claimsAvailable) return reply;
   const products = groundedProducts || [];
-  if (!products.length || products.some((product) => product.available)) return reply;
-  const lines = products.slice(0, 5).map((product) => {
+  if (!products.length) return reply;
+  // search_catalog по нестрогому запросу («AirPods Pro 3») возвращает до 12
+  // похожих по токенам товаров — AirPods 4, AirPods 2 и т.п., большинство из
+  // которых к вопросу не относится и почти всегда доступно. Проверять ВСЕ
+  // 12 нельзя (проверка никогда не сработает) — нужны только те товары,
+  // которые бот реально НАЗВАЛ в этом ответе (их имя дословно есть в тексте
+  // ответа — так же, как остальной код в этом файле сверяет данные с
+  // ответом, см. pricesMentionedInReply выше).
+  const mentioned = products.filter((product) => output.includes(product.name));
+  const relevant = mentioned.length ? mentioned : products;
+  if (relevant.some((product) => product.available)) return reply;
+  const lines = relevant.slice(0, 5).map((product) => {
     const details = [product.storage, product.color].filter(Boolean).join(", ");
     return `• ${product.name}${details ? `, ${details}` : ""}`;
   });

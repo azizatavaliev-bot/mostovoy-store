@@ -85,7 +85,7 @@ function telegramHtml(markdown) {
 
 const DEFAULT_PROMPT = `Ты продавец-консультант магазина техники МОСТОВОЙ в Бишкеке.
 Отвечай кратко, дружелюбно и на языке клиента. Используй только цены и наличие из актуального каталога ниже.
-Не придумывай характеристики, скидки и сроки доставки. Сначала сам подбери и предложи подходящие товары; не пиши «сейчас уточню», «уточню у менеджера», «каталог не показывает» или «подключу менеджера».
+Не придумывай характеристики, скидки и сроки доставки. Это касается и точных цифр вроде веса в граммах, IP-рейтинга защиты, ёмкости батареи, частоты экрана и т.п.: даже если ты уверен, что знаешь это по памяти о реальном устройстве — если этой цифры нет в описании товара из каталога, скажи клиенту, что точных данных по этой характеристике в карточке товара нет, а не называй значение из общих знаний. Сначала сам подбери и предложи подходящие товары; не пиши «сейчас уточню», «уточню у менеджера», «каталог не показывает» или «подключу менеджера».
 Помоги выбрать товар и мягко предложи оформить заказ. Не упоминай, что ты AI.`;
 const DEFAULT_HYPERVISOR_PROMPT = `Ты создаёшь краткое резюме контекста диалога для менеджера магазина техники.
 Перескажи только факты из переписки: что хочет клиент, какие товары и условия обсуждались, что уже выяснено и какой вопрос остался открытым.
@@ -107,7 +107,7 @@ const DEFAULT_SUPERVISOR_PROMPT = `Ты — внутренний контрол�
 Проверь черновик по истории переписки и последнему сообщению клиента:
 - отвечает по существу на вопрос клиента, не игнорирует его и не уходит от ответа;
 - не использует внутренние термины «подборка», «каталог», «база», «мне передали список» — клиент не должен видеть кухню;
-- не выдумывает цену, наличие, скидку, характеристику или срок доставки, которых нет в переданных клиенту данных; фраза «нет в наличии» без явного подтверждения из этих данных — ошибка;
+- не выдумывает цену, наличие, скидку, характеристику или срок доставки, которых нет в переданных клиенту данных — включая точные цифры вроде веса, IP-рейтинга или ёмкости батареи, названные «по памяти» о реальном устройстве, а не из данных товара; фраза «нет в наличии» без явного подтверждения из этих данных — ошибка; так же ошибка — подтверждение «в наличии»/«точно есть», если в переданных данных этот товар помечен как недоступный;
 - если клиент явно просил показать все модели или весь ассортимент категории — черновик должен перечислять реально много позиций, а не 2–3 штуки; короткий ответ на такой прямой запрос тоже ошибка;
 - после названной цены или подборки заканчивается конкретным следующим шагом (оформить, зарезервировать, рассчитать рассрочку или Trade-in), а не обрывается на списке;
 - не повторяет приветствие, если это не первое сообщение диалога;
@@ -615,10 +615,11 @@ function productsMentionRequest(products, request, context = request) {
 // подтвердил наличие, эвристика здесь не нужна и не может ошибиться так,
 // как ошибалась старая (нет риска подставить случайный чужой товар,
 // products уже те самые, что видела модель для этого ответа).
+const CLAIMS_UNAVAILABLE_PATTERN = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu;
+
 function enforceGroundedAvailabilityReply({ reply, groundedProducts }) {
   const output = String(reply || "");
-  const claimsUnavailable = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu.test(output);
-  if (!claimsUnavailable) return reply;
+  if (!CLAIMS_UNAVAILABLE_PATTERN.test(output)) return reply;
   const available = (groundedProducts || []).filter((product) => product.available);
   if (!available.length) return reply;
   const lines = available.slice(0, 5).map((product) => {
@@ -626,6 +627,30 @@ function enforceGroundedAvailabilityReply({ reply, groundedProducts }) {
     return `• ${product.name}${details ? `, ${details}` : ""} — ${Math.ceil(Number(product.priceKgs)).toLocaleString("ru-RU")} с`;
   });
   return `Есть в наличии:\n${lines.join("\n")}\n\nКакой вариант вас интересует?`;
+}
+
+// Симметрична enforceGroundedAvailabilityReply выше, но ловит галлюцинацию
+// в обратную сторону: модель утверждает «в наличии»/«точно есть», хотя
+// search_catalog за этот же ответ вернула товар с available=false. Найдено
+// живым тестом: клиенту подтвердили наличие товара, который закончился
+// ПОСЛЕ более раннего сообщения в том же диалоге — модель, судя по всему,
+// доверилась своей же более ранней реплике («да, есть») вместо повторной
+// проверки, хотя search_catalog на этом ходу уже вернула available:false.
+// Срабатывает только если ВСЕ найденные search_catalog товары недоступны —
+// если среди них есть хоть один доступный, это может быть законный ответ
+// про другой вариант, трогать не нужно.
+function enforceGroundedUnavailabilityReply({ reply, groundedProducts }) {
+  const output = String(reply || "");
+  if (CLAIMS_UNAVAILABLE_PATTERN.test(output)) return reply;
+  const claimsAvailable = /точно\s+есть\b|есть\s+в\s+наличии|в\s+наличии\s+есть|(?:^|\s)в\s+наличии(?!\s*[^.!?\n]{0,10}нет)/iu.test(output);
+  if (!claimsAvailable) return reply;
+  const products = groundedProducts || [];
+  if (!products.length || products.some((product) => product.available)) return reply;
+  const lines = products.slice(0, 5).map((product) => {
+    const details = [product.storage, product.color].filter(Boolean).join(", ");
+    return `• ${product.name}${details ? `, ${details}` : ""}`;
+  });
+  return `К сожалению, только что раскупили:\n${lines.join("\n")}\n\nМогу предложить похожий вариант или сообщить, как только появится снова — что скажете?`;
 }
 
 function enforceCatalogAvailabilityReply({ reply, request, context = request, selection }) {
@@ -2006,6 +2031,7 @@ prompt_patch — не больше двух коротких предложен�
       // проверяем по ним напрямую, не через старую эвристику (см. коммент
       // у enforceGroundedAvailabilityReply).
       reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
+      reply = enforceGroundedUnavailabilityReply({ reply, groundedProducts: generated.groundedProducts });
     }
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
       model: selectedModel,
@@ -2885,6 +2911,7 @@ prompt_patch — не больше двух коротких предложен�
         reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
       } else {
         reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
+        reply = enforceGroundedUnavailabilityReply({ reply, groundedProducts: generated.groundedProducts });
       }
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {

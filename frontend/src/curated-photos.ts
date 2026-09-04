@@ -159,6 +159,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /seamaster/i, image: "/images/products/other/omega-seamaster.webp" },  // Omega Seamaster
   { test: /osmo mobile/i, image: "/images/products/other/dji-osmo-mobile-8p.webp" },  // DJI Osmo Mobile 8P
   { test: /osmo nano/i, image: "/images/products/other/dji-osmo-nano.webp" },  // DJI Osmo Nano
+  { test: /pocket ?4/i, image: "/images/products/other/dji-pocket-4.webp" },  // DJI Pocket 4 (раньше Pocket 3, чтобы не перехватывался)
   { test: /pocket ?3/i, image: "/images/products/other/dji-pocket-3.webp" },  // DJI Pocket 3
 ]
 

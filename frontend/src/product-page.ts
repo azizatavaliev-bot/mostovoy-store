@@ -46,14 +46,53 @@ function storageGB(str: string | null | undefined): number | null {
   return /TB|ТБ/.test(m[2]) ? n * 1024 : n;
 }
 
-// Цена товара зависит от выбранной памяти: у p.price — цена младшего варианта
-// (storageOptions[0]), у остальных — наценка. В реальных прайсах Apple/Samsung
-// удвоение объёма стоит дороже не в 2 раза, а примерно на 15–20%, поэтому берём
-// степенную зависимость (ratio ** 0.25), а не линейную или пропорциональную.
-function priceForStorage(basePrice: number, storageOptions: string[], selectedStorage: string | null): number {
-  if (!storageOptions?.length || !selectedStorage) return basePrice;
-  const baseGB = storageGB(storageOptions[0]);
-  const selGB = storageGB(selectedStorage);
+interface SpecOption {
+  label: string;
+  price: number | null;
+}
+
+// Значение варианта — либо просто «256 ГБ», либо «46 mm:370» с точной ценой
+// (появилось для не-памятных характеристик вроде размера часов, где наценка
+// «удвоение объёма» бессмысленна). Цена — то, что осталось на её месте у
+// приблизительной формулы ниже.
+function parseSpecOption(raw: string): SpecOption {
+  const trimmed = raw.trim();
+  const i = trimmed.lastIndexOf(":");
+  if (i === -1) return { label: trimmed, price: null };
+  const price = Number(trimmed.slice(i + 1).trim());
+  if (!Number.isFinite(price) || price <= 0) return { label: trimmed, price: null };
+  return { label: trimmed.slice(0, i).trim(), price };
+}
+
+// Одна и та же характеристика хранится в specifications под одним ключом —
+// сейчас это всегда «Память» (историческое имя), но значения бывают и не
+// про память (напр. размер часов в mm). Заголовок подбираем по содержимому.
+function specOptionsFromProduct(p: Product): { title: string; options: SpecOption[] } {
+  const raw = p.specifications?.Память
+    ? String(p.specifications.Память).split(" / ")
+    : p.storage
+      ? [p.storage]
+      : [];
+  const options = raw.map(parseSpecOption);
+  const title = options.some((o) => /\d\s*(mm|мм)\b/i.test(o.label))
+    ? "Размер"
+    : options.some((o) => storageGB(o.label) != null)
+      ? "Память"
+      : "Вариант";
+  return { title, options };
+}
+
+// Цена товара зависит от выбранного варианта. Если для него сохранена точная
+// цена (формат «label:price») — берём её. Иначе (старые записи только про
+// память) — прикидываем наценку: в реальных прайсах Apple/Samsung удвоение
+// объёма стоит дороже не в 2 раза, а примерно на 15–20%, поэтому степенная
+// зависимость (ratio ** 0.25), а не линейная или пропорциональная.
+function priceForStorage(basePrice: number, options: SpecOption[], selectedLabel: string | null): number {
+  if (!options?.length || !selectedLabel) return basePrice;
+  const selected = options.find((o) => o.label === selectedLabel);
+  if (selected?.price != null) return selected.price;
+  const baseGB = storageGB(options[0]?.label);
+  const selGB = storageGB(selectedLabel);
   if (!baseGB || !selGB || baseGB === selGB) return basePrice;
   return Math.round(basePrice * Math.pow(selGB / baseGB, 0.25));
 }
@@ -81,15 +120,11 @@ function renderProduct(p: Product, all: Product[]): void {
     .map((c, i) => `<button class="swatch ${i === 0 ? "active" : ""}" style="--c:${c[1]}" title="${c[0]}" data-name="${c[0]}"></button>`)
     .join("");
 
-  // Варианты памяти: «128 ГБ / 256 ГБ» из легаси или одно значение из базы.
-  const storageOptions = p.specifications?.Память
-    ? String(p.specifications.Память).split(" / ")
-    : p.storage
-      ? [p.storage]
-      : [];
+  // Варианты характеристики: «128 ГБ / 256 ГБ» или «42 mm:340 / 46 mm:370».
+  const { title: specTitle, options: storageOptions } = specOptionsFromProduct(p);
 
-  // По умолчанию выбран первый вариант памяти — он же активная «пилюля».
-  if (storageOptions.length) selected.storage = storageOptions[0].trim();
+  // По умолчанию выбран первый вариант — он же активная «пилюля».
+  if (storageOptions.length) selected.storage = storageOptions[0].label;
 
   // Текущая цена с учётом выбранной памяти. p.price всегда остаётся ценой
   // младшего варианта — от неё считается наценка при переключении пилюль.
@@ -133,8 +168,8 @@ function renderProduct(p: Product, all: Product[]): void {
 
       ${storageOptions.length
         ? `<div class="opt">
-             <p class="opt__title">Память</p>
-             <div class="pills">${storageOptions.map((s, i) => `<button class="pill ${i === 0 ? "active" : ""}">${s.trim()}</button>`).join("")}</div>
+             <p class="opt__title">${specTitle}</p>
+             <div class="pills">${storageOptions.map((o, i) => `<button class="pill ${i === 0 ? "active" : ""}">${o.label}</button>`).join("")}</div>
            </div>`
         : ""}
 
@@ -273,12 +308,8 @@ function wireTradeIn(p: Product, priceState: PriceState): () => void {
 }
 
 function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () => void): void {
-  // Варианты памяти для расчёта наценки — те же, что показаны пилюлями.
-  const storageOptions = p.specifications?.Память
-    ? String(p.specifications.Память).split(" / ").map((s) => s.trim())
-    : p.storage
-      ? [p.storage]
-      : [];
+  // Варианты для расчёта цены — те же, что показаны пилюлями.
+  const { options: storageOptions } = specOptionsFromProduct(p);
 
   function refreshPrice() {
     document.getElementById("pPrice")!.textContent = fmt(priceState.value, p.currency);

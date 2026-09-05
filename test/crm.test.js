@@ -553,6 +553,41 @@ test("повторный /start всегда получает приветств
   assert.match(sent[0], /^Здравствуйте! 😊 Очень рады видеть вас в MOSTOVOY SHOP!/);
 });
 
+test("приветствие в Telegram уходит с теми же кнопками категорий, что в закреплённом посте канала", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => {
+    config.telegram.botToken = previousToken;
+    db.close();
+  });
+  const sentBodies = [];
+  const crm = new CrmService({
+    db,
+    ai: { enabled: false },
+    amocrm: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org")) sentBodies.push(JSON.parse(init.body));
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+
+  await crm.receiveTelegram({
+    message_id: 901,
+    text: "/start",
+    chat: { id: "kb-test", type: "private" },
+    from: { id: 901, first_name: "Клиент" },
+  });
+
+  assert.equal(sentBodies.length, 1);
+  const rows = sentBodies[0].reply_markup?.inline_keyboard;
+  assert.ok(Array.isArray(rows) && rows.length > 0, "у приветствия должна быть Telegram-клавиатура с кнопками категорий");
+  const buttons = rows.flat();
+  const iphoneButton = buttons.find((b) => b.text === "iPhone");
+  assert.ok(iphoneButton, "кнопка iPhone должна быть среди кнопок категорий");
+  assert.match(iphoneButton.url, /^https:\/\/t\.me\/mostovoyshopp\/\d+$/, "кнопка ведёт на конкретный пост в канале, как в закрепе");
+});
+
 test("очистка истории лида удаляет сообщения, но сохраняет сам диалог", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
@@ -1246,6 +1281,85 @@ test("search_catalog видит ОБА цвета, если у товара об
   assert.deepEqual(colors, ["белый/синий", "оранжевый"]);
 });
 
+test("«хочу оформить» без единой показанной цены не даёт готовый шаблон чек-аута — уходит на обычную генерацию", async (t) => {
+  // Раньше «сразу оформление» на голое подтверждение лечили только текстом
+  // промпта. Теперь это код-уровневый барьер: готовый шаблон «пришлите имя,
+  // телефон...» разрешён только если стадия сделки в БД уже configured
+  // (search_catalog где-то в диалоге подтвердил конкретный товар с ценой).
+  // Здесь товар ни разу не показан — значит шаблон не должен сработать.
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  let sentText = null;
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async () => "Какую модель и бюджет рассматриваете?",
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+  const message = { date: 1_700_000_000, chat: { id: 160, type: "private" }, from: { id: 160, first_name: "Клиент" } };
+
+  await crm.receiveTelegram({ ...message, message_id: 160, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 161, text: "Хочу оформить" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.doesNotMatch(sentText, /Пришлите имя/, "готовый шаблон чек-аута не должен сработать без подтверждённой цены");
+});
+
+test("deal_stage переходит в configured, когда search_catalog подтверждает ровно один товар, и только тогда разрешён шаблон «оформить»", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  const productId = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color, storage, available)
+     VALUES ('iphone-17-pro-256-orange', 'iphone-17-pro-256-orange', 'Apple iPhone 17 Pro 256GB физическая SIM + eSIM', 1315, 'USD', 'active', 'Apple', 'Смартфоны', 'оранжевый', '256GB', 1)`
+  ).run().lastInsertRowid;
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 703, '2026-08-01T10:00:00.000Z', 'iPhone 17 Pro 256 оранжевый 1315$', 'hash-iphone17pro-orange', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare(
+    "INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 1315, 'USD', 1, 1)"
+  ).run(messageId, productId);
+  let sentText = null;
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async ({ executeTool, messages }) => {
+      const lastUser = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+      if (/оформ/iu.test(lastUser)) return "Какую модель и бюджет рассматриваете?";
+      await executeTool("search_catalog", { query: "iPhone 17 Pro 256 оранжевый" });
+      return "iPhone 17 Pro 256GB оранжевый — 1315$.";
+    },
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+  const message = { date: 1_700_000_000, chat: { id: 161, type: "private" }, from: { id: 161, first_name: "Клиент" } };
+
+  await crm.receiveTelegram({ ...message, message_id: 170, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 171, text: "Сколько стоит iPhone 17 Pro 256 оранжевый?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const conversation = crm.listConversations().find((c) => c.externalChatId === "161");
+  assert.equal(conversation.dealStage, "configured", "стадия сделки продвинулась после подтверждения цены через search_catalog");
+
+  await crm.receiveTelegram({ ...message, message_id: 172, text: "Хочу оформить" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(sentText, /Пришлите имя/, "теперь, когда товар подтверждён, готовый шаблон чек-аута разрешён");
+});
+
 test("супервизор отключается настройкой и не вызывается", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
@@ -1373,10 +1487,12 @@ function makeDealsSpy({ fail = false } = {}) {
   const calls = [];
   const advanceCalls = [];
   const orderCalls = [];
+  const notifyCalls = [];
   return {
     calls,
     advanceCalls,
     orderCalls,
+    notifyCalls,
     enabled: true,
     async createDeal(payload) {
       calls.push(payload);
@@ -1392,6 +1508,11 @@ function makeDealsSpy({ fail = false } = {}) {
       orderCalls.push(payload);
       if (fail) throw new Error("CRM недоступна");
       return { ok: true, id: "order-1" };
+    },
+    async notifyImportant(payload) {
+      notifyCalls.push(payload);
+      if (fail) throw new Error("CRM недоступна");
+      return { ok: true };
     },
   };
 }
@@ -1441,6 +1562,70 @@ test("заказ записывается только в сделку теку�
   assert.equal(crmDeals.orderCalls.length, 2);
   assert.equal(crmDeals.orderCalls[1].externalKey, "telegram:222");
   assert.equal(crmDeals.orderCalls[1].customerName, "Второй");
+});
+
+test("подтверждённый заказ сохраняется в crm_orders даже без настроенной внешней CRM", async (t) => {
+  // Раньше «менеджер свяжется с вами» никуда не попадало, если CRM_BASE_URL
+  // не настроен, — заказ существовал только как текст в переписке. Теперь
+  // crm_orders пишется всегда, crmDeals — уже отдельно, поверх.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"iPhone 17 Pro","storage":"256GB","color":"Оранжевый","price":900,"priceKgs":78700,"currency":"USD","available":true}]}';
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:301", source: "telegram", chatId: "301", name: "Данияр", phone: "996700111222", inbound: true,
+  });
+
+  const published = crm._publishOrderIfConfirmed(
+    conversation,
+    [{ role: "user", content: "Беру, оформляйте. Бишкек, ул. вавилоа 18" }],
+    selection
+  );
+  assert.equal(published, true);
+
+  const orders = crm.listOrders();
+  assert.equal(orders.length, 1);
+  assert.equal(orders[0].productName, "iPhone 17 Pro, 256GB, Оранжевый");
+  assert.equal(orders[0].customerName, "Данияр");
+  assert.equal(orders[0].customerPhone, "996700111222");
+  assert.equal(orders[0].status, "new");
+  // Извлечение адреса переиспользует ADDRESS_RE из services/privacy.js (та же
+  // логика, что маскирует адрес перед отправкой в ИИ) — она ищет по словам
+  // «ул./улица/мкр/просп...», без такого слова адрес не распознаётся вообще
+  // (в этом случае поле просто останется пустым, а не «исправленным»).
+  assert.match(orders[0].customerAddress, /вавилоа 18/, "адрес сохранён дословно, без исправления на похожее известное название");
+});
+
+test("повторное подтверждение того же заказа не плодит новые строки в crm_orders", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"iPhone 17","storage":"256GB","color":"Чёрный","price":900,"priceKgs":78700,"currency":"USD","available":true}]}';
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:302", source: "telegram", chatId: "302", name: "Клиент", inbound: true,
+  });
+
+  crm._publishOrderIfConfirmed(conversation, [{ role: "user", content: "Беру, оформляйте" }], selection);
+  crm._publishOrderIfConfirmed(conversation, [{ role: "user", content: "Да, беру" }], selection);
+
+  assert.equal(crm.listOrders().length, 1, "второе подтверждение того же заказа не должно создать вторую строку");
+});
+
+test("updateOrder меняет статус заказа для менеджера", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const selection = 'ТОЧНЫЕ ТОВАРЫ: {"products":[{"name":"AirPods Pro 3","price":220,"priceKgs":19250,"currency":"USD","available":true}]}';
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:303", source: "telegram", chatId: "303", name: "Клиент", inbound: true,
+  });
+  crm._publishOrderIfConfirmed(conversation, [{ role: "user", content: "Беру, оформляйте" }], selection);
+  const order = crm.listOrders()[0];
+
+  const updated = crm.updateOrder(order.id, { status: "confirmed", note: "Оплатил, ждёт доставку" });
+  assert.equal(updated.status, "confirmed");
+  assert.equal(updated.note, "Оплатил, ждёт доставку");
+  assert.equal(crm.updateOrder(999999, { status: "confirmed" }), null, "несуществующий заказ — null, не падение");
 });
 
 test("подтверждённый заказ в лаборатории WhatsApp не создаёт настоящую сделку", async (t) => {
@@ -1852,7 +2037,7 @@ test("возражение «я подумаю» отвечает готовым
   const detail = crm.getConversation(messages.id);
   assert.equal(
     detail.messages.at(-1).text,
-    "Хорошо, понимаю. Подскажите только, что пока останавливает: цена, сомнения в результате или хотите сравнить с другими вариантами?"
+    "Хорошо, понимаю 😊 Если появятся вопросы — пишите в любое время."
   );
 });
 
@@ -1886,44 +2071,41 @@ test("возражение «дорого» отвечает готовым те
   const detail = crm.getConversation(conversation.id);
   assert.equal(
     detail.messages.at(-1).text,
-    "Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?"
+    "Понимаю вас 😊 Если что-то понадобится — пишите, помогу."
   );
 });
 
-test("после обычного автоответа ставится цепочка напоминаний о простое", async (t) => {
+test("реальный адрес магазина есть в промпте ИИ, а не только в тексте готового шаблона", async (t) => {
+  // Найдено на проде: клиент спросил адрес на кыргызском формулировкой,
+  // которую не ловит regex готового шаблона («location») — ответ ушёл в
+  // обычную генерацию, а там модель адреса вообще не знала (адрес был
+  // зашит только в текст шаблона) и придумала другой номер дома.
+  // Теперь адрес — факт в самом промпте, доступный в любой генерации.
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
   config.telegram.botToken = "test-token";
-  t.after(() => {
-    config.telegram.botToken = previousToken;
-    db.close();
-  });
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  let lastSystemPrompt = null;
+  const ai = {
+    enabled: true,
+    chatText: async ({ system }) => { lastSystemPrompt = system; return "Наш адрес: Бишкек, проспект Чуй 155, ТЦ ЦУМ Айчурек"; },
+  };
   const crm = new CrmService({
-    db,
-    deepseek: { enabled: true, chatText: async () => "Здравствуйте! Чем могу помочь?" },
-    amocrm: { enabled: false },
-    fetchImpl: async (url) => {
-      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
-      return { ok: true, status: 200 };
-    },
-    autoReplyDebounceMs: 0,
+    db, ai, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) }),
   });
-  crm.saveSettings({ ...crm.getSettings(), approvalEnabled: false });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
 
+  // Формулировка, которая НЕ совпадает с regex готового шаблона location
+  // (нет «ваш адрес» / «где вы» / «как вас найти») — должна уйти в обычную
+  // генерацию, но с адресом уже в промпте.
   await crm.receiveTelegram({
-    message_id: 603,
-    date: 1_700_000_000,
-    text: "Здравствуйте",
-    chat: { id: 1603, type: "private" },
-    from: { id: 1603, first_name: "Клиент" },
+    message_id: 194, date: 1_700_000_000, text: "Напишите полный адрес пожалуйста",
+    chat: { id: 1902, type: "private" }, from: { id: 1902, first_name: "Клиент" },
   });
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  const conversation = crm.listConversations()[0];
-  const rows = db.prepare(
-    "SELECT kind FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL ORDER BY kind"
-  ).all(conversation.id);
-  assert.deepEqual(rows.map((row) => row.kind).sort(), ["day", "hours", "last"]);
+  assert.match(lastSystemPrompt, /проспект Чуй, 155, 1 этаж, отделы A9 и D14/, "реальный адрес должен быть в системном промпте генерации");
 });
 
 test("ответ ИИ не отправляется, если менеджер забрал диалог во время генерации", async (t) => {
@@ -1991,64 +2173,113 @@ test("одиночное «беру» внутри фразы без назва�
   assert.equal(classifySalesTemplate("Хочу заказать")?.kind, "order");
 });
 
-test("клиент, сказавший «беру» и пропавший, получает одно напоминание вместо обычной цепочки", async (t) => {
+test("_deliverReply: ответ с NEXT_MESSAGE_MARKER уходит несколькими сообщениями по очереди", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
   config.telegram.botToken = "test-token";
-  t.after(() => {
-    config.telegram.botToken = previousToken;
-    db.close();
-  });
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  const sentTexts = [];
   const crm = new CrmService({
     db,
-    deepseek: { enabled: true, chatText: async () => "Хорошо, оформляю." },
-    amocrm: { enabled: false },
-    fetchImpl: async (url) => {
-      if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
-      return { ok: true, status: 200 };
+    deepseek: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        const body = JSON.parse(init.body);
+        if (body.text !== undefined) sentTexts.push(body.text);
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
     },
-    autoReplyDebounceMs: 0,
   });
-  crm.saveSettings({ ...crm.getSettings(), approvalEnabled: false });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1700", source: "telegram", inbound: true, chatId: "1700", name: "Клиент",
+  });
+  await crm._deliverReply(conversation.id, "Есть в наличии! [NEXT_MESSAGE] Вам какой цвет удобнее?", "assistant");
 
+  assert.deepEqual(sentTexts, ["Есть в наличии!", "Вам какой цвет удобнее?"]);
+  const stored = crm.getConversation(conversation.id).messages.map((m) => m.text);
+  assert.deepEqual(stored, ["Есть в наличии!", "Вам какой цвет удобнее?"]);
+});
+
+test("_deliverReply: без маркера ведёт себя как обычный _send — одно сообщение целиком", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  const sentTexts = [];
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) {
+        const body = JSON.parse(init.body);
+        if (body.text !== undefined) sentTexts.push(body.text);
+      }
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1701", source: "telegram", inbound: true, chatId: "1701", name: "Клиент",
+  });
+  await crm._deliverReply(conversation.id, "iPhone 17 — 900$.", "assistant");
+
+  assert.deepEqual(sentTexts, ["iPhone 17 — 900$."]);
+});
+
+test("бот больше не пишет клиенту первым вообще — по прямой просьбе владельца магазина дожим и все проактивные напоминания отключены", async (t) => {
+  // _scheduleNudgeFollowUps / _scheduleOrderIncompleteNudge /
+  // _scheduleOrderCareFollowUps теперь пустые методы — ничего не ставится в
+  // очередь ни для какого сегмента лида и ни при каком сценарии.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:195", source: "telegram", inbound: true, chatId: "195", name: "Клиент",
+  });
+
+  crm._scheduleNudgeFollowUps(conversation.id, "iPhone 17");
+  crm._scheduleOrderIncompleteNudge(conversation.id, "iPhone 17");
+  crm._scheduleOrderCareFollowUps(conversation.id);
+
+  const nudgeCount = db.prepare("SELECT COUNT(*) AS c FROM nudge_follow_ups WHERE conversation_id = ?").get(conversation.id).c;
+  const orderFollowUpCount = db.prepare("SELECT COUNT(*) AS c FROM order_follow_ups WHERE conversation_id = ?").get(conversation.id).c;
+  assert.equal(nudgeCount, 0, "ни одно проактивное напоминание не должно ставиться в очередь");
+  assert.equal(orderFollowUpCount, 0, "забота о заказе после покупки тоже отключена");
+});
+
+test("промпт ИИ больше не содержит инструкций дожимать клиента — один нейтральный режим для всех", async (t) => {
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  let lastSystemPrompt = null;
+  const ai = {
+    enabled: true,
+    chatText: async ({ system }) => { lastSystemPrompt = system; return "Есть, 950$."; },
+  };
+  const crm = new CrmService({
+    db, ai, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) }),
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+
+  // Даже «горячий» вопрос про наличие/оплату (раньше — обычный, самый
+  // настойчивый режим дожима) теперь получает тот же нейтральный промпт.
   await crm.receiveTelegram({
-    message_id: 604,
-    date: 1_700_000_000,
-    text: "Беру, оформляйте",
-    chat: { id: 1604, type: "private" },
-    from: { id: 1604, first_name: "Клиент" },
+    message_id: 220, date: 1_700_000_000, text: "Он есть в наличии, можно оплатить картой?",
+    chat: { id: 220, type: "private" }, from: { id: 220, first_name: "Клиент" },
   });
   await new Promise((resolve) => setTimeout(resolve, 10));
 
-  const conversation = crm.listConversations()[0];
-  const rows = db.prepare(
-    "SELECT kind FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL"
-  ).all(conversation.id);
-  assert.deepEqual(rows.map((row) => row.kind), ["order_incomplete"]);
-});
-
-test("новое сообщение клиента отменяет все ожидающие напоминания о простое", async (t) => {
-  const db = createConnection(":memory:");
-  t.after(() => db.close());
-  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
-  const conversation = crm._upsertConversation({
-    externalKey: "telegram:1605",
-    source: "telegram",
-    inbound: true,
-    chatId: "1605",
-    name: "Клиент",
-  });
-  crm._scheduleNudgeFollowUps(conversation.id, "iPhone 17");
-  assert.equal(
-    db.prepare("SELECT COUNT(*) AS c FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL").get(conversation.id).c,
-    3
-  );
-
-  crm._cancelNudgeFollowUps(conversation.id);
-  assert.equal(
-    db.prepare("SELECT COUNT(*) AS c FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL").get(conversation.id).c,
-    0
-  );
+  assert.match(lastSystemPrompt, /БЕЗ ДОЖИМА:/, "нейтральная политика должна быть в промпте");
+  assert.doesNotMatch(lastSystemPrompt, /ДОЖИМ И РАБОТА С ВОЗРАЖЕНИЯМИ/, "старой формулировки с призывом дожимать быть не должно");
+  // Найдено при повторной проверке: отдельный блок ASSISTANT_PRICE_POLICY
+  // (не тот, что переключался по сегменту лида) содержал СВОЙ собственный
+  // призыв «обязательно продолжи продажу» после любой цены — он не зависел
+  // от ASSISTANT_CLOSING_POLICY/NO_PUSH и продолжал противоречить новой
+  // политике даже после её замены.
+  assert.doesNotMatch(lastSystemPrompt, /обязательно продолжи продажу/, "второй, независимый источник дожима в ASSISTANT_PRICE_POLICY тоже должен быть убран");
+  assert.match(lastSystemPrompt, /КАК СОВЕТОВАТЬ:/, "политика личной рекомендации и живого диалога должна быть в промпте");
+  assert.match(lastSystemPrompt, /Я бы лично взял вот этот/, "промпт должен требовать личную рекомендацию, а не сухой список");
 });
 
 test("просроченное напоминание «через несколько часов» подставляет имя и товар", async (t) => {
@@ -2085,7 +2316,7 @@ test("просроченное напоминание «через нескол�
     "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
   ).run(conversation.id);
   db.prepare(
-    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'day1', 'iPhone 17', datetime('now', '-1 minute'))"
   ).run(conversation.id);
 
   await crm.processDueNudgeFollowUps();
@@ -2128,7 +2359,7 @@ test("нечеловеческое имя профиля (ссылка) не п�
     "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
   ).run(conversation.id);
   db.prepare(
-    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'day1', 'iPhone 17', datetime('now', '-1 minute'))"
   ).run(conversation.id);
 
   await crm.processDueNudgeFollowUps();
@@ -2137,6 +2368,41 @@ test("нечеловеческое имя профиля (ссылка) не п�
     sentText,
     "Здравствуйте 😊 Хотела уточнить, остались ли у вас вопросы по iPhone 17? Могу коротко рассказать подробнее или помочь подобрать другой вариант."
   );
+});
+
+test("имя профиля «https» (без ://...) тоже не подставляется в напоминание", async (t) => {
+  // Найдено на проде: «Здравствуйте, https 😊 Хотела уточнить...» — старая
+  // проверка требовала «https:» с двоеточием, а профиль стоял просто «https»
+  // без остального URL и проходил как будто это настоящее имя.
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+  let sentText = null;
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: false },
+    amocrm: { enabled: false },
+    now: () => new Date("2026-06-01T06:00:00Z"),
+    fetchImpl: async (url, init) => {
+      if (String(url).includes("api.telegram.org") && init) sentText = JSON.parse(init.body).text;
+      return { ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) };
+    },
+  });
+  const conversation = crm._upsertConversation({
+    externalKey: "telegram:1609", source: "telegram", inbound: true, chatId: "1609", name: "https",
+  });
+  db.prepare(
+    "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
+  ).run(conversation.id);
+  db.prepare(
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'day1', 'PlayStation 5 Slim', datetime('now', '-1 minute'))"
+  ).run(conversation.id);
+
+  await crm.processDueNudgeFollowUps();
+
+  assert.doesNotMatch(sentText, /https/i, "имя-мусор не должно попасть в текст напоминания");
+  assert.match(sentText, /^Здравствуйте 😊/);
 });
 
 test("напоминание в тихие часы (ночь по Бишкеку) не отправляется, а переносится на утро", async (t) => {
@@ -2172,7 +2438,7 @@ test("напоминание в тихие часы (ночь по Бишкек�
     "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
   ).run(conversation.id);
   db.prepare(
-    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'day1', 'iPhone 17', datetime('now', '-1 minute'))"
   ).run(conversation.id);
 
   await crm.processDueNudgeFollowUps();
@@ -2181,7 +2447,7 @@ test("напоминание в тихие часы (ночь по Бишкек�
   const rescheduled = db.prepare(
     "SELECT kind, product_name, due_at FROM nudge_follow_ups WHERE conversation_id = ? AND sent_at IS NULL"
   ).get(conversation.id);
-  assert.equal(rescheduled.kind, "hours");
+  assert.equal(rescheduled.kind, "day1");
   assert.equal(rescheduled.product_name, "iPhone 17");
   assert.equal(rescheduled.due_at, "2026-06-02 03:00:00");
 });
@@ -2219,7 +2485,7 @@ test("напоминание в начале утреннего окна здо�
     "INSERT INTO crm_messages (conversation_id, direction, sender, text, created_at) VALUES (?, 'outgoing', 'assistant', 'Ответ', datetime('now'))"
   ).run(conversation.id);
   db.prepare(
-    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'hours', 'iPhone 17', datetime('now', '-1 minute'))"
+    "INSERT INTO nudge_follow_ups (conversation_id, kind, product_name, due_at) VALUES (?, 'day1', 'iPhone 17', datetime('now', '-1 minute'))"
   ).run(conversation.id);
 
   await crm.processDueNudgeFollowUps();
@@ -2333,7 +2599,7 @@ test("каталог категорий добавляется к первому
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(
     sent.at(-1),
-    `Понимаю вас. Могу подобрать более доступный вариант с похожим назначением. На какую сумму вы примерно рассчитываете?\n\n${FIRST_CONTACT_CATALOG_TEXT}`
+    `Понимаю вас 😊 Если что-то понадобится — пишите, помогу.\n\n${FIRST_CONTACT_CATALOG_TEXT}`
   );
 
   // Второе сообщение того же клиента — снова шаблонный ответ (жалоба).
@@ -2439,6 +2705,65 @@ test("_categoryBrowseReply показывает доступные цвета у
   const reply = crm._categoryBrowseReply("Айфон");
   assert.match(reply, /iPhone 17 — Black, White|iPhone 17 — White, Black/);
   assert.match(reply, /iPhone 17 Pro — Silver/);
+});
+
+test("_categoryBrowseReply не показывает распроданные модели (p.available = 0)", (t) => {
+  // Найдено на проде: список линейки iPad показывал вообще все модели,
+  // которые когда-либо постились в канал, включая давно распроданные —
+  // клиент видел «в наличии несколько моделей» с моделями, которых
+  // реально нет. Фильтр был по mp.active/tm.is_deleted, но не по
+  // p.available — агрегированному полю реального наличия товара.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, color, available) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)"
+  );
+  const inStock1 = insertProduct.run("ipad-11", "ipad-11", "iPad 11", 400, "USD", "Apple", "Планшеты", null, 1).lastInsertRowid;
+  const inStock2 = insertProduct.run("ipad-air-8", "ipad-air-8", "iPad Air 8 M4", 700, "USD", "Apple", "Планшеты", null, 1).lastInsertRowid;
+  const soldOut = insertProduct.run("ipad-9", "ipad-9", "iPad 9", 300, "USD", "Apple", "Планшеты", null, 0).lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, inStock1, 400, "USD");
+  link.run(message, inStock2, 700, "USD");
+  link.run(message, soldOut, 300, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("Айпад");
+  assert.match(reply, /iPad 11/);
+  assert.match(reply, /iPad Air 8 M4/);
+  assert.doesNotMatch(reply, /iPad 9\b/, "модель без наличия (p.available = 0) не должна попадать в список");
+});
+
+test("_categoryBrowseReply не упоминает «объём памяти» у линеек без памяти (AirPods)", (t) => {
+  // У AirPods нет объёма памяти как характеристики вообще — закрывающая
+  // фраза списка линейки раньше была одна на все категории и ошибочно
+  // обещала назвать «объём памяти» даже там, где его не бывает.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)"
+  );
+  const p1 = insertProduct.run("airpods-4", "airpods-4", "AirPods 4", 130, "USD", "Apple", "Наушники").lastInsertRowid;
+  const p2 = insertProduct.run("airpods-pro-2", "airpods-pro-2", "AirPods Pro 2 USB-C", 220, "USD", "Apple", "Наушники").lastInsertRowid;
+  const message = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 1, '2026-07-31T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, ?, 1, 1)");
+  link.run(message, p1, 130, "USD");
+  link.run(message, p2, 220, "USD");
+
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("Какие есть аирподсы");
+  assert.doesNotMatch(reply, /объём памяти/);
+  assert.match(reply, /актуальную цену\.$/);
 });
 
 test("_categoryBrowseReply не показывает цвета для очков — они уже часть названия модели", (t) => {
@@ -2618,6 +2943,113 @@ test("search_catalog: инструмент отдаёт модели точну�
   const conversation = crm.listConversations()[0];
   const detail = crm.getConversation(conversation.id);
   assert.match(detail.messages.at(-1).text, /iPhone 17 — \d[\d\s]* сом/);
+});
+
+test("search_catalog: однозначная цифра поколения («Ultra 3» против «Ultra 2») не теряется при поиске", async (t) => {
+  // Найдено на проде: клиент спросил про Apple Watch Ultra 3 (она реально
+  // есть в наличии), а бот ответил, что Ultra 3 «пока не поступала» и
+  // предложил Ultra 2. Причина — токенизация поиска отбрасывала однобуквенные/
+  // однозначные токены короче 2 символов, включая цифру «3»: запрос
+  // превращался в «apple watch ultra» без цифры, Ultra 2 и Ultra 3 получали
+  // одинаковый счёт, а моделей Ultra 2 в каталоге больше — они забивали
+  // топ-12 результатов инструмента, и Ultra 3 туда просто не попадала.
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+
+  const insertProduct = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, available)
+     VALUES (?, ?, ?, ?, 'USD', 'active', 'Apple', 'Часы', 1)`
+  );
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 700, '2026-08-01T10:00:00.000Z', 'Apple Watch Ultra', 'hash-ultra', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, 'USD', 1, 1)");
+  // Десять вариантов Ultra 2 (больше лимита в 12 результатов — сам по себе
+  // не проблема) и один Ultra 3, которая должна найтись несмотря на это.
+  for (let i = 0; i < 10; i += 1) {
+    const id = insertProduct.run(`ultra2-${i}`, `ultra2-${i}`, `Apple Watch Ultra 2 Variant ${i}`, 730 + i).lastInsertRowid;
+    link.run(messageId, id, 730 + i);
+  }
+  const ultra3Id = insertProduct.run("ultra3-1", "ultra3-1", "Apple Watch Ultra 3", 700).lastInsertRowid;
+  link.run(messageId, ultra3Id, 700);
+
+  let toolResult = null;
+  const ai = {
+    enabled: true,
+    chatJson: async () => ({ template_id: null }),
+    chatTextWithTools: async ({ executeTool }) => {
+      toolResult = await executeTool("search_catalog", { query: "Apple Watch Ultra 3" });
+      return "ок";
+    },
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) }),
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+
+  const message = { date: 1_700_000_000, chat: { id: 700, type: "private" }, from: { id: 700, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message, message_id: 700, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 701, text: "Сколько стоит Apple Watch Ultra 3?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  const names = toolResult.products.map((p) => p.name);
+  assert.ok(names.includes("Apple Watch Ultra 3"), `Ultra 3 должна быть в результатах поиска, получили: ${names.join(", ")}`);
+});
+
+test("search_catalog: одиночная цифра ищется по границе, не как подстрока внутри другого числа", async (t) => {
+  // Обратная сторона предыдущего фикса: цифра «3» не должна давать очко
+  // товару «... 2024 ...» только потому, что «3» — подстрока «2024»? нет,
+  // «2024» не содержит «3» — берём заведомо конфликтный пример: «13» и «31».
+  const db = createConnection(":memory:");
+  const previousToken = config.telegram.botToken;
+  config.telegram.botToken = "test-token";
+  t.after(() => { config.telegram.botToken = previousToken; db.close(); });
+
+  const insertProduct = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, price, currency, status, brand, category, available)
+     VALUES (?, ?, ?, ?, 'USD', 'active', 'Apple', 'Наушники', 1)`
+  );
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 702, '2026-08-01T10:00:00.000Z', 'AirPods', 'hash-airpods', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, 'USD', 1, 1)");
+  const noise = insertProduct.run("airpods-max-13", "airpods-max-13", "AirPods Max 13 Pro Case", 130).lastInsertRowid;
+  link.run(messageId, noise, 130);
+  const real = insertProduct.run("airpods-3", "airpods-3", "AirPods 3", 120).lastInsertRowid;
+  link.run(messageId, real, 120);
+
+  let toolResult = null;
+  const ai = {
+    enabled: true,
+    chatJson: async () => ({ template_id: null }),
+    chatTextWithTools: async ({ executeTool }) => {
+      toolResult = await executeTool("search_catalog", { query: "AirPods 3" });
+      return "ок";
+    },
+  };
+  const crm = new CrmService({
+    db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => "", json: async () => ({ ok: true }) }),
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false });
+
+  const message = { date: 1_700_000_000, chat: { id: 702, type: "private" }, from: { id: 702, first_name: "Клиент" } };
+  await crm.receiveTelegram({ ...message, message_id: 702, text: "Привет" });
+  await crm.receiveTelegram({ ...message, message_id: 703, text: "Сколько стоит AirPods 3?" });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.ok(toolResult.products.some((p) => p.name === "AirPods 3"), "AirPods 3 должна найтись");
+  // AirPods 3 обязана ранжироваться выше шумного совпадения — если бы
+  // токен «3» матчился как подстрока внутри «13», у обоих товаров был бы
+  // одинаковый счёт, и порядок не гарантировал бы AirPods 3 первой.
+  const rank = (name) => toolResult.products.findIndex((p) => p.name === name);
+  const noiseRank = rank("AirPods Max 13 Pro Case");
+  if (noiseRank !== -1) assert.ok(rank("AirPods 3") < noiseRank, "AirPods 3 должна ранжироваться выше шумного совпадения по «13»");
 });
 
 test("_isBareCategoryRequest не считает голым запрос с моделью, объёмом памяти или модификатором", () => {

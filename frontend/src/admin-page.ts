@@ -90,6 +90,25 @@ interface CrmStatus {
   amocrmWebhook: string;
 }
 
+type OrderStatus = "new" | "contacted" | "confirmed" | "cancelled";
+
+interface Order {
+  id: number;
+  conversationId: number | null;
+  source: string;
+  productName: string;
+  amount: number | null;
+  currency: string | null;
+  orderType: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  customerAddress: string | null;
+  status: OrderStatus;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface CrmAnalytics {
   periodDays: number;
   summary: {
@@ -208,7 +227,7 @@ interface ProductForm {
   discountLabel: string;
 }
 
-type AdminView = "products" | "news" | "history" | "crm" | "approvals" | "analytics" | "developer";
+type AdminView = "products" | "news" | "history" | "crm" | "orders" | "approvals" | "analytics" | "developer";
 type ProductSort = "updated_desc" | "group" | "brand" | "price_asc" | "price_desc" | "status";
 
 const root = document.getElementById("admin") as HTMLElement;
@@ -225,6 +244,8 @@ const state = {
   categorySuggestions: [] as string[],
   posts: [] as Post[],
   history: [] as PriceChange[],
+  orders: [] as Order[],
+  orderStatusFilter: "" as "" | OrderStatus,
   crmConversations: [] as CrmConversation[],
   crmDetail: null as CrmDetail | null,
   crmStatus: null as CrmStatus | null,
@@ -1087,13 +1108,129 @@ function wireHistoryView(): void {
   loadHistory();
 }
 
+// --- Вкладка «Заказы» --------------------------------------------------
+// Всё, что бот подтвердил в переписке («менеджер свяжется с вами») —
+// раньше это никак не собиралось в одном месте внутри самого бота, только
+// уходило во внешнюю CRM (если она вообще настроена). Здесь — единый список
+// для менеджера, со сменой статуса.
+
+const ORDER_STATUS_LABEL: Record<OrderStatus, string> = {
+  new: "Новый",
+  contacted: "Связались",
+  confirmed: "Подтверждён",
+  cancelled: "Отменён",
+};
+const ORDER_STATUS_BADGE: Record<OrderStatus, string> = {
+  new: "needs_research",
+  contacted: "hidden",
+  confirmed: "active",
+  cancelled: "sync_error",
+};
+
+function fmtOrderAmount(order: Order): string {
+  if (order.amount == null) return "—";
+  return `${Math.round(order.amount).toLocaleString("ru-RU")} ${order.currency === "KGS" ? "сом" : order.currency || ""}`;
+}
+
+function renderOrdersView(): string {
+  return `
+    <div class="admin__head">
+      <div>
+        <p class="eyebrow">Продажи</p>
+        <h1 class="section__title">Заказы</h1>
+      </div>
+      <select id="ordersStatusFilter">
+        <option value="">Все статусы</option>
+        <option value="new">Новые</option>
+        <option value="contacted">Связались</option>
+        <option value="confirmed">Подтверждённые</option>
+        <option value="cancelled">Отменённые</option>
+      </select>
+    </div>
+    <div class="admin__tableWrap">
+      <table class="admin__table" id="ordersTable"></table>
+    </div>`;
+}
+
+function renderOrdersTable(): void {
+  const table = document.getElementById("ordersTable");
+  if (!table) return;
+  table.innerHTML = `
+    <thead><tr><th>Когда</th><th>Товар</th><th>Сумма</th><th>Клиент</th><th>Телефон</th><th>Адрес</th><th>Канал</th><th>Статус</th></tr></thead>
+    <tbody>
+      ${state.orders
+        .map(
+          (o) => `<tr>
+            <td class="admin__muted">${fmtRelative(o.createdAt)}</td>
+            <td>${esc(o.productName)}${o.orderType !== "standard" ? `<br><span class="admin__muted">${o.orderType === "installment" ? "рассрочка" : "trade-in"}</span>` : ""}</td>
+            <td><b>${fmtOrderAmount(o)}</b></td>
+            <td>${esc(o.customerName || "—")}</td>
+            <td>${o.customerPhone ? `<a href="tel:${esc(o.customerPhone)}">${esc(o.customerPhone)}</a>` : "—"}</td>
+            <td>${esc(o.customerAddress || "—")}</td>
+            <td><span class="admin__status admin__status--hidden">${crmSourceLabel(o.source)}</span></td>
+            <td>
+              <select data-order-status="${o.id}">
+                ${(Object.keys(ORDER_STATUS_LABEL) as OrderStatus[])
+                  .map((s) => `<option value="${s}" ${s === o.status ? "selected" : ""}>${ORDER_STATUS_LABEL[s]}</option>`)
+                  .join("")}
+              </select>
+            </td>
+          </tr>`
+        )
+        .join("") || `<tr><td colspan="8" class="admin__empty">Заказов пока нет</td></tr>`}
+    </tbody>`;
+
+  table.querySelectorAll<HTMLSelectElement>("[data-order-status]").forEach((select) =>
+    select.addEventListener("change", async () => {
+      const id = Number(select.dataset.orderStatus);
+      const status = select.value as OrderStatus;
+      try {
+        const { order } = await api<{ order: Order }>("PATCH", `/crm/orders/${id}`, { status });
+        const idx = state.orders.findIndex((o) => o.id === id);
+        if (idx >= 0) state.orders[idx] = order;
+        toast("Статус заказа обновлён");
+      } catch (err) {
+        toast((err as Error).message, false);
+        renderOrdersTable();
+      }
+    })
+  );
+}
+
+async function loadOrders(): Promise<void> {
+  try {
+    const { orders } = await api<{ orders: Order[] }>(
+      "GET",
+      `/crm/orders${state.orderStatusFilter ? `?status=${state.orderStatusFilter}` : ""}`
+    );
+    state.orders = orders;
+    renderOrdersTable();
+  } catch (err) {
+    toast((err as Error).message, false);
+  }
+}
+
+function wireOrdersView(): void {
+  document.getElementById("ordersStatusFilter")!.addEventListener("change", (e) => {
+    state.orderStatusFilter = (e.target as HTMLSelectElement).value as "" | OrderStatus;
+    loadOrders();
+  });
+  loadOrders();
+}
+
 // --- CRM inbox -------------------------------------------------------------
 
 let crmPoll: ReturnType<typeof setInterval> | undefined;
 let developerPoll: ReturnType<typeof setInterval> | undefined;
 
 function crmSourceLabel(source: string): string {
-  return source === "telegram" ? "Telegram" : source === "whatsapp" ? "WhatsApp" : "amoCRM";
+  return source === "telegram"
+    ? "Telegram"
+    : source === "whatsapp"
+      ? "WhatsApp"
+      : source === "wabery_instagram" || source === "instagram_direct"
+        ? "Instagram"
+        : "amoCRM";
 }
 
 function crmInitial(name: string): string {
@@ -1803,6 +1940,7 @@ function wireDeveloperView(): void {
 
 const TABS: { id: AdminView; label: string }[] = [
   { id: "crm", label: "CRM" },
+  { id: "orders", label: "Заказы" },
   { id: "approvals", label: "Ответы бота" },
   { id: "analytics", label: "Аналитика" },
   { id: "products", label: "Товары" },
@@ -1843,6 +1981,8 @@ function renderView(): void {
   const body =
     state.view === "crm"
       ? renderCrmView()
+      : state.view === "orders"
+        ? renderOrdersView()
       : state.view === "approvals"
         ? renderApprovalsView()
       : state.view === "developer"
@@ -1878,6 +2018,7 @@ function renderView(): void {
   syncTabIndicator();
 
   if (state.view === "crm") wireCrmView();
+  else if (state.view === "orders") wireOrdersView();
   else if (state.view === "approvals") wireApprovalsView();
   else if (state.view === "developer") wireDeveloperView();
   else if (state.view === "analytics") wireAnalyticsView();

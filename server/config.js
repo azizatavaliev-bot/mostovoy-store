@@ -75,6 +75,18 @@ const config = {
     timeoutMs: int(process.env.GREENAPI_TIMEOUT_MS, 20000),
   },
 
+  // Instagram Direct через Wabery (wabery.com) — вместо прямого Meta Graph
+  // API: Wabery уже прошли свой App Review своим приложением, подключение
+  // делается один раз в их дашборде («Sign in with Facebook» → выбрать
+  // Instagram-аккаунт), нам остаётся только слать/принимать через их API.
+  // См. server/services/wabery.js, docs/wabery-instagram-setup.md.
+  wabery: {
+    apiKey: process.env.WABERY_API_KEY || "",
+    apiBaseUrl: (process.env.WABERY_API_BASE_URL || "https://api.wabery.com/v1").replace(/\/+$/, ""),
+    webhookSecret: process.env.WABERY_WEBHOOK_SECRET || "",
+    instagramChannelId: process.env.WABERY_INSTAGRAM_CHANNEL_ID || "",
+  },
+
   crmDeals: {
     baseUrl: (process.env.CRM_BASE_URL || "").replace(/\/+$/, ""),
     internalToken: process.env.CRM_INTERNAL_TOKEN || "",
@@ -95,6 +107,29 @@ const config = {
     frameJpegQuality: int(process.env.INSTAGRAM_STORY_FRAME_QUALITY, 82),
     storyCacheTtlHours: int(process.env.INSTAGRAM_STORY_CACHE_TTL_HOURS, 36),
     highlightCacheTtlHours: int(process.env.INSTAGRAM_HIGHLIGHT_CACHE_TTL_HOURS, 24 * 14),
+  },
+
+  // Instagram Direct через официальный Meta Graph API (OAuth + webhook) —
+  // отдельно от instagram.hikerApiKey выше (тот только разбирает ссылки на
+  // Story/Highlight, к переписке отношения не имеет). Один магазин — одно
+  // подключение, поэтому без organizationId/мультитенантности: см.
+  // server/services/instagram-graph.js и docs/instagram-meta-setup.md.
+  meta: {
+    appId: process.env.META_APP_ID || "",
+    appSecret: process.env.META_APP_SECRET || "",
+    redirectUri: process.env.META_REDIRECT_URI || "",
+    webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || "",
+    // Три разных хоста Instagram API with Instagram Login — не перепутать:
+    // authBaseUrl — куда редиректим браузер пользователя на авторизацию;
+    // tokenBaseUrl — обмен code на короткоживущий токен (api.instagram.com);
+    // graphBaseUrl — обмен на долгоживущий токен и сам Send API (messages).
+    authBaseUrl: (process.env.META_AUTH_BASE_URL || "https://www.instagram.com").replace(/\/+$/, ""),
+    tokenBaseUrl: (process.env.META_TOKEN_BASE_URL || "https://api.instagram.com").replace(/\/+$/, ""),
+    graphBaseUrl: (process.env.META_GRAPH_BASE_URL || "https://graph.instagram.com").replace(/\/+$/, ""),
+    // Ключ шифрования access token в базе (32 байта, hex). Без него токен
+    // хранился бы в открытом виде — интеграция намеренно отказывается
+    // работать, а не тихо деградирует до plaintext.
+    tokenEncryptionKey: process.env.META_TOKEN_ENCRYPTION_KEY || "",
   },
 
   deepseek: {
@@ -148,6 +183,13 @@ const config = {
   },
 
   // Контакт для кнопки «Связаться». Telegram — тот же, что в STORE.tg на витрине.
+  // Свои люди (сотрудники, друзья, знакомые), которые пишут боту с личных
+  // номеров/аккаунтов — не клиенты, автоответ им мешает. Список через
+  // запятую в любом виде вперемешку: номер телефона, telegram @username,
+  // числовой chat id или просто имя профиля (например «Рамазан») — см.
+  // isKnownContact в services/crm.js, там сам разбирается, что с чем сравнивать.
+  knownContacts: (process.env.KNOWN_CONTACTS || "").split(",").map((v) => v.trim()).filter(Boolean),
+
   contact: {
     // Заказы уходят в WhatsApp: он умеет предзаполнять текст сообщения.
     // Номер в межд. формате без «+». По умолчанию рабочий 0999 110 110.
@@ -221,6 +263,8 @@ config.features = {
   amocrm: Boolean(config.amocrm.baseUrl && config.amocrm.accessToken),
   greenapi: Boolean(config.greenapi.idInstance && config.greenapi.apiTokenInstance),
   instagramStory: Boolean(config.instagram.hikerApiKey),
+  instagramDirect: Boolean(config.meta.appId && config.meta.appSecret && config.meta.redirectUri && config.meta.tokenEncryptionKey),
+  waberyInstagram: Boolean(config.wabery.apiKey && config.wabery.webhookSecret && config.wabery.instagramChannelId),
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
   crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
 };

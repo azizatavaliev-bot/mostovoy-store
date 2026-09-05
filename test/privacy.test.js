@@ -42,3 +42,14 @@ test("текст без PII не меняется", () => {
   assert.equal(mapping.size, 0);
   assert.equal(applyMapping(text, mapping), text);
 });
+
+test("«ул» внутри обычного слова не принимается за адрес", () => {
+  // Найдено на проде: «напишите калькулятор на питон» — «ул» это просто
+  // соседние буквы в середине слова «калЬКУЛятор», не начало «улица».
+  // Раньше ADDRESS_RE матчил без границы слова и вырезал «улятор на питон»
+  // как будто это адрес доставки.
+  const text = "напишите калькулятор на питон";
+  const mapping = buildMapping([text]);
+  assert.equal(mapping.size, 0, "в этом тексте вообще нет адреса");
+  assert.equal(applyMapping(text, mapping), text);
+});

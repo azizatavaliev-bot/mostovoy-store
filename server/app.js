@@ -22,6 +22,8 @@ const { AzisCrmClient } = require("./services/azis-crm");
 const { CrmDealsClient } = require("./services/crm-deals");
 const { createAzisCrmRouter } = require("./routes/azis-crm");
 const { createGreenApiRouter } = require("./routes/greenapi");
+const { createInstagramWebhookRouter } = require("./routes/instagram-webhook");
+const { createWaberyWebhookRouter } = require("./routes/wabery-webhook");
 const { GreenApiClient } = require("./services/greenapi");
 const { HikerApiClient } = require("./services/instagram/hikerClient");
 const { StoryCache } = require("./services/instagram/storyCache");
@@ -63,11 +65,17 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
   const app = express();
   app.disable("x-powered-by");
   // Тела апдейтов Telegram маленькие — лимит защищает от мусора.
-  app.use(express.json({ limit: "512kb" }));
+  // verify сохраняет исходные байты тела в req.rawBody — без них подпись
+  // Meta (X-Hub-Signature-256 в instagram-webhook.js) посчитать нельзя:
+  // HMAC считается по точным байтам с провода, а не по JSON.stringify
+  // уже распарсенного объекта (это не всегда даёт те же байты обратно).
+  app.use(express.json({ limit: "512kb", verify: (req, res, buf) => { req.rawBody = buf; } }));
 
   app.use("/api/telegram", createTelegramRouter({ db, queue: syncQueue, crm: crmService }));
   app.use("/api/amocrm", createAmoCrmRouter({ crm: crmService }));
   app.use("/api/greenapi", createGreenApiRouter({ crm: crmService }));
+  app.use("/api/webhooks/instagram", createInstagramWebhookRouter({ db, crm: crmService }));
+  app.use("/api/webhooks/wabery", createWaberyWebhookRouter({ crm: crmService }));
   app.use("/api/integrations/azis", createAzisCrmRouter({ crm: crmService }));
   app.use("/api/admin", createAdminRouter({ db, crm: crmService }));
   app.use("/api/images", createImageRouter({ db }));

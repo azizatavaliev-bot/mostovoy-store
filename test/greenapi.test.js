@@ -98,6 +98,67 @@ test("ответ бота в WhatsApp уходит через Green API sendMess
   assert.equal(sent.length, 2, "после менеджера бот молчит");
 });
 
+test("жирный **markdown** в ответе превращается в одну звёздочку для WhatsApp, а в CRM хранится как есть", async (t) => {
+  // WhatsApp понимает только *текст* (одна звёздочка) как жирный — модель же
+  // всегда пишет **текст** (то, что для Telegram превращается в <b>). Без
+  // конвертации клиент в WhatsApp видел бы буквально две звёздочки на экране.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const sent = [];
+  const greenapi = { enabled: true, sendMessage: async (chatId, message) => { sent.push({ chatId, message }); return { idMessage: "m1" }; } };
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => "**Заказ:**\niPhone 17 Pro Max — *1420$*", chatJson: async () => ({ template_id: null }) },
+    amocrm: { enabled: false },
+    greenapi,
+    fetchImpl: okFetch,
+    autoReplyDebounceMs: 0,
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+  await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Привет", idMessage: "wa-10" })));
+  await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Сколько стоит iPhone 17 Pro Max?", idMessage: "wa-11" })));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const lastSent = sent.at(-1).message;
+  assert.doesNotMatch(lastSent, /\*\*/, "в отправленном в WhatsApp тексте не должно остаться двойных звёздочек");
+  assert.match(lastSent, /\*Заказ:\*/, "двойная звёздочка становится одинарной");
+  assert.match(lastSent, /\*1420\$\*/, "уже одинарная звёздочка остаётся как есть");
+
+  const conversation = crm.listConversations()[0];
+  const storedText = crm.getConversation(conversation.id).messages.at(-1).text;
+  assert.match(storedText, /\*\*Заказ:\*\*/, "в истории CRM текст хранится как сгенерировала модель, без изменений");
+});
+
+test("**жирный** с пробелом внутри звёздочек («** текст**») тоже конвертируется без пробела — иначе WhatsApp не выделит жирным", async (t) => {
+  // Найдено на проде: модель написала «** ⌚ Apple Watch Ultra 2 (Black)**»
+  // (с пробелом сразу после открывающих звёздочек) — простая замена **→*
+  // оставляла пробел внутри одинарных звёздочек, а WhatsApp жирный текст
+  // требует, чтобы звёздочка стояла вплотную к тексту, без пробела — клиент
+  // видел буквально «* ⌚ Apple Watch...*» как есть, без жирного начертания.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const sent = [];
+  const greenapi = { enabled: true, sendMessage: async (chatId, message) => { sent.push({ chatId, message }); return { idMessage: "m1" }; } };
+  const crm = new CrmService({
+    db,
+    deepseek: { enabled: true, chatText: async () => "** ⌚ Apple Watch Ultra 2 (Black)**\nЦена: **66 880 сом**", chatJson: async () => ({ template_id: null }) },
+    amocrm: { enabled: false },
+    greenapi,
+    fetchImpl: okFetch,
+    autoReplyDebounceMs: 0,
+  });
+  crm.saveSettings({ approvalEnabled: false, supervisorEnabled: false, templateRouterEnabled: false });
+  await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Привет", idMessage: "wa-12" })));
+  await crm.receiveGreenApi(parseGreenApiWebhook(incomingBody({ text: "Сколько стоит Apple Watch Ultra 2?", idMessage: "wa-13" })));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const lastSent = sent.at(-1).message;
+  assert.doesNotMatch(lastSent, /\*\*/, "двойных звёздочек не осталось");
+  assert.doesNotMatch(lastSent, /\* ⌚/, "не должно остаться пробела между открывающей звёздочкой и текстом");
+  assert.match(lastSent, /\*⌚ Apple Watch Ultra 2 \(Black\)\*/, "звёздочка вплотную к тексту с обеих сторон");
+  assert.match(lastSent, /\*66 880 сом\*/, "и во второй строке тоже без пробела");
+});
+
 test("лаборатория WhatsApp: реальный пайплайн, но ничего не уходит наружу и не попадает в inbox", async (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());

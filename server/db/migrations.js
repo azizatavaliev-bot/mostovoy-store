@@ -524,4 +524,122 @@ module.exports = [
       CREATE INDEX idx_instagram_story_cache_expires ON instagram_story_cache(expires_at);
     `,
   },
+  {
+    // Явная стадия сделки по диалогу: раньше бот угадывал, можно ли уже
+    // спрашивать имя/телефон, заново по тексту каждого сообщения — отсюда
+    // регрессии (спрашивал раньше подтверждённой цены). Теперь стадия
+    // хранится в БД и меняется только кодом при реальном событии
+    // (search_catalog подтвердил цену — configured; собраны имя+телефон+
+    // адрес — checkout завершён), а не мнением модели за один ход.
+    name: "019_deal_stage",
+    sql: `
+      ALTER TABLE crm_conversations ADD COLUMN deal_stage TEXT NOT NULL DEFAULT 'browsing';
+      ALTER TABLE crm_conversations ADD COLUMN deal_stage_product TEXT;
+    `,
+  },
+  {
+    // Раньше цепочка простоя была всегда 3 шага (hours/day/last) с CHECK,
+    // жёстко перечисляющим допустимые kind. Владелец магазина попросил
+    // другую схему («через день два раза, потом через 3 дня, потом финальное
+    // сообщение через неделю, дальше сами не пишем») — добавляем четвёртый
+    // шаг, а CHECK по конкретным строкам убираем совсем, чтобы следующую
+    // правку тайминга можно было сделать без миграции схемы.
+    name: "020_nudge_stage",
+    sql: `
+      CREATE TABLE nudge_follow_ups_new (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id INTEGER NOT NULL REFERENCES crm_conversations(id) ON DELETE CASCADE,
+        kind            TEXT NOT NULL,
+        product_name    TEXT,
+        due_at          TEXT NOT NULL,
+        sent_at         TEXT,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO nudge_follow_ups_new (id, conversation_id, kind, product_name, due_at, sent_at, created_at)
+        SELECT id, conversation_id, kind, product_name, due_at, sent_at, created_at FROM nudge_follow_ups;
+      DROP TABLE nudge_follow_ups;
+      ALTER TABLE nudge_follow_ups_new RENAME TO nudge_follow_ups;
+      CREATE INDEX idx_nudge_follow_ups_due ON nudge_follow_ups(due_at) WHERE sent_at IS NULL;
+      CREATE INDEX idx_nudge_follow_ups_conversation ON nudge_follow_ups(conversation_id, kind);
+    `,
+  },
+  {
+    // Деление лидов по «температуре», которое попросил владелец магазина:
+    // 🔥 горячий (наличие/доставка/оплата/конкретная модель — передать
+    // менеджеру и дожать), 🟡 выбирает (сравнивает модели — обычный ритм
+    // напоминаний), ⚪ интересовался (спросил и пропал — максимум пара
+    // касаний), ✅ купил (сразу убрать из дожима). Хранится отдельной
+    // колонкой, а не только вычисляется на лету, чтобы админка могла
+    // показывать её в списке диалогов.
+    name: "021_lead_segment",
+    sql: `
+      ALTER TABLE crm_conversations ADD COLUMN lead_segment TEXT NOT NULL DEFAULT 'interested';
+    `,
+  },
+  {
+    // Instagram Direct через официальный Meta Graph API (Instagram Login).
+    // Один магазин — одна интеграция, поэтому instagram_integration всегда
+    // максимум одна строка (без organizationId — это не мультитенантный
+    // SaaS). oauth_states — короткоживущий CSRF-токен между /connect и
+    // /callback, каждый одноразовый (consumed_at). webhook_events —
+    // дедуп входящих событий Meta по их собственному message id, чтобы
+    // повтор доставки от Meta не создавал сообщение дважды.
+    name: "022_instagram_integration",
+    sql: `
+      CREATE TABLE instagram_integration (
+        id                     INTEGER PRIMARY KEY CHECK (id = 1),
+        instagram_account_id   TEXT NOT NULL,
+        username               TEXT,
+        access_token_encrypted TEXT NOT NULL,
+        token_expires_at       TEXT,
+        scopes                 TEXT,
+        status                 TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected','reauth_required','error')),
+        last_error             TEXT,
+        connected_at           TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at             TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE instagram_oauth_states (
+        state        TEXT PRIMARY KEY,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at   TEXT NOT NULL,
+        consumed_at  TEXT
+      );
+
+      CREATE TABLE instagram_webhook_events (
+        event_id     TEXT PRIMARY KEY,
+        received_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `,
+  },
+  {
+    // Заказы, которые бот подтвердил в переписке — раньше это уходило
+    // только во внешнюю CRM (если она настроена, CRM_BASE_URL) и никак не
+    // сохранялось внутри самого бота: если внешняя CRM не настроена или
+    // менеджер её не проверяет, «менеджер свяжется с вами» никуда не
+    // попадало вообще. Теперь каждый подтверждённый заказ всегда пишется
+    // сюда — отдельная страница «Заказы» в админке читает эту таблицу.
+    name: "023_crm_orders",
+    sql: `
+      CREATE TABLE crm_orders (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        conversation_id   INTEGER REFERENCES crm_conversations(id) ON DELETE SET NULL,
+        source            TEXT NOT NULL,
+        product_name      TEXT NOT NULL,
+        amount            REAL,
+        currency          TEXT,
+        order_type        TEXT NOT NULL DEFAULT 'standard',
+        customer_name     TEXT,
+        customer_phone    TEXT,
+        customer_address  TEXT,
+        status            TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new','contacted','confirmed','cancelled')),
+        note              TEXT,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX idx_crm_orders_created ON crm_orders(created_at DESC);
+      CREATE INDEX idx_crm_orders_status ON crm_orders(status);
+      CREATE INDEX idx_crm_orders_conversation ON crm_orders(conversation_id);
+    `,
+  },
 ];

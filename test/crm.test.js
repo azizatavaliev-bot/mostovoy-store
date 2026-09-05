@@ -47,7 +47,10 @@ test("эскалация человеку распознаётся по прав
 });
 
 test("шаблоны магазина распознают основные сценарии на русском и кыргызском", () => {
-  assert.equal(classifySalesTemplate("Где вы находитесь?").kind, "location");
+  const location = classifySalesTemplate("Где вы находитесь?");
+  assert.equal(location.kind, "location");
+  assert.match(location.text, /A9/);
+  assert.match(location.text, /D14/);
   assert.match(classifySalesTemplate("У вас есть доставка?").text, /1–2 дня/);
   assert.match(classifySalesTemplate("Какая гарантия?").text, /1 год/);
   assert.equal(classifySalesTemplate("Можно заказать iPhone 17?").kind, "order");

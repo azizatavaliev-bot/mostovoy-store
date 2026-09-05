@@ -130,6 +130,21 @@ function createCrmAdminRoutes(router, crm) {
       res.status(error.code === "INSTAGRAM_NOT_CONNECTED" ? 503 : 500).json({ error: error.code || "INSTAGRAM_API_ERROR", message: error.message });
     }
   });
+  router.delete("/crm/instagram", (req, res) => {
+    res.json(crm.disconnectInstagram());
+  });
+}
+
+// Отдельно от createCrmAdminRoutes и БЕЗ requireAdmin: Meta редиректит сюда
+// голый браузер пользователя (не залогиненного в админку), поэтому сессионная
+// cookie/x-admin-token недоступны в принципе — это не брешь, а нормальная
+// природа OAuth-редиректа. Защита от подделки — одноразовый state с TTL
+// (см. createOAuthState/consumeOAuthState в instagram-graph.js), проверяется
+// внутри crm.handleInstagramCallback независимо от того, что на роуте нет auth.
+// Раньше этот роут жил внутри createCrmAdminRoutes и получал requireAdmin
+// автоматически — колбэк падал с {"error":"unauthorized"} на реальном
+// подключении, потому что браузер клиента не был залогинен в /admin.html.
+function createInstagramCallbackRoute(router, crm) {
   router.get("/crm/instagram/callback", express.json(), async (req, res) => {
     try {
       await crm.handleInstagramCallback({
@@ -143,9 +158,6 @@ function createCrmAdminRoutes(router, crm) {
       res.status(400).type("html").send(instagramCallbackPage(false, error.message || "Не удалось подключить Instagram"));
     }
   });
-  router.delete("/crm/instagram", (req, res) => {
-    res.json(crm.disconnectInstagram());
-  });
 }
 
 function instagramCallbackPage(ok, message) {
@@ -157,4 +169,4 @@ function instagramCallbackPage(ok, message) {
 </body></html>`;
 }
 
-module.exports = { createCrmAdminRoutes };
+module.exports = { createCrmAdminRoutes, createInstagramCallbackRoute };

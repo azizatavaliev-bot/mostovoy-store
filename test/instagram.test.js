@@ -190,3 +190,15 @@ test("/callback с несуществующим state возвращает ст�
   const text = await res.text();
   assert.match(text, /Не удалось подключить|state/i);
 });
+
+test("/callback работает БЕЗ admin-токена и без сессионной cookie — сюда Meta редиректит голый браузер клиента", async (t) => {
+  // Найдено на проде: колбэк раньше жил внутри createCrmAdminRoutes и получал
+  // requireAdmin автоматически — реальное подключение падало с
+  // {"error":"unauthorized"}, потому что браузер клиента, пришедший от Meta,
+  // не залогинен в /admin.html и не может нести x-admin-token.
+  const { base, close } = await startTestApp();
+  t.after(close);
+  const res = await fetch(`${base}/api/admin/crm/instagram/callback?code=abc&state=выдуманный`);
+  assert.notEqual(res.status, 401, "колбэк не должен требовать админскую авторизацию");
+  assert.equal(res.status, 400, "невалидный state всё равно должен корректно отклоняться");
+});

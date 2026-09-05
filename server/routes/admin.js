@@ -21,7 +21,7 @@ const { slugForProduct } = require("../services/products");
 const { verifyImageUrl } = require("../services/images");
 const { verifyPassword, createSession, verifySession, LoginThrottle } = require("../lib/auth");
 const { imageSize } = require("../services/images");
-const { createCrmAdminRoutes } = require("./crm-admin");
+const { createCrmAdminRoutes, createInstagramCallbackRoute } = require("./crm-admin");
 const { safeFetch, readLimited, FetchGuardError } = require("../lib/safeFetch");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
 
@@ -417,6 +417,11 @@ function createAdminRouter({ db, crm }) {
     const session = config.features.adminLogin ? checkSession(req) : null;
     res.json({ authenticated: Boolean(session), loginEnabled: config.features.adminLogin });
   });
+
+  // До requireAdmin: сюда Meta редиректит браузер клиента напрямую, у него
+  // нет и не может быть админской сессии/токена — защита своя, см. комментарий
+  // у createInstagramCallbackRoute.
+  if (crm) createInstagramCallbackRoute(router, crm);
 
   router.use(requireAdmin);
 

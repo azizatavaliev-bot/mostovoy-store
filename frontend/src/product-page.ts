@@ -21,6 +21,7 @@ import {
   trackProductView,
 } from "./catalog";
 import { enhanceSelects, installment, INSTALLMENT_TERM_LIST, isInstallmentEligible, mediaHTML } from "./render";
+import { variantsFor } from "./variants";
 import type { Product } from "./types";
 
 const root = document.getElementById("product") as HTMLElement;
@@ -123,6 +124,19 @@ function renderProduct(p: Product, all: Product[]): void {
   // Варианты характеристики: «128 ГБ / 256 ГБ» или «42 mm:340 / 46 mm:370».
   const { title: specTitle, options: storageOptions } = specOptionsFromProduct(p);
 
+  // Реальные строки той же модели в каталоге (разные строки в базе — разные
+  // объём/связь/цвет с точными ценами каждой, не приближение). Листать —
+  // переход на страницу конкретной строки: у неё может быть своё фото и
+  // описание, подменять данные на лету рискованно и не нужно.
+  const group = p.swatches?.length ? null : variantsFor(p, all);
+  const hasGroup = Boolean(group && group.options.length > 1);
+  const groupColors: [string, Product][] = hasGroup
+    ? [...new Map<string, Product>(group!.options.filter((o) => o.product.color).map((o) => [o.product.color as string, o.product]))]
+    : [];
+  const groupConfigs: [string, Product][] = hasGroup
+    ? [...new Map<string, Product>(group!.options.filter((o) => o.label && o.label !== group!.baseName).map((o) => [o.label, o.product]))]
+    : [];
+
   // По умолчанию выбран первый вариант — он же активная «пилюля».
   if (storageOptions.length) selected.storage = storageOptions[0].label;
 
@@ -170,6 +184,24 @@ function renderProduct(p: Product, all: Product[]): void {
         ? `<div class="opt">
              <p class="opt__title">${specTitle}</p>
              <div class="pills">${storageOptions.map((o, i) => `<button class="pill ${i === 0 ? "active" : ""}">${o.label}</button>`).join("")}</div>
+           </div>`
+        : ""}
+
+      ${groupColors.length > 1
+        ? `<div class="opt">
+             <p class="opt__title">Цвет</p>
+             <div class="pills">${groupColors
+               .map(([color, prod], i) => `<button type="button" class="pill ${prod.id === p.id ? "active" : ""}" data-goto="${encodeURIComponent(String(prod.id))}">${color}</button>`)
+               .join("")}</div>
+           </div>`
+        : ""}
+
+      ${groupConfigs.length > 1
+        ? `<div class="opt">
+             <p class="opt__title">Конфигурация</p>
+             <div class="pills">${groupConfigs
+               .map(([label, prod]) => `<button type="button" class="pill ${prod.id === p.id ? "active" : ""}" data-goto="${encodeURIComponent(String(prod.id))}">${label}</button>`)
+               .join("")}</div>
            </div>`
         : ""}
 
@@ -329,6 +361,13 @@ function wireInteractions(p: Product, priceState: PriceState, tradeRecalc: () =>
       selected.color = sw.dataset.name as string;
       const label = document.getElementById("colorName");
       if (label) label.textContent = sw.dataset.name as string;
+    }
+    // Пилюли цвета/конфигурации ведут на страницу конкретного товара —
+    // у него точная цена, своё фото и описание, ничего не подменяем на лету.
+    const goto = target.closest<HTMLElement>("[data-goto]");
+    if (goto) {
+      window.location.href = `product.html?id=${goto.dataset.goto}`;
+      return;
     }
     const pill = target.closest<HTMLElement>(".pill");
     if (pill) {

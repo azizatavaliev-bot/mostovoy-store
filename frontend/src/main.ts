@@ -19,6 +19,7 @@ import {
   toast,
 } from "./catalog";
 import { enhanceSelects, installment, isInstallmentEligible, mediaHTML, refreshCustomSelect } from "./render";
+import { modelKey } from "./variants";
 import type { Product } from "./types";
 
 interface FilterState {
@@ -649,12 +650,17 @@ function swatchesHTML(p: Product): string {
     .join("")}</div>`;
 }
 
-function cardHTML(p: Product): string {
+// variantCount > 1: карточка представляет несколько конфигураций одной
+// модели (память/связь/цвет разные строки в базе) — цена «от», без деталей
+// конкретной строки, выбор конфигурации происходит на странице товара.
+function cardHTML(p: Product, variantCount = 1): string {
   const hasDiscount = (p.discountPercent || 0) > 0 && p.salePrice != null && p.salePrice < p.price;
   const effectivePrice = hasDiscount ? (p.salePrice as number) : p.price;
   const monthly = isInstallmentEligible(p) ? installment(effectivePrice, 12).monthly : null;
   const colorName = p.swatches?.length ? p.swatches[cardColor.get(p.id) || 0][0] : p.color;
-  const specification = [colorName || p.category, p.storage, p.variant].filter(Boolean).join(" · ");
+  const specification =
+    variantCount > 1 ? p.category || "" : [colorName || p.category, p.storage, p.variant].filter(Boolean).join(" · ");
+  const priceLabel = variantCount > 1 ? "от " : "";
   const badge = hasDiscount
     ? `<span class="card__badge card__badge--sale">${p.discountLabel || `-${p.discountPercent}%`}</span>`
     : p.badge
@@ -666,14 +672,14 @@ function cardHTML(p: Product): string {
       aria-pressed="${favoriteIds.has(String(p.id))}">${FAVORITE_ICON}</button>
     <a class="card__link" href="product.html?id=${encodeURIComponent(p.id)}">
       ${badge}
-      ${cardMedia(p)}
+      ${variantCount > 1 ? mediaHTML(p, "card__media") : cardMedia(p)}
     </a>
-    ${swatchesHTML(p)}
+    ${variantCount > 1 ? "" : swatchesHTML(p)}
     <a class="card__link card__link--text" href="product.html?id=${encodeURIComponent(p.id)}">
       <h3 class="card__name">${p.name}</h3>
       <p class="card__spec">${specification}${p.available ? "" : " · нет в наличии"}</p>
       <div class="card__price">
-        ${hasDiscount ? `<span class="card__old">${fmt(p.price, p.currency)}</span> ` : ""}${fmt(effectivePrice, p.currency)}
+        ${hasDiscount ? `<span class="card__old">${fmt(p.price, p.currency)}</span> ` : ""}${priceLabel}${fmt(effectivePrice, p.currency)}
         ${monthly == null ? "" : `<span class="card__from">/ от ${fmt(monthly, p.currency)} в мес.</span>`}
       </div>
     </a>
@@ -681,11 +687,36 @@ function cardHTML(p: Product): string {
   </article>`;
 }
 
+// Схлопывает отфильтрованный список в одну карточку на модель: разные строки
+// одного товара (память/связь/цвет) в Telegram превращались в десятки
+// карточек — здесь остаётся самая дешёвая конфигурация каждой модели,
+// сортировка/фильтры перед этим уже применены к list.
+function collapseToModels(list: Product[]): { product: Product; count: number }[] {
+  const order: string[] = [];
+  const byKey = new Map<string, Product[]>();
+  for (const p of list) {
+    const k = modelKey(p);
+    const arr = byKey.get(k);
+    if (arr) arr.push(p);
+    else {
+      byKey.set(k, [p]);
+      order.push(k);
+    }
+  }
+  return order.map((k) => {
+    const group = byKey.get(k)!;
+    const cheapest = group.reduce((min, p) => (p.price < min.price ? p : min), group[0]);
+    return { product: cheapest, count: group.length };
+  });
+}
+
 function renderGrid(): void {
   if (!grid || !gridEmpty) return;
   const list = filtered();
   gridEmpty.hidden = list.length > 0;
-  grid.innerHTML = list.map(cardHTML).join("");
+  grid.innerHTML = collapseToModels(list)
+    .map(({ product, count }) => cardHTML(product, count))
+    .join("");
   observeCards();
 }
 

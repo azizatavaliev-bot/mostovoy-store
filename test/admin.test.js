@@ -263,6 +263,34 @@ test("GET /api/admin/products отдаёт все статусы, включая
   assert.equal(found.status, "hidden");
 });
 
+test("товар из Telegram-поста отдаёт channelPostUrl — ссылку на исходное сообщение канала", async (t) => {
+  // Нужно, чтобы человек мог сразу открыть оригинальный пост и забрать оттуда
+  // фото/описание для товара, который только добавил бот и ещё не проверил
+  // человек (см. фильтр «только добавленные ботом» в списке товаров).
+  const { db, base, close } = startApp();
+  t.after(close);
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'needs_research')"
+  );
+  const productId = insertProduct.run("test-phone-needs-research", "test-phone-needs-research", "Тестовый телефон", 500, "USD").lastInsertRowid;
+  const messageId = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 777, '2026-09-05T10:00:00.000Z', 'Прайс', 'hash-777', 'ok')`
+  ).run().lastInsertRowid;
+  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 500, 'USD', 1, 1)")
+    .run(messageId, productId);
+
+  const list = await (await fetch(`${base}/api/admin/products`, { headers: H })).json();
+  const found = list.products.find((p) => p.slug === "test-phone-needs-research");
+  assert.ok(found);
+  assert.equal(found.channelPostUrl, "https://t.me/mostovoyshopp/777");
+
+  const detail = await (await fetch(`${base}/api/admin/products/test-phone-needs-research`, { headers: H })).json();
+  assert.equal(detail.product.channelPostUrl, "https://t.me/mostovoyshopp/777");
+});
+
 test("админ выключена без ADMIN_TOKEN и без логина/пароля", async (t) => {
   // Два независимых способа включить админку: токен (терминал) и
   // логин/пароль (браузер). Выключаем оба — иначе тест зависит от того,

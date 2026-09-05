@@ -27,6 +27,7 @@ interface AdminProduct {
   images?: string[];
   available: boolean;
   status: ProductStatus;
+  channelPostUrl?: string | null;
   updatedAt: string;
   swatches?: Swatch[];
   discountPercent?: number | null;
@@ -728,6 +729,9 @@ function renderProductsView(): string {
         <label class="admin__checkbox">
           <input type="checkbox" id="showHidden" /> показывать скрытые
         </label>
+        <label class="admin__checkbox">
+          <input type="checkbox" id="onlyNeedsResearch" /> только добавленные ботом, не проверенные человеком
+        </label>
       </div>
     </div>
     <div class="admin__products" id="productsList"></div>`;
@@ -760,6 +764,7 @@ function productRowHTML(p: AdminProduct): string {
     <div class="admin__prow-updated">${fmtRelative(p.updatedAt)}</div>
     <div class="admin__prow-actions">
       <button type="button" class="admin__link" data-edit="${p.slug}">Править</button>
+      ${p.channelPostUrl ? `<a class="admin__link" href="${esc(p.channelPostUrl)}" target="_blank" rel="noopener">Пост в канале ↗</a>` : ""}
       ${p.status === "hidden"
         ? `<button type="button" class="admin__link" data-restore="${p.slug}">Вернуть</button>`
         : `<button type="button" class="admin__link admin__link--danger" data-hide="${p.slug}">Скрыть</button>`}
@@ -791,9 +796,11 @@ function renderProductsList(): void {
   const list = document.getElementById("productsList");
   if (!list) return;
   const showHidden = (document.getElementById("showHidden") as HTMLInputElement | null)?.checked;
+  const onlyNeedsResearch = (document.getElementById("onlyNeedsResearch") as HTMLInputElement | null)?.checked;
   const q = state.search.trim().toLowerCase();
 
   let filtered = state.products.filter((p) => showHidden || p.status !== "hidden");
+  if (onlyNeedsResearch) filtered = filtered.filter((p) => p.status === "needs_research");
   if (q) filtered = filtered.filter((p) => `${p.name} ${p.brand || ""} ${p.category || ""}`.toLowerCase().includes(q));
   filtered = sortProducts(filtered);
   const visible = filtered.slice(0, state.visibleProducts);
@@ -908,6 +915,10 @@ function wireProductsView(): void {
     renderProductsList();
   });
   document.getElementById("showHidden")!.addEventListener("change", () => {
+    state.visibleProducts = 30;
+    renderProductsList();
+  });
+  document.getElementById("onlyNeedsResearch")!.addEventListener("change", () => {
     state.visibleProducts = 30;
     renderProductsList();
   });

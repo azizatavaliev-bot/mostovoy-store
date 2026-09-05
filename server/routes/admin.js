@@ -325,6 +325,12 @@ function toAdminJson(row) {
     discountLabel: row.discount_label,
     salePrice: discountPercent ? Math.round(row.price * (1 - discountPercent / 100) * 100) / 100 : null,
     available: Boolean(row.available),
+    // Ссылка на исходное сообщение в Telegram-канале, откуда бот взял товар —
+    // чтобы человек мог сразу открыть оригинал и забрать оттуда фото/описание
+    // для товаров, которые бот только добавил и ещё не обработал человек.
+    channelPostUrl: row.latest_telegram_message_id
+      ? `https://t.me/${config.contact.channel}/${row.latest_telegram_message_id}`
+      : null,
     status: row.status,
     origin: row.origin,
     description: row.description,
@@ -532,13 +538,30 @@ function createAdminRouter({ db, crm }) {
     });
   });
 
+  // Подзапрос — тот же принцип, что в getDedupedCatalogProducts (crm.js):
+  // берём id последнего по времени актуального сообщения канала для товара,
+  // а не любое попавшееся — иначе ссылка на старую версию поста, если товар
+  // переезжал между сообщениями.
+  const LATEST_TELEGRAM_MESSAGE_SUBQUERY = `(
+    SELECT tm.telegram_message_id
+      FROM message_products mp
+      JOIN telegram_messages tm ON tm.id = mp.message_id
+     WHERE mp.product_id = p.id AND mp.active = 1 AND tm.is_deleted = 0
+     ORDER BY COALESCE(tm.telegram_message_updated_at, tm.updated_at, tm.created_at) DESC, tm.id DESC
+     LIMIT 1
+  ) AS latest_telegram_message_id`;
+
   router.get("/products", (req, res) => {
-    const rows = db.prepare("SELECT * FROM products ORDER BY id DESC").all();
+    const rows = db.prepare(
+      `SELECT p.*, ${LATEST_TELEGRAM_MESSAGE_SUBQUERY} FROM products p ORDER BY p.id DESC`
+    ).all();
     res.json({ products: rows.map(toAdminJson), groups: GROUPS, categorySuggestions: CATEGORY_SUGGESTIONS });
   });
 
   router.get("/products/:slug", (req, res) => {
-    const row = db.prepare("SELECT * FROM products WHERE slug = ?").get(req.params.slug);
+    const row = db.prepare(
+      `SELECT p.*, ${LATEST_TELEGRAM_MESSAGE_SUBQUERY} FROM products p WHERE p.slug = ?`
+    ).get(req.params.slug);
     if (!row) return res.status(404).json({ error: "not_found" });
     res.json({ product: toAdminJson(row) });
   });

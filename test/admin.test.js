@@ -18,6 +18,7 @@ const { hashPassword } = require("../server/lib/auth");
 process.env.ADMIN_PASSWORD_HASH = hashPassword("test-password-123");
 
 const { createApp } = require("../server/app");
+const config = require("../server/config");
 const { makeDb, StubResearchService, makeFetch, pngBuffer } = require("./helpers");
 
 const IMG = { headers: { "content-type": "image/png" }, body: pngBuffer(800, 600) };
@@ -317,6 +318,32 @@ test("вход по верному логину/паролю выдаёт раб
   // Сессия работает и без x-admin-token — это отдельный, независимый способ входа.
   const products = await fetch(`${app.base}/api/admin/products`, { headers: { cookie } });
   assert.equal(products.status, 200);
+});
+
+test("ADMIN_PASSWORD_HASH через запятую — работают оба пароля одного логина", async (t) => {
+  // Нужно, когда старый пароль забыт, а владелец, который его помнит,
+  // недоступен: новый пароль добавляется вторым через запятую, не заменяя
+  // старый — вход возможен любым из двух, пока кто-то не сменит пароль явно.
+  const previousHash = config.admin.passwordHash;
+  config.admin.passwordHash = `${previousHash},${hashPassword("second-password-456")}`;
+  t.after(() => { config.admin.passwordHash = previousHash; });
+
+  const app = startApp();
+  t.after(app.close);
+
+  const oldLogin = await fetch(`${app.base}/api/admin/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "azis", password: "test-password-123" }),
+  });
+  assert.equal(oldLogin.status, 200, "старый пароль должен продолжать работать");
+
+  const newLogin = await fetch(`${app.base}/api/admin/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: "azis", password: "second-password-456" }),
+  });
+  assert.equal(newLogin.status, 200, "новый пароль тоже должен работать");
 });
 
 test("вход с неверным паролем — 401, сессия не выдаётся", async (t) => {

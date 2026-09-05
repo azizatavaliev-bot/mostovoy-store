@@ -391,7 +391,15 @@ function createAdminRouter({ db, crm }) {
 
     const { username, password } = req.body || {};
     const okUser = safeEqual(String(username || ""), config.admin.username);
-    const okPass = okUser && verifyPassword(String(password || ""), config.admin.passwordHash);
+    // ADMIN_PASSWORD_HASH может содержать несколько хешей через запятую —
+    // так временно уживаются старый и новый пароль одного логина (нужно,
+    // когда старый пароль забыт, но владелец, который его помнит, недоступен
+    // и его нельзя просто заменить).
+    const okPass = okUser && config.admin.passwordHash
+      .split(",")
+      .map((hash) => hash.trim())
+      .filter(Boolean)
+      .some((hash) => verifyPassword(String(password || ""), hash));
     if (!okUser || !okPass) {
       loginThrottle.recordFailure(ip);
       logger.warn("admin.login_failed", { ip });

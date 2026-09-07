@@ -23,7 +23,8 @@ const { verifyPassword, createSession, verifySession, LoginThrottle } = require(
 const { imageSize } = require("../services/images");
 const { createCrmAdminRoutes, createInstagramCallbackRoute } = require("./crm-admin");
 const { safeFetch, readLimited, FetchGuardError } = require("../lib/safeFetch");
-const { syncPublicChannelPosts, loadPosts } = require("../cli/import-public-channel");
+const { syncPublicChannelPosts } = require("../cli/import-public-channel");
+const { recomputeAvailability } = require("../services/sync");
 
 const CURRENCIES = ["USD", "KGS", "RUB"];
 const SESSION_COOKIE = "mostovoy_admin_session";
@@ -795,38 +796,44 @@ function createAdminRouter({ db, crm }) {
     }
   });
 
-  // Обычный /resync только добавляет/обновляет — если владелец удалил старый
-  // пост прямо в канале, это никак не отражается в базе (syncPublicChannelPosts
-  // ничего не убирает). Здесь — полный обход всех страниц публичной ленты,
-  // сравнение с тем, что есть в telegram_messages, и is_deleted=true через
-  // тот же SyncService для всего, что реально пропало из канала (гасит
-  // связанные товары ровно как обычное удаление поста через вебхук).
-  router.post("/cleanup-deleted-posts", async (req, res) => {
-    try {
-      const sync = req.app.locals.services.sync;
-      const channel = config.contact.channel;
-      const chatId = String(config.telegram.channelId);
-      const livePosts = await loadPosts(channel, Infinity, globalThis.fetch);
-      const liveIds = new Set(livePosts.map((p) => p.messageId));
-      const dbRows = db.prepare(
-        "SELECT telegram_message_id FROM telegram_messages WHERE telegram_chat_id = ? AND is_deleted = 0"
-      ).all(chatId);
-      const missing = dbRows.filter((r) => !liveIds.has(r.telegram_message_id));
-      const stats = { checked: dbRows.length, liveInChannel: liveIds.size, missing: missing.length, deactivated: 0, failed: 0 };
-      for (const row of missing) {
-        try {
-          const r = await sync.syncMessage({ chatId, messageId: row.telegram_message_id, isDeleted: true });
-          stats.deactivated += r.deactivated || 0;
-        } catch (e) {
-          stats.failed++;
-          logger.error("admin.cleanup_deleted_posts_message_failed", { messageId: row.telegram_message_id, error: e.message });
-        }
-      }
-      logger.info("admin.cleanup_deleted_posts_done", stats);
-      res.json(stats);
-    } catch (e) {
-      handleError(res, e, "admin.cleanup_deleted_posts_failed");
+  // ОТКЛЮЧЕНО: публичная лента t.me/s/<channel> отдаёт пагинацию не до конца
+  // истории — на этом канале she упирается в свою же ссылку before= уже
+  // на ~59-71 сообщении, хотя реальная история значительно длиннее. «Не
+  // нашли в живой ленте» означает «слишком старое для анонимного превью»,
+  // а не «владелец удалил» — исходное предположение эндпоинта было неверным,
+  // реальный прогон по ошибке деактивировал 4046 связей message_products
+  // (см. /undo-cleanup-deleted-posts ниже — им и откатили). Без надёжного
+  // сигнала о реальном удалении поста (Bot API не даёт отдельного события
+  // на удаление в канале) этот путь закрыт.
+  router.post("/cleanup-deleted-posts", (req, res) => {
+    res.status(410).json({ error: "disabled", message: "Отключено — ложные срабатывания из-за неполной пагинации публичной ленты Telegram" });
+  });
+
+  // Откат единственного ошибочного прогона /cleanup-deleted-posts выше:
+  // возвращает is_deleted=0 и active=1 только тем telegram_messages/
+  // message_products, которые были тронуты в конкретном временном окне
+  // того прогона (updatedSince) — не трогает ничего, что было деактивировано
+  // раньше и по другой, настоящей причине.
+  router.post("/undo-cleanup-deleted-posts", (req, res) => {
+    const updatedSince = String(req.body?.updatedSince || "");
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(updatedSince)) {
+      return res.status(400).json({ error: "updatedSince (ISO timestamp) обязателен" });
     }
+    const rows = db.prepare(
+      "SELECT id FROM telegram_messages WHERE is_deleted = 1 AND updated_at >= ?"
+    ).all(updatedSince);
+    let restoredMessages = 0;
+    let restoredLinks = 0;
+    for (const row of rows) {
+      db.prepare("UPDATE telegram_messages SET is_deleted = 0, updated_at = datetime('now') WHERE id = ?").run(row.id);
+      restoredMessages++;
+      const links = db.prepare("SELECT product_id FROM message_products WHERE message_id = ? AND active = 0").all(row.id);
+      db.prepare("UPDATE message_products SET active = 1, updated_at = datetime('now') WHERE message_id = ?").run(row.id);
+      restoredLinks += links.length;
+      for (const link of links) recomputeAvailability(db, link.product_id);
+    }
+    logger.info("admin.undo_cleanup_deleted_posts_done", { restoredMessages, restoredLinks });
+    res.json({ restoredMessages, restoredLinks });
   });
 
   // Вкладка «Обновления»: когда и где менялась цена.

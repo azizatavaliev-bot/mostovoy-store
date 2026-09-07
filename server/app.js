@@ -5,6 +5,7 @@ const fs = require("fs");
 const express = require("express");
 const config = require("./config");
 const logger = require("./logger");
+const controlCenter = require("./services/control-center");
 const { DeepSeekClient } = require("./services/deepseek");
 const { AiRouter } = require("./services/ai");
 const { ProductResearchService } = require("./services/research");
@@ -103,6 +104,7 @@ function createApp({ db, deepseek, ai, research, queue, crm, amocrm, azisCrm, cr
 
   app.use((err, req, res, next) => {
     logger.error("http.error", { path: req.path, error: err.message });
+    controlCenter.reportEvent({ type: "error", level: "error", title: `HTTP error: ${req.path}`, payload: { message: err.message } });
     if (res.headersSent) return next(err);
     res.status(500).json({ ok: false, error: "internal_error" });
   });

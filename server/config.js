@@ -213,6 +213,13 @@ const config = {
     },
   },
 
+  // Agency Control Center: внешний мониторинг проекта (heartbeat/usage/events),
+  // см. server/services/control-center.js. Пусто — интеграция выключена целиком.
+  controlCenter: {
+    url: (process.env.CONTROL_CENTER_URL || "").replace(/\/+$/, ""),
+    token: process.env.CONTROL_CENTER_TOKEN || "",
+  },
+
   // Курсы ТОЛЬКО для показа цены в другой валюте на витрине и в ответах бота.
   // В базе цена и валюта всегда хранятся как есть, из Telegram, и не пересчитываются.
   // KGS — фиксированный внутренний курс магазина (не рыночный), не обновляется
@@ -267,6 +274,7 @@ config.features = {
   waberyInstagram: Boolean(config.wabery.apiKey && config.wabery.webhookSecret && config.wabery.instagramChannelId),
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
   crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
+  controlCenter: Boolean(config.controlCenter.url && config.controlCenter.token),
 };
 config.features.admin = config.features.adminToken || config.features.adminLogin;
 

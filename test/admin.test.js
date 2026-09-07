@@ -291,41 +291,48 @@ test("товар из Telegram-поста отдаёт channelPostUrl — ссы
   assert.equal(detail.product.channelPostUrl, "https://t.me/mostovoyshopp/777");
 });
 
-test("POST /api/admin/cleanup-deleted-posts: пост, пропавший из канала (владелец удалил вручную), деактивирует свой товар — обычный /resync это не делает", async (t) => {
-  const html = `<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="mostovoyshopp/100">
-    <div class="tgme_widget_message_text js-message_text">iPhone 17 — 900$</div>
-    <time datetime="2026-09-01T10:00:00+00:00"></time>
-  </div></div>`;
-  const app = startApp({ fetchImpl: makeFetch({ "t.me/s/mostovoyshopp": { body: html } }) });
+test("POST /api/admin/cleanup-deleted-posts отключён (410) — публичная лента не доходит до конца истории, «не найдено» ложно принималось за «удалено владельцем»", async (t) => {
+  const app = startApp();
+  t.after(app.close);
+  const res = await fetch(`${app.base}/api/admin/cleanup-deleted-posts`, { method: "POST", headers: H });
+  assert.equal(res.status, 410);
+});
+
+test("POST /api/admin/undo-cleanup-deleted-posts восстанавливает только то, что было тронуто в указанном окне времени", async (t) => {
+  const app = startApp();
   t.after(app.close);
   const { db } = app;
 
   const insertProduct = db.prepare(
     "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'active')"
   );
-  const stillLiveId = insertProduct.run("iphone-17-still-live", "iphone-17-still-live", "iPhone 17", 900, "USD").lastInsertRowid;
-  const removedId = insertProduct.run("iphone-13-removed-by-owner", "iphone-13-removed-by-owner", "iPhone 13", 500, "USD").lastInsertRowid;
+  const wronglyDeactivatedId = insertProduct.run("iphone-old-post-still-real", "iphone-old-post-still-real", "iPhone (старый пост)", 900, "USD").lastInsertRowid;
+  const genuinelyDeletedId = insertProduct.run("phone-really-deleted-earlier", "phone-really-deleted-earlier", "Телефон (правда удалён раньше)", 400, "USD").lastInsertRowid;
 
   const insertMessage = db.prepare(
     `INSERT INTO telegram_messages
-      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
-     VALUES ('', ?, '2026-09-01T10:00:00.000Z', ?, ?, 'ok')`
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status, is_deleted, updated_at)
+     VALUES ('', ?, '2026-09-01T10:00:00.000Z', ?, ?, 'ok', 1, ?)`
   );
-  const msgStillLive = insertMessage.run(100, "iPhone 17 — 900$", "hash-100").lastInsertRowid;
-  const msgRemoved = insertMessage.run(200, "iPhone 13 — 500$", "hash-200").lastInsertRowid;
-  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 900, 'USD', 1, 1)").run(msgStillLive, stillLiveId);
-  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 500, 'USD', 1, 1)").run(msgRemoved, removedId);
+  // Ошибочно помеченное только что (в окне отката).
+  const msgWrong = insertMessage.run(200, "iPhone — 900$", "hash-200", "2026-09-07T13:42:00.000Z").lastInsertRowid;
+  // Помечено давно и по другой, настоящей причине — окно его не должно задеть.
+  const msgOld = insertMessage.run(300, "Телефон — 400$", "hash-300", "2026-01-01T00:00:00.000Z").lastInsertRowid;
+  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 900, 'USD', 1, 0)").run(msgWrong, wronglyDeactivatedId);
+  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 400, 'USD', 1, 0)").run(msgOld, genuinelyDeletedId);
 
-  const res = await fetch(`${app.base}/api/admin/cleanup-deleted-posts`, { method: "POST", headers: H });
+  const res = await fetch(`${app.base}/api/admin/undo-cleanup-deleted-posts`, {
+    method: "POST", headers: H, body: JSON.stringify({ updatedSince: "2026-09-07T13:00:00.000Z" }),
+  });
   assert.equal(res.status, 200);
   const stats = await res.json();
-  assert.equal(stats.missing, 1, "только пост 200 отсутствует в свежей ленте канала");
-  assert.equal(stats.deactivated, 1);
+  assert.equal(stats.restoredMessages, 1);
+  assert.equal(stats.restoredLinks, 1);
 
-  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgRemoved).is_deleted, 1);
-  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgStillLive).is_deleted, 0, "пост, который всё ещё есть в канале, не трогаем");
-  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(removedId).active, 0);
-  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(stillLiveId).active, 1);
+  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgWrong).is_deleted, 0, "ошибочно помеченное в окне отката — восстановлено");
+  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(wronglyDeactivatedId).active, 1);
+  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgOld).is_deleted, 1, "старое и не связанное с этим инцидентом — не трогаем");
+  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(genuinelyDeletedId).active, 0);
 });
 
 test("админ выключена без ADMIN_TOKEN и без логина/пароля", async (t) => {

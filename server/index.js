@@ -6,6 +6,7 @@ const { seedLegacyProducts } = require("./services/seed");
 const { createApp } = require("./app");
 const { syncPublicChannelPosts } = require("./cli/import-public-channel");
 const { startFxRateUpdater } = require("./services/fx-rates");
+const controlCenter = require("./services/control-center");
 
 const db = getDb();
 seedLegacyProducts(db);
@@ -14,6 +15,7 @@ const app = createApp({ db });
 const { queue, crm } = app.locals.services;
 let fullCatalogSyncTimer = null;
 let orderCareTimer = null;
+let controlCenterHeartbeatTimer = null;
 
 async function syncFullChannelCatalog() {
   try {
@@ -53,6 +55,9 @@ const server = app.listen(config.port, () => {
   orderCareTimer = setInterval(checkOrderCareFollowUps, 15 * 60 * 1000);
   orderCareTimer.unref();
   startFxRateUpdater();
+  void controlCenter.heartbeat();
+  controlCenterHeartbeatTimer = setInterval(() => controlCenter.heartbeat(), 2 * 60 * 1000);
+  controlCenterHeartbeatTimer.unref();
 });
 
 queue.start();
@@ -61,6 +66,7 @@ function shutdown(signal) {
   logger.info("server.shutdown", { signal });
   if (fullCatalogSyncTimer) clearInterval(fullCatalogSyncTimer);
   if (orderCareTimer) clearInterval(orderCareTimer);
+  if (controlCenterHeartbeatTimer) clearInterval(controlCenterHeartbeatTimer);
   queue.stop();
   server.close(() => {
     closeDb();

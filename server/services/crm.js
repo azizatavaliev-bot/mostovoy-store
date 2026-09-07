@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const config = require("../config");
 const logger = require("../logger");
+const controlCenter = require("./control-center");
 const { getBuyClickAnalytics, getProductViewAnalytics } = require("./buy-analytics");
 const { MODELS, modelInfo } = require("./ai");
 const { syncPublicChannelPosts } = require("../cli/import-public-channel");
@@ -452,6 +453,17 @@ function classifyReactiveTemplate(text) {
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
+
+// Для usage-события Control Center (provider отдельно от model) — по
+// префиксу id модели, тем же id, что в MODELS выше.
+function usageProviderFromModel(model) {
+  const id = String(model || "");
+  if (id.startsWith("deepseek")) return "deepseek";
+  if (id.startsWith("gpt") || id.startsWith("o1") || id.startsWith("o3")) return "openai";
+  if (id.startsWith("gemini")) return "gemini";
+  if (id.startsWith("claude")) return "anthropic";
+  return "unknown";
+}
 const INSTALLMENT_COEFFICIENTS = { 3: 0.94, 6: 0.89, 12: 0.84 };
 const TRADE_IN_OPTIONS = [
   ["iphone 15 pro max", 900], ["iphone 15 pro", 800], ["iphone 15", 620],
@@ -1565,6 +1577,13 @@ class CrmService {
         addressEntry ? addressEntry[0] : null
       );
       this._logEvent(conversation.id, "info", "commerce", "order.saved", "Заказ сохранён в CRM", { product: product.name });
+      // Только числа/идентификаторы — ни имени, ни телефона, ни адреса клиента.
+      controlCenter.reportEvent({
+        type: "order",
+        level: "info",
+        title: "Новый заказ",
+        payload: { conversationId: conversation.id, amount, currency: "KGS", orderType, channel: conversation.source },
+      });
     }
 
     if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return true;
@@ -1918,6 +1937,14 @@ class CrmService {
       outputCost,
       inputCost + outputCost
     );
+    controlCenter.reportUsage({
+      provider: usageProviderFromModel(model),
+      model: String(model || this.getSettings().model),
+      inputTokens: promptTokens,
+      outputTokens: completionTokens,
+      costUsd: inputCost + outputCost,
+      metadata: { task, conversationId: conversationId == null ? null : Number(conversationId) },
+    });
     const conversation = conversationId == null
       ? null
       : this.db.prepare("SELECT * FROM crm_conversations WHERE id = ?").get(conversationId);

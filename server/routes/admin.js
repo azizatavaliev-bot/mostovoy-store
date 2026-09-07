@@ -23,7 +23,7 @@ const { verifyPassword, createSession, verifySession, LoginThrottle } = require(
 const { imageSize } = require("../services/images");
 const { createCrmAdminRoutes, createInstagramCallbackRoute } = require("./crm-admin");
 const { safeFetch, readLimited, FetchGuardError } = require("../lib/safeFetch");
-const { syncPublicChannelPosts } = require("../cli/import-public-channel");
+const { syncPublicChannelPosts, loadPosts } = require("../cli/import-public-channel");
 
 const CURRENCIES = ["USD", "KGS", "RUB"];
 const SESSION_COOKIE = "mostovoy_admin_session";
@@ -792,6 +792,40 @@ function createAdminRouter({ db, crm }) {
       res.json({ imported, messages: rows.length, ...stats });
     } catch (e) {
       handleError(res, e, "admin.resync_failed");
+    }
+  });
+
+  // Обычный /resync только добавляет/обновляет — если владелец удалил старый
+  // пост прямо в канале, это никак не отражается в базе (syncPublicChannelPosts
+  // ничего не убирает). Здесь — полный обход всех страниц публичной ленты,
+  // сравнение с тем, что есть в telegram_messages, и is_deleted=true через
+  // тот же SyncService для всего, что реально пропало из канала (гасит
+  // связанные товары ровно как обычное удаление поста через вебхук).
+  router.post("/cleanup-deleted-posts", async (req, res) => {
+    try {
+      const sync = req.app.locals.services.sync;
+      const channel = config.contact.channel;
+      const chatId = String(config.telegram.channelId);
+      const livePosts = await loadPosts(channel, Infinity, globalThis.fetch);
+      const liveIds = new Set(livePosts.map((p) => p.messageId));
+      const dbRows = db.prepare(
+        "SELECT telegram_message_id FROM telegram_messages WHERE telegram_chat_id = ? AND is_deleted = 0"
+      ).all(chatId);
+      const missing = dbRows.filter((r) => !liveIds.has(r.telegram_message_id));
+      const stats = { checked: dbRows.length, liveInChannel: liveIds.size, missing: missing.length, deactivated: 0, failed: 0 };
+      for (const row of missing) {
+        try {
+          const r = await sync.syncMessage({ chatId, messageId: row.telegram_message_id, isDeleted: true });
+          stats.deactivated += r.deactivated || 0;
+        } catch (e) {
+          stats.failed++;
+          logger.error("admin.cleanup_deleted_posts_message_failed", { messageId: row.telegram_message_id, error: e.message });
+        }
+      }
+      logger.info("admin.cleanup_deleted_posts_done", stats);
+      res.json(stats);
+    } catch (e) {
+      handleError(res, e, "admin.cleanup_deleted_posts_failed");
     }
   });
 

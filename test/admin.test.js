@@ -291,6 +291,43 @@ test("товар из Telegram-поста отдаёт channelPostUrl — ссы
   assert.equal(detail.product.channelPostUrl, "https://t.me/mostovoyshopp/777");
 });
 
+test("POST /api/admin/cleanup-deleted-posts: пост, пропавший из канала (владелец удалил вручную), деактивирует свой товар — обычный /resync это не делает", async (t) => {
+  const html = `<div class="tgme_widget_message_wrap"><div class="tgme_widget_message" data-post="mostovoyshopp/100">
+    <div class="tgme_widget_message_text js-message_text">iPhone 17 — 900$</div>
+    <time datetime="2026-09-01T10:00:00+00:00"></time>
+  </div></div>`;
+  const app = startApp({ fetchImpl: makeFetch({ "t.me/s/mostovoyshopp": { body: html } }) });
+  t.after(app.close);
+  const { db } = app;
+
+  const insertProduct = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, price, currency, status) VALUES (?, ?, ?, ?, ?, 'active')"
+  );
+  const stillLiveId = insertProduct.run("iphone-17-still-live", "iphone-17-still-live", "iPhone 17", 900, "USD").lastInsertRowid;
+  const removedId = insertProduct.run("iphone-13-removed-by-owner", "iphone-13-removed-by-owner", "iPhone 13", 500, "USD").lastInsertRowid;
+
+  const insertMessage = db.prepare(
+    `INSERT INTO telegram_messages
+      (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('', ?, '2026-09-01T10:00:00.000Z', ?, ?, 'ok')`
+  );
+  const msgStillLive = insertMessage.run(100, "iPhone 17 — 900$", "hash-100").lastInsertRowid;
+  const msgRemoved = insertMessage.run(200, "iPhone 13 — 500$", "hash-200").lastInsertRowid;
+  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 900, 'USD', 1, 1)").run(msgStillLive, stillLiveId);
+  db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, 500, 'USD', 1, 1)").run(msgRemoved, removedId);
+
+  const res = await fetch(`${app.base}/api/admin/cleanup-deleted-posts`, { method: "POST", headers: H });
+  assert.equal(res.status, 200);
+  const stats = await res.json();
+  assert.equal(stats.missing, 1, "только пост 200 отсутствует в свежей ленте канала");
+  assert.equal(stats.deactivated, 1);
+
+  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgRemoved).is_deleted, 1);
+  assert.equal(db.prepare("SELECT is_deleted FROM telegram_messages WHERE id = ?").get(msgStillLive).is_deleted, 0, "пост, который всё ещё есть в канале, не трогаем");
+  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(removedId).active, 0);
+  assert.equal(db.prepare("SELECT active FROM message_products WHERE product_id = ?").get(stillLiveId).active, 1);
+});
+
 test("админ выключена без ADMIN_TOKEN и без логина/пароля", async (t) => {
   // Два независимых способа включить админку: токен (терминал) и
   // логин/пароль (браузер). Выключаем оба — иначе тест зависит от того,

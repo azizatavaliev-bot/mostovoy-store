@@ -51,9 +51,7 @@ function createInstagramWebhookRouter({ db, crm }) {
 
 function processMessagingEvent({ db, crm, item }) {
   const message = item?.message;
-  // is_echo — сообщение, которое сама бизнес-страница отправила (либо этот
-  // же бот, либо менеджер из другого клиента Meta) — не входящее от клиента.
-  if (!message || message.is_echo || message.is_unsupported || !message.text) return;
+  if (!message || message.is_unsupported || !message.text) return;
   const eventId = message.mid;
   if (!eventId) return;
   // Идемпотентность на уровне HTTP-события: Meta может продублировать
@@ -65,6 +63,17 @@ function processMessagingEvent({ db, crm, item }) {
   } catch (error) {
     if (String(error.message).includes("UNIQUE constraint failed")) return;
     throw error;
+  }
+  // is_echo — сообщение реально ушло со страницы (наш бот или живой человек
+  // из приложения Instagram) — не спутать с обычным входящим от клиента.
+  // Для эха sender = страница, recipient = клиент — наоборот, чем у входящих.
+  if (message.is_echo) {
+    const recipientId = item?.recipient?.id;
+    if (!recipientId) return;
+    Promise.resolve(crm?.receiveInstagramEcho({ recipientId: String(recipientId), text: message.text, messageId: eventId })).catch((error) =>
+      logger.error("instagram_webhook.crm_failed", { error: error.message })
+    );
+    return;
   }
   const senderId = item?.sender?.id;
   if (!senderId) return;

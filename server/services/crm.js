@@ -2921,6 +2921,37 @@ prompt_patch — не больше двух коротких предложен�
     });
   }
 
+  // is_echo от Meta — сообщение реально ушло со страницы (бот или живой
+  // человек из приложения Instagram), roут просто передаёт его сюда не
+  // разбираясь, кто отправитель. Наш собственный echo узнаём по совпадению
+  // с уже сохранённым исходящим сообщением (тот же принцип, что для
+  // WhatsApp/amoCRM выше) — если совпадения нет, значит ответил человек
+  // напрямую из приложения, и AI для этого диалога надо выключить.
+  async receiveInstagramEcho({ recipientId, text, messageId }) {
+    if (!recipientId || !text) return { ignored: true };
+    const externalKey = `instagram_direct:${recipientId}`;
+    const conversation = this.db.prepare("SELECT * FROM crm_conversations WHERE external_key = ?").get(externalKey);
+    if (!conversation) return { ignored: true };
+    const echo = this.db.prepare(
+      `SELECT 1 FROM crm_messages
+        WHERE conversation_id = ? AND direction = 'outgoing' AND text = ?
+          AND created_at >= datetime('now', '-15 minutes')
+        LIMIT 1`
+    ).get(conversation.id, text);
+    if (echo) return { stored: false, conversationId: Number(conversation.id), echo: true };
+    const inserted = this._storeMessage(conversation.id, {
+      externalMessageId: messageId,
+      direction: "outgoing",
+      sender: "manager",
+      text,
+      raw: null,
+      createdAt: new Date().toISOString(),
+    });
+    this.db.prepare("UPDATE crm_conversations SET ai_enabled = 0, updated_at = datetime('now') WHERE id = ?").run(conversation.id);
+    this._logEvent(conversation.id, "info", "inbox", "instagram.human_takeover", "Человек ответил из приложения Instagram — автоответ выключен");
+    return { stored: Boolean(inserted), conversationId: Number(conversation.id), manager: true };
+  }
+
   // ── Instagram Direct через Wabery ──────────────────────────────────────
   // Проще прямой Meta-интеграции выше: Wabery уже подключён к Instagram-
   // аккаунту в их дашборде (Sign in with Facebook на их стороне), нам

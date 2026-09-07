@@ -38,7 +38,7 @@ Instagram обычной кнопкой «Подключить».
 1. В том же разделе Instagram → Webhooks указать:
    - **Callback URL**: `https://<ваш-домен>/api/webhooks/instagram`
    - **Verify Token**: любая случайная строка — та же самая, что пойдёт в `META_WEBHOOK_VERIFY_TOKEN` (см. ниже).
-2. Подписаться на поле **messages** (события входящих Direct-сообщений). Больше поля не нужны.
+2. Подписаться на поля **messages** (входящие Direct-сообщения) и **message_echoes** (сообщения, реально отправленные со страницы — нужно, чтобы бот понимал, что в диалог вручную вмешался человек из приложения Instagram, и выключал себе автоответ). Без `message_echoes` это распознавание не работает.
 3. Meta сразу проверит webhook GET-запросом — если сервер уже задеплоен с этими переменными окружения, проверка пройдёт автоматически.
 
 ## 5. Требуемые переменные окружения (Railway)
@@ -118,7 +118,7 @@ META_REDIRECT_URI=https://<ngrok-домен>/api/admin/crm/instagram/callback
 
 - [ ] `META_APP_ID` / `META_APP_SECRET` / `META_REDIRECT_URI` / `META_WEBHOOK_VERIFY_TOKEN` / `META_TOKEN_ENCRYPTION_KEY` заданы в Railway
 - [ ] OAuth Redirect URI в Meta Developers совпадает с `META_REDIRECT_URI` **точь-в-точь** (включая `https://` и без завершающего слэша)
-- [ ] Webhook Callback URL подписан на поле `messages`
+- [ ] Webhook Callback URL подписан на поля `messages` и `message_echoes`
 - [ ] App Review пройден для `instagram_business_manage_messages`
 - [ ] Business Verification пройдена (если Meta её требует для этого приложения)
 - [ ] Опубликованы страницы Privacy Policy и Terms of Service

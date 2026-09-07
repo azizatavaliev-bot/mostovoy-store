@@ -134,6 +134,63 @@ test("POST /api/webhooks/instagram — без верной подписи 401, �
   assert.deepEqual(received, { senderId: "978239761327698", text: "Здравствуйте, есть в наличии iPhone?", messageId: "mid-1" });
 });
 
+test("POST /api/webhooks/instagram — is_echo идёт в crm.receiveInstagramEcho, а не в receiveInstagramDirect", async (t) => {
+  // is_echo: сообщение реально отправлено со страницы (бот или человек из
+  // приложения) — sender/recipient поменяны местами относительно обычного
+  // входящего, нужен именно recipient (клиент), не sender (страница).
+  let echoEvent = null;
+  const crm = {
+    receiveInstagramDirect: async () => { throw new Error("не должно вызываться для is_echo"); },
+    receiveInstagramEcho: async (event) => { echoEvent = event; return { ok: true }; },
+  };
+  const { base, close } = await startTestApp({ crm });
+  t.after(close);
+
+  const payload = {
+    object: "instagram",
+    entry: [{
+      id: "17841400000000000",
+      time: 1_700_000_000,
+      messaging: [{
+        sender: { id: "17841400000000000" },
+        recipient: { id: "978239761327698" },
+        timestamp: 1_700_000_000,
+        message: { mid: "mid-echo-1", text: "Добрый день, уже помогаю вам лично", is_echo: true },
+      }],
+    }],
+  };
+  const body = JSON.stringify(payload);
+  const signature = "sha256=" + crypto.createHmac("sha256", config.meta.appSecret).update(body).digest("hex");
+
+  const res = await fetch(`${base}/api/webhooks/instagram`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-hub-signature-256": signature },
+    body,
+  });
+  assert.equal(res.status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(echoEvent, { recipientId: "978239761327698", text: "Добрый день, уже помогаю вам лично", messageId: "mid-echo-1" });
+});
+
+test("CrmService.receiveInstagramEcho: чужой echo (человек из приложения) выключает AI, свой echo (эхо бота) — нет", async (t) => {
+  const db = makeDb();
+  t.after(() => db.close());
+  const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
+
+  const externalKey = "instagram_direct:978239761327698";
+  const conversation = crm._upsertConversation({ externalKey, source: "instagram_direct", inbound: true, chatId: "978239761327698" });
+
+  // Сообщение, которое бот уже отправил сам — echo с тем же текстом должен
+  // быть узнан как свой и не выключать AI.
+  crm._storeMessage(conversation.id, { direction: "outgoing", sender: "assistant", text: "Здравствуйте! Чем помочь?", createdAt: new Date().toISOString() });
+  await crm.receiveInstagramEcho({ recipientId: "978239761327698", text: "Здравствуйте! Чем помочь?", messageId: "echo-own" });
+  assert.equal(crm.getConversation(conversation.id).conversation.aiEnabled, true, "эхо собственного сообщения бота не должно выключать AI");
+
+  // А текст, которого мы не отправляли — это живой человек из приложения.
+  await crm.receiveInstagramEcho({ recipientId: "978239761327698", text: "Это Азиз, я сам отвечу клиенту", messageId: "echo-human" });
+  assert.equal(crm.getConversation(conversation.id).conversation.aiEnabled, false, "echo с новым текстом — человек вмешался, AI должен выключиться");
+});
+
 test("POST /api/webhooks/instagram — повтор того же message id (mid) обрабатывается только один раз", async (t) => {
   let callCount = 0;
   const crm = { receiveInstagramDirect: async () => { callCount += 1; return { ok: true }; } };

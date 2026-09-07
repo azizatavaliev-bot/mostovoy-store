@@ -819,8 +819,11 @@ function createAdminRouter({ db, crm }) {
     if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(updatedSince)) {
       return res.status(400).json({ error: "updatedSince (ISO timestamp) обязателен" });
     }
+    // datetime() с обеих сторон — updated_at хранится как "ГГГГ-ММ-ДД ЧЧ:ММ:СС"
+    // (datetime('now') в SQLite), а updatedSince приходит ISO8601 с "T"/"Z";
+    // сравнение сырых строк дало бы неверный порядок из-за разных разделителей.
     const rows = db.prepare(
-      "SELECT id FROM telegram_messages WHERE is_deleted = 1 AND updated_at >= ?"
+      "SELECT id FROM telegram_messages WHERE is_deleted = 1 AND datetime(updated_at) >= datetime(?)"
     ).all(updatedSince);
     let restoredMessages = 0;
     let restoredLinks = 0;

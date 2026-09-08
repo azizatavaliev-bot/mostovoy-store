@@ -10,6 +10,8 @@
     "build": "npm ci --prefix frontend && npm run build --prefix frontend",
     "migrate": "node server/cli/migrate.js",
     "resync": "node server/cli/resync.js",
+    "backup": "node server/cli/backup.js",
+    "restore-backup": "node server/cli/restore-backup.js",
     "import-channel": "node server/cli/import-public-channel.js",
     "detect-chat": "node server/cli/detect-chat.js",
     "set-webhook": "node server/cli/set-webhook.js",

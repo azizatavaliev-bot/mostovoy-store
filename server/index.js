@@ -7,6 +7,7 @@ const { createApp } = require("./app");
 const { syncPublicChannelPosts } = require("./cli/import-public-channel");
 const { startFxRateUpdater } = require("./services/fx-rates");
 const controlCenter = require("./services/control-center");
+const { runBackup } = require("./services/backup");
 
 const db = getDb();
 seedLegacyProducts(db);
@@ -16,6 +17,15 @@ const { queue, crm } = app.locals.services;
 let fullCatalogSyncTimer = null;
 let orderCareTimer = null;
 let controlCenterHeartbeatTimer = null;
+let backupTimer = null;
+
+async function runScheduledBackup() {
+  try {
+    await runBackup({ db });
+  } catch (error) {
+    logger.warn("backup.scheduled_failed", { error: error.message });
+  }
+}
 
 async function syncFullChannelCatalog() {
   try {
@@ -58,6 +68,8 @@ const server = app.listen(config.port, () => {
   void controlCenter.heartbeat();
   controlCenterHeartbeatTimer = setInterval(() => controlCenter.heartbeat(), 2 * 60 * 1000);
   controlCenterHeartbeatTimer.unref();
+  backupTimer = setInterval(runScheduledBackup, 6 * 60 * 60 * 1000);
+  backupTimer.unref();
 });
 
 queue.start();
@@ -67,6 +79,7 @@ function shutdown(signal) {
   if (fullCatalogSyncTimer) clearInterval(fullCatalogSyncTimer);
   if (orderCareTimer) clearInterval(orderCareTimer);
   if (controlCenterHeartbeatTimer) clearInterval(controlCenterHeartbeatTimer);
+  if (backupTimer) clearInterval(backupTimer);
   queue.stop();
   server.close(() => {
     closeDb();

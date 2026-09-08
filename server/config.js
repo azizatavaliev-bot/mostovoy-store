@@ -220,6 +220,17 @@ const config = {
     token: process.env.CONTROL_CENTER_TOKEN || "",
   },
 
+  // Бэкап SQLite в S3-совместимое хранилище (Cloudflare R2, Railway bucket
+  // и т.п.) — см. server/services/backup.js. Пусто — бэкап выключен целиком.
+  backup: {
+    endpoint: (process.env.BACKUP_S3_ENDPOINT || "").replace(/\/+$/, ""),
+    accessKeyId: process.env.BACKUP_S3_ACCESS_KEY_ID || "",
+    secretAccessKey: process.env.BACKUP_S3_SECRET_ACCESS_KEY || "",
+    bucket: process.env.BACKUP_S3_BUCKET || "",
+    // "auto" подходит для Cloudflare R2; для настоящего AWS S3 — реальный регион.
+    region: process.env.BACKUP_S3_REGION || "auto",
+  },
+
   // Курсы ТОЛЬКО для показа цены в другой валюте на витрине и в ответах бота.
   // В базе цена и валюта всегда хранятся как есть, из Telegram, и не пересчитываются.
   // KGS — фиксированный внутренний курс магазина (не рыночный), не обновляется
@@ -275,6 +286,7 @@ config.features = {
   azisCrm: Boolean(config.azisCrm.baseUrl && config.azisCrm.integrationSecret),
   crmDeals: Boolean(config.crmDeals.baseUrl && config.crmDeals.internalToken),
   controlCenter: Boolean(config.controlCenter.url && config.controlCenter.token),
+  backup: Boolean(config.backup.endpoint && config.backup.accessKeyId && config.backup.secretAccessKey && config.backup.bucket),
 };
 config.features.admin = config.features.adminToken || config.features.adminLogin;
 

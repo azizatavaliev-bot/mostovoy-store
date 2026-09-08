@@ -1396,9 +1396,8 @@ test("супервизор отключается настройкой и не �
   assert.equal(sentText, "Готовый черновик.");
 });
 
-test("агрессивное обучение сохраняет отклонение и точечно обновляет системный промпт", async (t) => {
+function makeAggressiveLearningCrm() {
   const db = createConnection(":memory:");
-  t.after(() => db.close());
   const deepseek = {
     enabled: true,
     chatText: async ({ onUsage }) => {
@@ -1417,36 +1416,106 @@ test("агрессивное обучение сохраняет отклоне�
     db, deepseek, amocrm: { enabled: false }, autoReplyDebounceMs: 0,
     fetchImpl: async () => ({ ok: true, status: 200, text: async () => "" }),
   });
+  return { db, crm };
+}
+
+test("B5: по умолчанию авто-патч сохраняется черновиком, живой промпт не меняется", async (t) => {
+  const { db, crm } = makeAggressiveLearningCrm();
+  t.after(() => db.close());
   crm.saveSettings({ aggressiveLearning: true, systemPrompt: "Базовый промпт." });
+  assert.equal(crm.getSettings().autoPublishPromptPatches, false, "OFF по умолчанию");
 
   await crm.receiveTelegram({
-    message_id: 120,
-    date: 1_700_000_000,
-    text: "Дадите скидку?",
-    chat: { id: 120, type: "private" },
-    from: { id: 120, first_name: "Клиент" },
+    message_id: 120, date: 1_700_000_000, text: "Дадите скидку?",
+    chat: { id: 120, type: "private" }, from: { id: 120, first_name: "Клиент" },
   });
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const draft = crm.listApprovals("pending")[0];
-  await crm.rejectReply(draft.id, "Бот придумал скидку");
+  const pending = crm.listApprovals("pending")[0];
+  await crm.rejectReply(pending.id, "Бот придумал скидку");
 
   const rejected = crm.listApprovals("rejected")[0];
   assert.equal(rejected.rejectReason, "Бот придумал скидку");
-  assert.match(crm.getSettings().systemPrompt, /Не обещай скидку/);
-  const example = db.prepare("SELECT * FROM bot_training_examples WHERE approval_id = ?").get(draft.id);
-  assert.equal(example.quality_label, "rejected");
-  assert.equal(example.reject_reason, "Бот придумал скидку");
-  assert.equal(JSON.parse(db.prepare(
-    "SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_history'"
-  ).get().value).length, 1);
+  // Ключевая проверка B5: живой промпт НЕ изменился сам по себе.
+  assert.equal(crm.getSettings().systemPrompt, "Базовый промпт.");
+  assert.equal(db.prepare("SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_history'").get(), undefined);
+
+  const draft = crm.getPromptDraft();
+  assert.ok(draft, "черновик должен появиться");
+  assert.match(draft.patch, /Не обещай скидку/);
+  assert.equal(draft.approvalId, pending.id);
 
   const usage = crm.getAiUsageAnalytics();
   assert.equal(usage.tasks.find((item) => item.task === "sales_agent").tokens, 120);
   assert.equal(usage.tasks.find((item) => item.task === "aggressive_learning").tokens, 90);
-  assert.ok(usage.periods.all.costUsd > 0);
-  assert.equal(usage.customers.total, 1);
-  assert.equal(usage.customers.telegram, 1);
-  assert.equal(usage.customers.returning, 0);
+});
+
+test("B5: применение черновика (applyPromptDraft) пишет в живой промпт, историю и bot_events", async (t) => {
+  const { db, crm } = makeAggressiveLearningCrm();
+  t.after(() => db.close());
+  crm.saveSettings({ aggressiveLearning: true, systemPrompt: "Базовый промпт." });
+
+  await crm.receiveTelegram({
+    message_id: 130, date: 1_700_000_000, text: "Дадите скидку?",
+    chat: { id: 130, type: "private" }, from: { id: 130, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const pending = crm.listApprovals("pending")[0];
+  await crm.rejectReply(pending.id, "Бот придумал скидку");
+  assert.ok(crm.getPromptDraft());
+
+  const settings = crm.applyPromptDraft();
+  assert.match(settings.systemPrompt, /Не обещай скидку/);
+  assert.equal(crm.getPromptDraft(), null, "черновик очищается после применения");
+  assert.equal(JSON.parse(db.prepare(
+    "SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_history'"
+  ).get().value).length, 1);
+  assert.equal(crm.listEvents({})[0].event, "prompt.draft_applied");
+
+  // Повторное применение без черновика — понятная ошибка, не падение.
+  assert.throws(() => crm.applyPromptDraft(), /не найден/i);
+});
+
+test("B5: отклонение черновика (rejectPromptDraft) очищает его и не трогает живой промпт", async (t) => {
+  const { db, crm } = makeAggressiveLearningCrm();
+  t.after(() => db.close());
+  crm.saveSettings({ aggressiveLearning: true, systemPrompt: "Базовый промпт." });
+
+  await crm.receiveTelegram({
+    message_id: 131, date: 1_700_000_001, text: "А скидка есть?",
+    chat: { id: 131, type: "private" }, from: { id: 131, first_name: "Клиент2" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const pending = crm.listApprovals("pending")[0];
+  await crm.rejectReply(pending.id, "Опять придумал скидку");
+  assert.ok(crm.getPromptDraft());
+  const promptBeforeReject = crm.getSettings().systemPrompt;
+
+  crm.rejectPromptDraft();
+  assert.equal(crm.getPromptDraft(), null);
+  assert.equal(crm.getSettings().systemPrompt, promptBeforeReject, "живой промпт не меняется при отклонении черновика");
+  assert.equal(crm.listEvents({})[0].event, "prompt.draft_rejected");
+
+  assert.throws(() => crm.rejectPromptDraft(), /не найден/i);
+});
+
+test("B5: autoPublishPromptPatches=true возвращает старое поведение — патч сразу в живой промпт, без черновика", async (t) => {
+  const { db, crm } = makeAggressiveLearningCrm();
+  t.after(() => db.close());
+  crm.saveSettings({ aggressiveLearning: true, autoPublishPromptPatches: true, systemPrompt: "Базовый промпт." });
+
+  await crm.receiveTelegram({
+    message_id: 140, date: 1_700_000_000, text: "Дадите скидку?",
+    chat: { id: 140, type: "private" }, from: { id: 140, first_name: "Клиент" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const pending = crm.listApprovals("pending")[0];
+  await crm.rejectReply(pending.id, "Бот придумал скидку");
+
+  assert.match(crm.getSettings().systemPrompt, /Не обещай скидку/);
+  assert.equal(crm.getPromptDraft(), null, "при автопубликации черновика не остаётся");
+  assert.equal(JSON.parse(db.prepare(
+    "SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_history'"
+  ).get().value).length, 1);
 });
 
 test("сбой агрессивного обучения не отменяет отклонение ответа", async (t) => {

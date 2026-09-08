@@ -41,6 +41,23 @@ function createCrmAdminRoutes(router, crm) {
   router.put("/crm/settings", express.json(), (req, res) => {
     res.json(crm.saveSettings(req.body || {}));
   });
+  router.get("/crm/prompt-draft", (req, res) => {
+    res.json({ draft: crm.getPromptDraft() });
+  });
+  router.post("/crm/prompt-draft/apply", (req, res) => {
+    try {
+      res.json({ settings: crm.applyPromptDraft() });
+    } catch (error) {
+      res.status(404).json({ error: error.message });
+    }
+  });
+  router.post("/crm/prompt-draft/reject", (req, res) => {
+    try {
+      res.json(crm.rejectPromptDraft());
+    } catch (error) {
+      res.status(404).json({ error: error.message });
+    }
+  });
   router.get("/crm/approvals", (req, res) => {
     res.json({ approvals: crm.listApprovals(String(req.query.status || "pending")) });
   });

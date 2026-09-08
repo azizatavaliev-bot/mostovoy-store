@@ -2054,6 +2054,13 @@ body.noscroll { overflow: hidden; }
 .bot-switch > div b { font-size: 12px; }
 .bot-switch > div small { color: var(--gray); font-size: 9px; line-height: 1.45; }
 .bot-switch--learning { border: 1px solid rgba(232,0,29,.18); background: var(--red-soft); }
+.bot-prompt-draft { display: grid; gap: 8px; padding: 14px; border-radius: 13px; border: 1px solid rgba(232,0,29,.3); background: var(--red-soft); }
+.bot-prompt-draft > header { display: flex; align-items: baseline; justify-content: space-between; }
+.bot-prompt-draft > header b { font-size: 12px; }
+.bot-prompt-draft > header small { color: var(--gray); font-size: 9px; }
+.bot-prompt-draft p { font-size: 11px; margin: 0; }
+.bot-prompt-draft__diff { background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 11px; white-space: pre-wrap; color: #1a7f37; }
+.bot-prompt-draft__actions { display: flex; gap: 10px; }
 .crm-usage-summary { display: grid; grid-template-columns: repeat(7, minmax(105px, 1fr)); gap: 10px; margin: -10px 0 18px; }
 .crm-usage-summary article { padding: 16px 17px; border: 1px solid var(--line); border-radius: 18px; background: #fff; }
 .crm-usage-summary strong { display: block; color: var(--red); font-size: 20px; line-height: 1; }

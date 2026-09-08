@@ -134,9 +134,20 @@ interface CrmAnalytics {
   }[];
 }
 
+interface PromptDraft {
+  at: string;
+  approvalId: number;
+  reason: string;
+  patch: string;
+  reasoning: string;
+  previousPrompt: string;
+  nextPrompt: string;
+}
+
 interface BotSettings {
   approvalEnabled: boolean;
   aggressiveLearning: boolean;
+  autoPublishPromptPatches: boolean;
   model: string;
   models: {
     id: string;
@@ -254,6 +265,7 @@ const state = {
   approvals: [] as BotApproval[],
   approvalFilter: "pending" as "pending" | "all",
   developerStatus: null as DeveloperStatus | null,
+  promptDraft: null as PromptDraft | null,
   aiUsage: null as AiUsageAnalytics | null,
   botEvents: [] as BotEvent[],
   labHistory: [] as LabMessage[],
@@ -1728,6 +1740,7 @@ function currentBotSettings(): Partial<BotSettings> {
   return {
     approvalEnabled: Boolean((document.getElementById("botApproval") as HTMLInputElement | null)?.checked),
     aggressiveLearning: Boolean((document.getElementById("botAggressiveLearning") as HTMLInputElement | null)?.checked),
+    autoPublishPromptPatches: Boolean((document.getElementById("botAutoPublishPromptPatches") as HTMLInputElement | null)?.checked),
     model: (document.getElementById("botModel") as HTMLSelectElement | null)?.value,
     systemPrompt: promptValue("botSystemPrompt"),
     hypervisorPrompt: promptValue("botHypervisorPrompt"),
@@ -1830,6 +1843,20 @@ function renderBotTerminalMount(): void {
   if (keepBottom) terminal.scrollTop = terminal.scrollHeight;
 }
 
+function renderPromptDraft(draft: PromptDraft): string {
+  return `<div class="bot-prompt-draft">
+    <header><b>Черновик правки промпта</b><small>${fmtRelative(draft.at)} · отклонение #${draft.approvalId}</small></header>
+    <p class="bot-prompt-draft__reason"><b>Причина отклонения:</b> ${esc(draft.reason)}</p>
+    <p class="bot-prompt-draft__reasoning"><b>Обоснование ИИ:</b> ${esc(draft.reasoning)}</p>
+    <p class="bot-prompt-draft__patch"><b>Патч (добавится в конец промпта):</b></p>
+    <pre class="bot-prompt-draft__diff">+ ${esc(draft.patch)}</pre>
+    <div class="bot-prompt-draft__actions">
+      <button type="button" class="btn btn--sm" id="applyPromptDraft">Применить</button>
+      <button type="button" class="admin__link admin__link--danger" id="rejectPromptDraft">Отклонить</button>
+    </div>
+  </div>`;
+}
+
 function renderDeveloperMount(): void {
   const mount = document.getElementById("developerMount");
   const data = state.developerStatus;
@@ -1848,7 +1875,10 @@ function renderDeveloperMount(): void {
         <label class="bot-switch"><input type="checkbox" id="botApproval" ${s.approvalEnabled ? "checked" : ""}><span></span>
           Подтверждать ответы перед отправкой</label>
         <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botAggressiveLearning" ${s.aggressiveLearning ? "checked" : ""}><span></span>
-          <div><b>Агрессивное обучение</b><small>После каждого отклонения сохраняет причину и точечно улучшает системный промпт.</small></div></label>
+          <div><b>Агрессивное обучение</b><small>После каждого отклонения предлагает патч системного промпта — черновиком, требует подтверждения ниже (если не включена автопубликация).</small></div></label>
+        <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botAutoPublishPromptPatches" ${s.autoPublishPromptPatches ? "checked" : ""}><span></span>
+          <div><b>Автопубликация патчей промпта</b><small>ВЫКЛ по умолчанию. Если включить — патч уходит в живой промпт сразу, без черновика и подтверждения.</small></div></label>
+        ${state.promptDraft ? renderPromptDraft(state.promptDraft) : ""}
         <label class="bot-switch bot-switch--learning"><input type="checkbox" id="botSupervisor" ${s.supervisorEnabled ? "checked" : ""}><span></span>
           <div><b>Супервизор второго прохода</b><small>Отдельный вызов ИИ проверяет черновик перед отправкой: факты, полноту списка, тон, самопризнание в том, что бот.</small></div></label>
         <label>Модель<select id="botModel">${s.models.map((model) =>
@@ -1883,14 +1913,16 @@ function renderDeveloperMount(): void {
 }
 
 async function loadDeveloper(): Promise<void> {
-  const [status, events, usage] = await Promise.all([
+  const [status, events, usage, draft] = await Promise.all([
     api<DeveloperStatus>("GET", "/crm/developer/status"),
     api<{ events: BotEvent[] }>("GET", "/crm/developer/events?limit=150"),
     api<AiUsageAnalytics>("GET", "/crm/developer/usage"),
+    api<{ draft: PromptDraft | null }>("GET", "/crm/prompt-draft"),
   ]);
   state.developerStatus = status;
   state.botEvents = events.events;
   state.aiUsage = usage;
+  state.promptDraft = draft.draft;
   renderDeveloperMount();
 }
 
@@ -1912,6 +1944,27 @@ function wireDeveloperMount(): void {
     if (messages) messages.innerHTML = renderLabMessages();
   });
   document.getElementById("refreshBotEvents")?.addEventListener("click", () => refreshDeveloperEvents().catch((error) => toast(error.message, false)));
+  document.getElementById("applyPromptDraft")?.addEventListener("click", async () => {
+    try {
+      const { settings } = await api<{ settings: BotSettings }>("POST", "/crm/prompt-draft/apply", {});
+      if (state.developerStatus) state.developerStatus.settings = settings;
+      state.promptDraft = null;
+      renderDeveloperMount();
+      toast("Черновик применён — промпт обновлён");
+    } catch (error) {
+      toast((error as Error).message, false);
+    }
+  });
+  document.getElementById("rejectPromptDraft")?.addEventListener("click", async () => {
+    try {
+      await api("POST", "/crm/prompt-draft/reject", {});
+      state.promptDraft = null;
+      renderDeveloperMount();
+      toast("Черновик отклонён");
+    } catch (error) {
+      toast((error as Error).message, false);
+    }
+  });
   document.getElementById("botLabForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = event.target as HTMLFormElement;

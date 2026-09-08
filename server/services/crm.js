@@ -1817,6 +1817,11 @@ class CrmService {
       // ИИ-роутер готовых шаблонов (templates.js). По умолчанию включён;
       // выключение оставляет только regex-шаблоны.
       templateRouterEnabled: rows.bot_template_router_enabled !== "false",
+      // OFF по умолчанию: авто-патч из _calibratePromptFromReject сохраняется
+      // как черновик (bot_system_prompt_draft), а не сразу в живой промпт —
+      // см. applyPromptDraft/rejectPromptDraft. Включить можно осознанно,
+      // чтобы вернуть старое поведение автопубликации.
+      autoPublishPromptPatches: rows.bot_auto_publish_prompt_patches === "true",
       models: typeof this.ai?.listModels === "function"
         ? this.ai.listModels()
         : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),
@@ -1837,6 +1842,7 @@ class CrmService {
       bot_supervisor_enabled: String(payload.supervisorEnabled ?? current.supervisorEnabled),
       bot_supervisor_prompt: String(payload.supervisorPrompt ?? current.supervisorPrompt).trim().slice(0, 8000) || DEFAULT_SUPERVISOR_PROMPT,
       bot_template_router_enabled: String(payload.templateRouterEnabled ?? current.templateRouterEnabled),
+      bot_auto_publish_prompt_patches: String(payload.autoPublishPromptPatches ?? current.autoPublishPromptPatches),
     };
     const upsert = this.db.prepare(
       `INSERT INTO crm_settings (key, value) VALUES (?, ?)
@@ -2219,7 +2225,39 @@ prompt_patch — не больше двух коротких предложен�
     });
     const patch = String(result?.prompt_patch || "").trim().slice(0, 1000);
     if (!patch || settings.systemPrompt.includes(patch)) return;
-    const nextPrompt = `${settings.systemPrompt}\n\n${patch}`.slice(0, 16000);
+    const reasoning = String(result?.reasoning || "").slice(0, 2000);
+    const draft = {
+      at: new Date().toISOString(),
+      approvalId: Number(row.id),
+      conversationId: row.conversation_id ?? null,
+      reason,
+      patch,
+      reasoning,
+      previousPrompt: settings.systemPrompt,
+      nextPrompt: `${settings.systemPrompt}\n\n${patch}`.slice(0, 16000),
+    };
+    if (settings.autoPublishPromptPatches) {
+      this._applyPromptPatchNow(draft);
+      return;
+    }
+    // По умолчанию — только черновик. Живой промпт не трогаем, пока кто-то
+    // из админки не нажмёт «Применить» (см. applyPromptDraft/rejectPromptDraft).
+    // Новый черновик заменяет предыдущий непринятый — очередь из нескольких
+    // накопленных патчей усложнила бы обзор без явной пользы.
+    this.db.prepare(
+      `INSERT INTO crm_settings (key, value) VALUES ('bot_system_prompt_draft', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
+    ).run(JSON.stringify(draft));
+    this._logEvent(row.conversation_id, "info", "learning", "prompt.draft_created", "Черновик правки промпта ждёт подтверждения в админке", {
+      approvalId: Number(row.id),
+      patch,
+    });
+  }
+
+  // Общая точка фактической публикации патча в живой bot_system_prompt —
+  // используется и старым путём автопубликации (autoPublishPromptPatches),
+  // и applyPromptDraft() ниже, чтобы история/лог писались одинаково в обоих случаях.
+  _applyPromptPatchNow(draft) {
     const upsert = this.db.prepare(
       `INSERT INTO crm_settings (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`
@@ -2231,20 +2269,47 @@ prompt_patch — не больше двух коротких предложен�
     } catch {
       history = [];
     }
-    history.push({
-      at: new Date().toISOString(),
-      approvalId: Number(row.id),
-      reason,
-      patch,
-      reasoning: String(result?.reasoning || "").slice(0, 2000),
-      previousPrompt: settings.systemPrompt,
-    });
-    upsert.run("bot_system_prompt", nextPrompt);
+    history.push(draft);
+    upsert.run("bot_system_prompt", draft.nextPrompt);
     upsert.run("bot_system_prompt_history", JSON.stringify(history.slice(-200)));
-    this._logEvent(row.conversation_id, "info", "learning", "prompt.auto_calibrated", "Системный промпт обновлён", {
-      approvalId: Number(row.id),
-      patch,
+    this._logEvent(draft.conversationId ?? null, "info", "learning", "prompt.auto_calibrated", "Системный промпт обновлён", {
+      approvalId: draft.approvalId,
+      patch: draft.patch,
+      diffSizeChars: draft.patch.length,
     });
+  }
+
+  // Черновик правки промпта, ожидающий решения в админке (или null).
+  getPromptDraft() {
+    const row = this.db.prepare("SELECT value FROM crm_settings WHERE key = 'bot_system_prompt_draft'").get();
+    if (!row?.value) return null;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
+  }
+
+  applyPromptDraft() {
+    const draft = this.getPromptDraft();
+    if (!draft) throw new Error("Черновик не найден");
+    this._applyPromptPatchNow(draft);
+    this.db.prepare("DELETE FROM crm_settings WHERE key = 'bot_system_prompt_draft'").run();
+    this._logEvent(draft.conversationId ?? null, "info", "learning", "prompt.draft_applied", "Черновик правки промпта применён вручную", {
+      approvalId: draft.approvalId,
+      diffSizeChars: draft.patch.length,
+    });
+    return this.getSettings();
+  }
+
+  rejectPromptDraft() {
+    const draft = this.getPromptDraft();
+    if (!draft) throw new Error("Черновик не найден");
+    this.db.prepare("DELETE FROM crm_settings WHERE key = 'bot_system_prompt_draft'").run();
+    this._logEvent(draft.conversationId ?? null, "info", "learning", "prompt.draft_rejected", "Черновик правки промпта отклонён", {
+      approvalId: draft.approvalId,
+    });
+    return { ok: true };
   }
 
   async testBot({ message, history = [], model, prompts = {} } = {}) {

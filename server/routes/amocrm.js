@@ -1,14 +1,8 @@
-const crypto = require("crypto");
 const express = require("express");
 const config = require("../config");
 const logger = require("../logger");
 const { parseAmoWebhooks } = require("../services/amocrm");
-
-function safeEqual(a, b) {
-  const x = Buffer.from(String(a || ""));
-  const y = Buffer.from(String(b || ""));
-  return x.length === y.length && crypto.timingSafeEqual(x, y);
-}
+const { matchesCurrentOrNext } = require("../lib/token-rotation");
 
 function createAmoCrmRouter({ crm }) {
   const router = express.Router();
@@ -19,7 +13,7 @@ function createAmoCrmRouter({ crm }) {
     (req, res) => {
       if (config.amocrm.webhookSecret) {
         const supplied = req.params.secret || req.get("x-webhook-secret");
-        if (!safeEqual(supplied, config.amocrm.webhookSecret)) {
+        if (!matchesCurrentOrNext(supplied, config.amocrm.webhookSecret, config.amocrm.webhookSecretNext)) {
           return res.status(401).json({ ok: false, error: "invalid_secret" });
         }
       }
@@ -42,4 +36,4 @@ function createAmoCrmRouter({ crm }) {
   return router;
 }
 
-module.exports = { createAmoCrmRouter, safeEqual };
+module.exports = { createAmoCrmRouter };

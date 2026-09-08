@@ -14,6 +14,7 @@ const multer = require("multer");
 const sharp = require("sharp");
 const config = require("../config");
 const logger = require("../logger");
+const { matchesCurrentOrNext } = require("../lib/token-rotation");
 const { transaction, logPriceChange } = require("../db");
 const { normalizedKey, matchKey, normalizeStorage, slugify } = require("../lib/normalize");
 const { GROUPS, CATEGORY_SUGGESTIONS, guessGroup } = require("../lib/groups");
@@ -377,7 +378,7 @@ function createAdminRouter({ db, crm }) {
       return res.status(503).json({ error: "admin_not_configured", message: "Задайте ADMIN_TOKEN или ADMIN_USERNAME/ADMIN_PASSWORD_HASH в .env" });
     }
     const headerToken = req.get("x-admin-token") || (req.get("authorization") || "").replace(/^Bearer\s+/i, "");
-    if (config.admin.token && headerToken && safeEqual(headerToken, config.admin.token)) {
+    if (config.admin.token && headerToken && matchesCurrentOrNext(headerToken, config.admin.token, config.admin.tokenNext)) {
       return next();
     }
     if (config.features.adminLogin && checkSession(req)) return next();

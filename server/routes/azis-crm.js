@@ -1,12 +1,6 @@
-const crypto = require("crypto");
 const express = require("express");
 const config = require("../config");
-
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a || ""));
-  const right = Buffer.from(String(b || ""));
-  return left.length === right.length && crypto.timingSafeEqual(left, right);
-}
+const { matchesCurrentOrNext } = require("../lib/token-rotation");
 
 function createAzisCrmRouter({ crm }) {
   const router = express.Router();
@@ -14,7 +8,7 @@ function createAzisCrmRouter({ crm }) {
     if (!config.azisCrm.integrationSecret) {
       return res.status(503).json({ ok: false, error: "azis_crm_not_configured" });
     }
-    if (!safeEqual(req.get("x-integration-secret"), config.azisCrm.integrationSecret)) {
+    if (!matchesCurrentOrNext(req.get("x-integration-secret"), config.azisCrm.integrationSecret, config.azisCrm.integrationSecretNext)) {
       return res.status(401).json({ ok: false, error: "invalid_secret" });
     }
     next();
@@ -65,4 +59,4 @@ function createAzisCrmRouter({ crm }) {
   return router;
 }
 
-module.exports = { createAzisCrmRouter, safeEqual };
+module.exports = { createAzisCrmRouter };

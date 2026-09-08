@@ -1,17 +1,9 @@
 // Telegram webhook. Отвечает быстро: проверил → сохранил задачу → 200.
 // Вся тяжёлая работа уходит в очередь (см. queue.js).
-const crypto = require("crypto");
 const express = require("express");
 const config = require("../config");
 const logger = require("../logger");
-
-// Сравнение секрета без утечки времени.
-function safeEqual(a, b) {
-  const bufA = Buffer.from(String(a || ""), "utf8");
-  const bufB = Buffer.from(String(b || ""), "utf8");
-  if (bufA.length !== bufB.length) return false;
-  return crypto.timingSafeEqual(bufA, bufB);
-}
+const { matchesCurrentOrNext } = require("../lib/token-rotation");
 
 // Публикация может быть text или caption (фото с подписью).
 function postText(post) {
@@ -26,7 +18,7 @@ function createTelegramRouter({ db, queue, crm }) {
       logger.error("telegram.webhook_secret_missing");
       return res.status(503).json({ ok: false, error: "webhook not configured" });
     }
-    if (!safeEqual(req.get("x-telegram-bot-api-secret-token"), config.telegram.webhookSecret)) {
+    if (!matchesCurrentOrNext(req.get("x-telegram-bot-api-secret-token"), config.telegram.webhookSecret, config.telegram.webhookSecretNext)) {
       logger.warn("telegram.bad_secret", { ip: req.ip });
       return res.status(401).json({ ok: false });
     }
@@ -86,4 +78,4 @@ function createTelegramRouter({ db, queue, crm }) {
   return router;
 }
 
-module.exports = { createTelegramRouter, safeEqual, postText };
+module.exports = { createTelegramRouter, postText };

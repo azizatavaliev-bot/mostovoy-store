@@ -15,6 +15,7 @@
 const crypto = require("crypto");
 const config = require("../config");
 const logger = require("../logger");
+const { matchesCurrentOrNext, matchesHmacCurrentOrNext } = require("../lib/token-rotation");
 
 // Права, которые реально нужны боту: базовый доступ к аккаунту + чтение и
 // отправка Direct-сообщений. Ничего лишнего (публикация постов, комментарии
@@ -210,15 +211,12 @@ async function sendDirectMessage({ accessToken, igUserId, recipientId, text }, f
 // точным байтам, которые пришли по сети (см. req.rawBody в webhook-роуте).
 function verifyWebhookSignature(rawBody, signatureHeader) {
   if (!config.meta.appSecret || !signatureHeader) return false;
-  const expected = crypto.createHmac("sha256", config.meta.appSecret).update(rawBody).digest("hex");
   const provided = String(signatureHeader).replace(/^sha256=/, "");
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(provided, "hex");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  return matchesHmacCurrentOrNext(rawBody, provided, config.meta.appSecret, config.meta.appSecretNext);
 }
 
 function verifyWebhookSubscription(query) {
-  if (query?.["hub.verify_token"] !== config.meta.webhookVerifyToken) return null;
+  if (!matchesCurrentOrNext(query?.["hub.verify_token"], config.meta.webhookVerifyToken, config.meta.webhookVerifyTokenNext)) return null;
   return query?.["hub.challenge"] || null;
 }
 

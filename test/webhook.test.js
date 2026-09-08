@@ -1,5 +1,6 @@
 // Переменные окружения задаём до загрузки config — он читается один раз.
 process.env.TELEGRAM_WEBHOOK_SECRET = "test-secret";
+process.env.TELEGRAM_WEBHOOK_SECRET_NEXT = "test-secret-next";
 process.env.TELEGRAM_CHANNEL_ID = "-1001";
 process.env.TELEGRAM_BOT_TOKEN = "test-token";
 
@@ -42,6 +43,20 @@ test("вебхук без правильного секрета отклоняе
   const res = await postUpdate(app.base, channelPostUpdate({ text: "Sony 5 slim 650$" }), "wrong");
   assert.equal(res.status, 401);
   assert.equal(app.db.prepare("SELECT COUNT(*) n FROM sync_jobs").get().n, 0);
+});
+
+test("B7: во время ротации вебхук принимает и старый, и новый (_NEXT) секрет одновременно", async (t) => {
+  const app = startApp();
+  t.after(app.close);
+
+  const withOld = await postUpdate(app.base, channelPostUpdate({ text: "Sony 5 slim 650$" }), "test-secret");
+  assert.equal(withOld.status, 200);
+
+  const withNext = await postUpdate(app.base, channelPostUpdate({ text: "Sony 5 slim 650$" }), "test-secret-next");
+  assert.equal(withNext.status, 200);
+
+  const withNeither = await postUpdate(app.base, channelPostUpdate({ text: "Sony 5 slim 650$" }), "neither-of-them");
+  assert.equal(withNeither.status, 401);
 });
 
 test("вебхук принимает channel_post и сразу ставит задачу в очередь", async (t) => {

@@ -40,6 +40,9 @@ const config = {
     botToken: process.env.TELEGRAM_BOT_TOKEN || "",
     channelId: process.env.TELEGRAM_CHANNEL_ID || "",
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",
+    // Ротация без даунтайма (docs/ROTATION.md): пока задан _NEXT, вебхук
+    // принимает оба значения секрета.
+    webhookSecretNext: process.env.TELEGRAM_WEBHOOK_SECRET_NEXT || "",
     apiBase: process.env.TELEGRAM_API_BASE || "https://api.telegram.org",
   },
 
@@ -48,6 +51,7 @@ const config = {
     accessToken: process.env.AMOCRM_ACCESS_TOKEN || "",
     amojoBaseUrl: (process.env.AMOJO_BASE_URL || "https://amojo.amocrm.ru").replace(/\/+$/, ""),
     webhookSecret: process.env.AMOCRM_WEBHOOK_SECRET || "",
+    webhookSecretNext: process.env.AMOCRM_WEBHOOK_SECRET_NEXT || "",
     // Пока идёт проверка интеграции, автоответы из amoCRM разрешены только
     // перечисленным через запятую номерам. Пустое значение — работа со всеми.
     testPhone: process.env.AMOCRM_TEST_PHONE || "",
@@ -56,6 +60,7 @@ const config = {
   azisCrm: {
     baseUrl: (process.env.AZIS_CRM_BASE_URL || "").replace(/\/+$/, ""),
     integrationSecret: process.env.AZIS_CRM_INTEGRATION_SECRET || "",
+    integrationSecretNext: process.env.AZIS_CRM_INTEGRATION_SECRET_NEXT || "",
     projectId: process.env.AZIS_CRM_PROJECT_ID || "",
     timeoutMs: int(process.env.AZIS_CRM_TIMEOUT_MS, 10000),
   },
@@ -72,6 +77,7 @@ const config = {
     mediaUrl: (process.env.GREENAPI_MEDIA_URL || "").replace(/\/+$/, ""),
     // Green API шлёт вебхук с Authorization: Bearer <webhookUrlToken>.
     webhookToken: process.env.GREENAPI_WEBHOOK_TOKEN || "",
+    webhookTokenNext: process.env.GREENAPI_WEBHOOK_TOKEN_NEXT || "",
     timeoutMs: int(process.env.GREENAPI_TIMEOUT_MS, 20000),
   },
 
@@ -84,6 +90,7 @@ const config = {
     apiKey: process.env.WABERY_API_KEY || "",
     apiBaseUrl: (process.env.WABERY_API_BASE_URL || "https://api.wabery.com/v1").replace(/\/+$/, ""),
     webhookSecret: process.env.WABERY_WEBHOOK_SECRET || "",
+    webhookSecretNext: process.env.WABERY_WEBHOOK_SECRET_NEXT || "",
     instagramChannelId: process.env.WABERY_INSTAGRAM_CHANNEL_ID || "",
   },
 
@@ -117,8 +124,12 @@ const config = {
   meta: {
     appId: process.env.META_APP_ID || "",
     appSecret: process.env.META_APP_SECRET || "",
+    // Только для верификации подписи вебхука (HMAC) — OAuth-обмен токена
+    // всегда идёт по appSecret, ротацию Meta для него не поддерживает.
+    appSecretNext: process.env.META_APP_SECRET_NEXT || "",
     redirectUri: process.env.META_REDIRECT_URI || "",
     webhookVerifyToken: process.env.META_WEBHOOK_VERIFY_TOKEN || "",
+    webhookVerifyTokenNext: process.env.META_WEBHOOK_VERIFY_TOKEN_NEXT || "",
     // Три разных хоста Instagram API with Instagram Login — не перепутать:
     // authBaseUrl — куда редиректим браузер пользователя на авторизацию;
     // tokenBaseUrl — обмен code на короткоживущий токен (api.instagram.com);
@@ -242,6 +253,7 @@ const config = {
   // Без обоих способов раздел выключен целиком — дефолтов нет.
   admin: {
     token: process.env.ADMIN_TOKEN || "",
+    tokenNext: process.env.ADMIN_TOKEN_NEXT || "",
     username: process.env.ADMIN_USERNAME || "",
     passwordHash: process.env.ADMIN_PASSWORD_HASH || "",
     // Подпись сессионных cookie. Без него вход по паролю недоступен —

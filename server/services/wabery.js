@@ -9,8 +9,8 @@
 // Схема подтверждена официальной OpenAPI-спекой (https://api.wabery.com/v1/openapi.json)
 // и страницами /docs/sending-messages/, /docs/webhooks/ по состоянию на 2026.
 
-const crypto = require("crypto");
 const config = require("../config");
+const { matchesHmacCurrentOrNext } = require("../lib/token-rotation");
 
 class WaberyApiError extends Error {
   constructor(code, message, { status, cause } = {}) {
@@ -35,11 +35,8 @@ function requireConfigured() {
 // HMAC-SHA256 по СЫРОМУ телу запроса (см. verify в app.js — req.rawBody).
 function verifyWebhookSignature(rawBody, signatureHeader) {
   if (!config.wabery.webhookSecret || !signatureHeader) return false;
-  const expected = crypto.createHmac("sha256", config.wabery.webhookSecret).update(rawBody).digest("hex");
   const provided = String(signatureHeader).replace(/^sha256=/, "");
-  const a = Buffer.from(expected, "hex");
-  const b = Buffer.from(provided, "hex");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  return matchesHmacCurrentOrNext(rawBody, provided, config.wabery.webhookSecret, config.wabery.webhookSecretNext);
 }
 
 // Отправка обычного текстового сообщения в рамках уже открытой переписки

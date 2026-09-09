@@ -846,7 +846,7 @@ function specFallback(specifications, key) {
 // наличия из админки товара, который параллельно ещё связан с постом
 // канала, тихо игнорируется: search_catalog продолжает отвечать по
 // availability из того поста, admin.js её никогда не трогает.
-function getDedupedCatalogProducts(db) {
+function getDedupedCatalogProducts(db, { includeManual = false } = {}) {
   const products = db.prepare(
     `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
             mp.price, mp.currency, p.available,
@@ -865,6 +865,25 @@ function getDedupedCatalogProducts(db) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
+  // Товары без единой связи message_products (добавленные вручную через
+  // админку, не из Telegram-канала) INNER JOIN выше просто не увидит —
+  // search_catalog возвращал 0 результатов на весь такой товар вообще,
+  // хотя цена у него есть прямо в products (найдено на проде сразу после
+  // полной замены каталога на товары, добавленные через админку). Только
+  // для search_catalog (includeManual) — buildTelegramCatalogForAssistant
+  // осознанно показывает лишь товары из постов канала, origin='manual'
+  // туда никогда не подмешивался.
+  if (includeManual) {
+    const manualProducts = db.prepare(
+      `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
+              p.price, p.currency, p.available,
+              NULL AS telegram_message_id, p.updated_at AS telegram_message_updated_at
+         FROM products p
+        WHERE p.status != 'hidden' AND p.price IS NOT NULL AND p.origin = 'manual'
+          AND NOT EXISTS (SELECT 1 FROM message_products mp WHERE mp.product_id = p.id)`
+    ).all();
+    products.push(...manualProducts);
+  }
   // Дедуп нужен, чтобы у одного и того же товара не было двух записей с
   // РАЗНЫМИ ценами из-за сбоя синка (та самая причина завести этот дедуп —
   // 65 из 651 названий имели конфликт цены между карточками). Но ключ
@@ -917,7 +936,7 @@ function tokenMatchesHaystack(haystack, token) {
 // конкретного товара, вместо того чтобы придумывать цифры самой — цена и
 // наличие приходят из БД, а не генерируются текстом.
 function searchCatalogProducts(db, query) {
-  const products = getDedupedCatalogProducts(db);
+  const products = getDedupedCatalogProducts(db, { includeManual: true });
   const tokens = normalizeSearchText(query).split(" ").filter((t) => (t.length >= 2 || /^\d$/.test(t)) && !SEARCH_STOP_WORDS.has(t));
   if (!tokens.length) return [];
   const scored = products.map((p) => {
@@ -3752,6 +3771,7 @@ module.exports = {
   DEFAULT_TASK_PROMPT,
   DEFAULT_SUPERVISOR_PROMPT,
   buildTelegramCatalogForAssistant,
+  searchCatalogProducts,
   narrowCatalogForRequest,
   formatAssistantPrice,
   catalogRequestFromHistory,

@@ -4,6 +4,7 @@ const { createConnection } = require("../server/db");
 const {
   CrmService,
   buildTelegramCatalogForAssistant,
+  searchCatalogProducts,
   narrowCatalogForRequest,
   catalogRequestFromHistory,
   relevantProductsForContext,
@@ -101,6 +102,20 @@ test("каталог для ИИ отдаёт структурированные
   assert.deepEqual(catalog.pendingPosts, []);
   assert.equal(catalog.products.some((product) => product.name === "Старый товар сайта"), false);
   assert.equal(catalog.products.some((product) => product.name === "Whoop 5.0 Peak"), false);
+});
+
+test("search_catalog находит товар, добавленный вручную через админку без единого поста в Telegram", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, brand, category, price, currency, available, status, origin) VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'active', 'manual')"
+  ).run("garmin-fenix-8-51mm-test", "garmin-fenix-8-51mm-test", "Garmin Fenix 8 51mm", "Garmin", "Garmin", 899, "USD");
+
+  const results = searchCatalogProducts(db, "Garmin Fenix 8 51mm");
+  assert.equal(results.length, 1, "товар без message_products должен находиться поиском по каталогу");
+  assert.equal(results[0].name, "Garmin Fenix 8 51mm");
+  assert.equal(results[0].price, 899);
+  assert.equal(results[0].currency, "USD");
 });
 
 test("одинаковое название с разных постов канала не даёт ИИ двух карточек с разной ценой — остаётся только самая свежая", (t) => {

@@ -10,6 +10,7 @@ const {
   relevantProductsForContext,
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
+  enforceGroundedAvailabilityReply,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,
@@ -449,6 +450,129 @@ test("productsMentionRequest не считает товар «упомянуты
   });
   assert.equal(untouched, "Такой конфигурации iPhone 17 Pro в наличии нет.");
   assert.doesNotMatch(untouched, /Xiaomi/);
+});
+
+test("честное «Samsung Galaxy S20 нет» не подменяется другими Samsung, которые нестрого нашёл search_catalog", () => {
+  // Ровно баг с живого теста после замены каталога: search_catalog по
+  // «Samsung Galaxy S20» вернул Galaxy A57 и Fold 8 (совпали слова samsung и
+  // galaxy), все в наличии; модель честно ответила «S20 в наличии нет», а
+  // страховка подменила это на «Есть в наличии: A57, Fold 8…».
+  const groundedProducts = [
+    { name: "Samsung Galaxy A57 8/256GB", storage: null, color: null, priceKgs: 36520, available: true },
+    { name: "Samsung Galaxy Fold 8 256GB", storage: null, color: null, priceKgs: 121440, available: true },
+    { name: "Samsung Galaxy Fold 8 Ultra 512GB", storage: null, color: null, priceKgs: 149600, available: true },
+  ];
+  const reply = "К сожалению, Samsung Galaxy S20 в наличии нет — это уже старая модель, мы её не возим.";
+  const untouched = enforceGroundedAvailabilityReply({
+    reply,
+    groundedProducts,
+    request: "Есть Samsung Galaxy S20?",
+    context: "КЛИЕНТ: Есть Samsung Galaxy S20?",
+  });
+  assert.equal(untouched, reply);
+
+  // Тот же класс: iPhone 11 против iPhone 17 из каталога (общее слово iphone).
+  const iphoneReply = "iPhone 11 сейчас в наличии нет, модель снята с производства.";
+  const iphoneUntouched = enforceGroundedAvailabilityReply({
+    reply: iphoneReply,
+    groundedProducts: [{ name: "Apple iPhone 17 Pro 256GB eSIM", storage: "256GB", color: "оранжевый", priceKgs: 108000, available: true }],
+    request: "iPhone 11 в наличии?",
+    context: "КЛИЕНТ: iPhone 11 в наличии?",
+  });
+  assert.equal(iphoneUntouched, iphoneReply);
+
+  // И для пути без search_catalog (старая эвристика по подборке) — то же самое.
+  const selection = `АКТУАЛЬНЫЙ КАТАЛОГ:\n${JSON.stringify({
+    products: [
+      { name: "Samsung Galaxy Fold 8 256GB", price: 1380, currency: "USD", priceKgs: 121440, available: true },
+      { name: "Samsung Galaxy A57 8/256GB", price: 415, currency: "USD", priceKgs: 36520, available: true },
+    ],
+  })}`;
+  const untouchedLegacy = enforceCatalogAvailabilityReply({
+    reply,
+    request: "Есть Samsung Galaxy S20?",
+    context: "КЛИЕНТ: Есть Samsung Galaxy S20?",
+    selection,
+  });
+  assert.equal(untouchedLegacy, reply);
+});
+
+test("страховка по search_catalog по-прежнему чинит «нет» на ту модель, которую тул вернул доступной", () => {
+  const groundedProducts = [
+    { name: "Apple iPhone 17 Pro 256GB eSIM", storage: "256GB", color: "оранжевый", priceKgs: 108000, available: true },
+    { name: "Apple iPhone 17 Pro 512GB eSIM", storage: "512GB", color: "оранжевый", priceKgs: 125000, available: true },
+  ];
+  const fixed = enforceGroundedAvailabilityReply({
+    reply: "Такой конфигурации iPhone 17 Pro 256 сейчас нет.",
+    groundedProducts,
+    request: "iPhone 17 Pro 256 гб есть?",
+    context: "КЛИЕНТ: iPhone 17 Pro 256 гб есть?",
+  });
+  assert.match(fixed, /Есть в наличии/);
+  assert.match(fixed, /iPhone 17 Pro 256GB/);
+  assert.doesNotMatch(fixed, /512GB/, "512 клиент не спрашивал");
+
+  // Уточняющий вопрос без цифр — модель берётся из реплик клиента в истории.
+  const fixedFollowUp = enforceGroundedAvailabilityReply({
+    reply: "Сейчас в наличии нет.",
+    groundedProducts,
+    request: "а в наличии?",
+    context: "КЛИЕНТ: iPhone 17 Pro 256\nКОНСУЛЬТАНТ: 108 000 сом\nКЛИЕНТ: а в наличии?",
+  });
+  assert.match(fixedFollowUp, /Есть в наличии/);
+  assert.match(fixedFollowUp, /iPhone 17 Pro 256GB/);
+
+  // «51 мм» клиента совпадает с «51mm» в названии.
+  const fixedGarmin = enforceGroundedAvailabilityReply({
+    reply: "Fenix 8 на 51 мм в наличии нет.",
+    groundedProducts: [{ name: "Garmin Fenix 8 51mm AMOLED Sapphire", storage: null, color: null, priceKgs: 84480, available: true }],
+    request: "Garmin Fenix 8 51 мм есть?",
+  });
+  assert.match(fixedGarmin, /Есть в наличии/);
+});
+
+test("цифры из многострочной реплики бота в истории не считаются моделью, которую назвал клиент", () => {
+  // Приветствие бота — многострочное меню («🏃 Whoop 5.0», «Ray-Ban Meta Gen 2»).
+  // Если фильтровать историю по строкам, а не по блокам говорящего, эти
+  // цифры попадают в «текст клиента», и страховка требует, чтобы товар
+  // содержал 5, 0 и 2 — то есть молчит на настоящую галлюцинацию.
+  const groundedProducts = [{ name: "Apple iPhone 17 Pro 256GB физическая SIM + eSIM", storage: "256GB", color: "белый/синий", priceKgs: 105600, available: true }];
+  const fixed = enforceGroundedAvailabilityReply({
+    reply: "К сожалению, синий/белый в этой конфигурации сейчас нет.",
+    groundedProducts,
+    request: "С физической есть синий белый?",
+    context: "КЛИЕНТ: Привет\nКОНСУЛЬТАНТ: Здравствуйте!\n🏃 Whoop 5.0\n🕶️ Ray-Ban Meta Gen 2\nКакую технику хотите?\nКЛИЕНТ: С физической есть синий белый?",
+  });
+  assert.match(fixed, /Есть в наличии/);
+  assert.match(fixed, /белый\/синий/);
+});
+
+test("search_catalog прямо говорит модели, что запрошенной модели нет, если совпали только похожие товары", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, brand, category, price, currency, available, status, origin) VALUES (?, ?, ?, 'Samsung', 'Samsung', ?, 'USD', 1, 'active', 'manual')"
+  );
+  insert.run("fold-8-test", "fold-8-test", "Samsung Galaxy Fold 8 256GB", 1380);
+  insert.run("a57-test", "a57-test", "Samsung Galaxy A57 8/256GB", 415);
+  const results = {};
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async ({ executeTool }) => {
+      results.s20 = await executeTool("search_catalog", { query: "Samsung Galaxy S20" });
+      results.fold = await executeTool("search_catalog", { query: "Samsung Galaxy Fold 8 256" });
+      return "ок";
+    },
+  };
+  const crm = new CrmService({ db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0 });
+  await crm.testBot({ message: "Есть Samsung Galaxy S20?" });
+  assert.equal(results.s20.products.length, 2, "похожие товары всё равно возвращаются как альтернатива");
+  assert.match(results.s20.note, /такой модели в каталоге НЕТ/);
+  assert.equal(results.fold.note, undefined, "точное совпадение — без предупреждения");
+  assert.equal(results.fold.products[0].name, "Samsung Galaxy Fold 8 256GB");
+  const events = crm.listEvents().filter((event) => event.event === "tool.search_catalog");
+  // Fold 8 256 честно совпадает и с A57 8/256GB (токены 8 и 256) — оба точные.
+  assert.deepEqual(events.map((event) => event.details.exactCount).sort(), [0, 2]);
 });
 
 test("enforceCatalogPriceReply не подменяет ответ случайными товарами, если уверенного совпадения не нашлось", () => {

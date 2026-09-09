@@ -686,26 +686,56 @@ function enforceCatalogPriceReply({ reply, request, context = request, selection
 // возвращает ВСЕ кандидаты как есть — этого достаточно для «сузить
 // подборку», но недостаточно для «доверять ли странице целиком»).
 function productsMentionRequest(products, request, context = request) {
-  const normalize = (value) => String(value || "")
-    .toLocaleLowerCase("ru-RU")
-    .replace(/ё/g, "е")
-    .replace(/[^a-zа-я0-9]+/gu, " ")
-    .trim();
-  // Только строки клиента — если считать и «КОНСУЛЬТАНТ:», собственная более
-  // ранняя (и, возможно, ошибочная) фраза бота навсегда «подтверждает» сама
-  // себя на каждом следующем сообщении. На проде это выглядело так: бот один
-  // раз ошибочно предложил Xiaomi вместо iPhone, и дальше эта же страховка
-  // считала Xiaomi «упомянутым в разговоре», хотя клиент говорил только про
-  // iPhone — держало неверный ответ в цикле.
-  const customerText = String(context || request || "")
-    .split("\n")
-    .filter((line) => !line.startsWith("КОНСУЛЬТАНТ:"))
-    .join("\n");
-  const recent = normalize(`${customerText}\n${request || ""}`.slice(-1600));
-  const stop = new Set(["для", "есть", "стоит", "цена", "модель", "хочу", "нужен", "нужна", "нужно", "какой", "какая", "какие"]);
-  return products.some((product) =>
-    normalize(product.name).split(" ").some((token) => token.length >= 3 && !stop.has(token) && recent.includes(token))
+  return products.some((product) => productMatchesRequestedModel(product, request, context));
+}
+
+// Единицы измерения приклеиваем к числу с обеих сторон (256 гб → 256gb,
+// 51 мм → 51mm), чтобы «51 мм» клиента совпало с «51mm» в названии.
+function normalizeModelText(value) {
+  return normalizeSearchText(
+    String(value || "")
+      .toLocaleLowerCase("ru-RU")
+      .replace(/(\d+)\s*(?:гб|gb)/gu, "$1gb")
+      .replace(/(\d+)\s*(?:тб|tb)/gu, "$1tb")
+      .replace(/(\d+)\s*(?:мм|mm)/gu, "$1mm")
   );
+}
+
+// Только строки клиента — если считать и «КОНСУЛЬТАНТ:», собственная более
+// ранняя (и, возможно, ошибочная) фраза бота навсегда «подтверждает» сама
+// себя на каждом следующем сообщении. На проде это выглядело так: бот один
+// раз ошибочно предложил Xiaomi вместо iPhone, и дальше страховка считала
+// Xiaomi «упомянутым в разговоре», хотя клиент говорил только про iPhone.
+// Реплика бота многострочная (приветствие с меню «Whoop 5.0», «Gen 2»…),
+// поэтому режем историю на блоки по говорящему, а не по строкам — иначе
+// цифры из меню бота считались бы «моделью, которую назвал клиент».
+function customerOnlyText(request, context = request) {
+  const customerText = String(context || request || "")
+    .split(/^(?=КЛИЕНТ:|КОНСУЛЬТАНТ:)/mu)
+    .filter((block) => !block.startsWith("КОНСУЛЬТАНТ:"))
+    .join("\n");
+  return `${customerText}\n${request || ""}`.slice(-1600);
+}
+
+// Страховки подменяют «в наличии нет» списком доступных товаров — делать это
+// можно только если доступный товар и есть та модель, о которой спросил
+// клиент. И search_catalog, и relevantProductsForContext ищут нестрого, по
+// любым общим словам: на «Samsung Galaxy S20» приходят Galaxy Fold 8 и A57
+// (все в наличии), и честное «S20 нет» превращалось в «Есть в наличии:
+// Fold 8…» (найдено живым тестом после замены каталога). Токены с цифрами —
+// это и есть «какая именно модель» (s20, 17, 256gb, 51mm, hs09), слова без
+// цифр (samsung, galaxy, iphone) общие для целой линейки. Правило: если
+// клиент назвал модель цифрами — ВСЕ такие токены (из последнего сообщения,
+// а если там их нет — из его реплик в истории) должны быть в названии
+// товара; без цифр достаточно общего слова длиной от 3 символов.
+function productMatchesRequestedModel(product, request, context = request) {
+  const haystack = normalizeModelText(`${product?.name || ""} ${product?.storage || ""} ${product?.color || ""}`);
+  const modelTokens = (text) => normalizeModelText(text).split(" ").filter((token) => /\d/.test(token));
+  const latest = modelTokens(request);
+  const tokens = latest.length ? latest : modelTokens(customerOnlyText(request, context));
+  if (tokens.length) return tokens.every((token) => tokenMatchesHaystack(haystack, token));
+  const recent = normalizeModelText(customerOnlyText(request, context));
+  return haystack.split(" ").some((token) => token.length >= 3 && !SEARCH_STOP_WORDS.has(token) && recent.includes(token));
 }
 
 // Тот же класс галлюцинации, что и enforceCatalogAvailabilityReply ниже
@@ -719,10 +749,11 @@ function productsMentionRequest(products, request, context = request) {
 // products уже те самые, что видела модель для этого ответа).
 const CLAIMS_UNAVAILABLE_PATTERN = /(?:подтверждённых|подтвержденных|в\s+наличии|сейчас)[^.!?\n]{0,40}(?:^|\s)нет(?=[\s.,!?]|$)|(?:^|\s)нет\s+в\s+наличии(?=[\s.,!?]|$)|отсутствует\s+в\s+наличии|товар[а-я]*\s+закончил/iu;
 
-function enforceGroundedAvailabilityReply({ reply, groundedProducts }) {
+function enforceGroundedAvailabilityReply({ reply, groundedProducts, request, context = request }) {
   const output = String(reply || "");
   if (!CLAIMS_UNAVAILABLE_PATTERN.test(output)) return reply;
-  const available = (groundedProducts || []).filter((product) => product.available);
+  // Только та модель, что спросил клиент — см. productMatchesRequestedModel.
+  const available = (groundedProducts || []).filter((product) => product.available && productMatchesRequestedModel(product, request, context));
   if (!available.length) return reply;
   const lines = available.slice(0, 5).map((product) => {
     const details = [product.storage, product.color].filter(Boolean).join(", ");
@@ -2314,7 +2345,7 @@ prompt_patch — не больше двух коротких предложен�
       // «Нет в наличии» вопреки собственным результатам search_catalog —
       // проверяем по ним напрямую, не через старую эвристику (см. коммент
       // у enforceGroundedAvailabilityReply).
-      reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
+      reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts, request: text, context: catalogRequest });
       reply = enforceGroundedUnavailabilityReply({ reply, groundedProducts: generated.groundedProducts });
     }
     this._logEvent(null, "info", "laboratory", "lab.reply_generated", "Лаборатория получила ответ", {
@@ -2368,17 +2399,26 @@ prompt_patch — не больше двух коротких предложен�
             groundedProductNames.add(p.name);
             groundedProductsByName.set(p.name, p);
           });
+          // Поиск нестрогий: на «Samsung Galaxy S20» приходят Fold 8 и A57 по
+          // словам samsung/galaxy. Если ни один результат не совпал с самой
+          // моделью из запроса — говорим это модели прямо, чтобы она не
+          // приняла похожие товары за «есть в наличии».
+          const exactCount = products.filter((p) => productMatchesRequestedModel(p, args?.query)).length;
           this._logEvent(conversationId, "info", "generation", "tool.search_catalog", "Модель запросила каталог через инструмент", {
             query: args?.query,
             resultCount: products.length,
+            exactCount,
             resultNames: products.slice(0, 5).map((p) => p.name),
           });
+          const note = products.length && !exactCount
+            ? `Точного совпадения с запросом «${args?.query}» нет — такой модели в каталоге НЕТ. Ниже только похожие товары: скажи клиенту, что запрошенной модели нет, и предложи их как альтернативу.`
+            : undefined;
           // Ровно один товар в результате — значит search_catalog сузил
           // запрос до конкретной модели+цвета+памяти с ценой, а не отдал
           // список кандидатов. Это и есть событие «сделка сконфигурирована»,
           // а не мнение модели о том, что она уже всё выбрала.
-          if (products.length === 1) lastExactProduct = products[0];
-          return { products };
+          if (products.length === 1 && exactCount) lastExactProduct = products[0];
+          return note ? { note, products } : { products };
         },
         onUsage,
       });
@@ -3392,7 +3432,7 @@ prompt_patch — не больше двух коротких предложен�
         reply = enforceCatalogPriceReply({ reply, request: customerRequest, context: catalogRequest, selection });
         reply = enforceCatalogAvailabilityReply({ reply, request: customerRequest, context: catalogRequest, selection });
       } else {
-        reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts });
+        reply = enforceGroundedAvailabilityReply({ reply, groundedProducts: generated.groundedProducts, request: customerRequest, context: catalogRequest });
       }
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) {
         this._logEvent(conversationId, "info", "generation", "generation.stale_discarded", "Черновик для устаревшего сообщения не отправлен", {
@@ -3778,6 +3818,7 @@ module.exports = {
   relevantProductsForContext,
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
+  enforceGroundedAvailabilityReply,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,

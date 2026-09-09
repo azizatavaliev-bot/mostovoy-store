@@ -497,6 +497,36 @@ test("честное «Samsung Galaxy S20 нет» не подменяется �
   assert.equal(untouchedLegacy, reply);
 });
 
+test("голый номер модели не совпадает с чужим товаром с той же цифрой (iPhone 11 ≠ Series 11, PlayStation 4 ≠ AirPods 4)", () => {
+  // Живой тест после первой правки: «iPhone 11 в наличии?» → «Есть в наличии:
+  // Apple Watch Series 11, iPad 11…», «PlayStation 4» → AirPods 4,
+  // «AirPods 2» → AirPods Pro 2, «Xiaomi 12» → Poco X8 12/512GB.
+  const cases = [
+    { request: "iPhone 11 в наличии?", products: ["Apple Watch Series 11 42mm", "iPad 11 128GB Wi-Fi", "iPad Air M4 11\" 128GB Wi-Fi"] },
+    { request: "PlayStation 4 в наличии?", products: ["AirPods 4", "DJI Pocket 4 Standard", "Garmin Venu 4 41mm"] },
+    { request: "AirPods 2 есть в наличии?", products: ["AirPods Pro 2 USB-C", "AirPods Max 2", "Яндекс Станция Лайт 2"] },
+    { request: "Xiaomi 12 в наличии?", products: ["Poco X8 Pro Max 12/512GB"] },
+    { request: "iPhone 13 Pro есть в наличии?", products: ["iPad Pro M5 13\" 256GB Wi-Fi"] },
+    { request: "Яндекс Станция 2 в наличии?", products: ["Яндекс Станция Лайт 2", "Яндекс Станция Лайт 2 с часами"] },
+  ];
+  for (const { request, products } of cases) {
+    const reply = `К сожалению, этой модели сейчас в наличии нет.`;
+    const untouched = enforceGroundedAvailabilityReply({
+      reply,
+      groundedProducts: products.map((name) => ({ name, storage: null, color: null, priceKgs: 10000, available: true })),
+      request,
+    });
+    assert.equal(untouched, reply, request);
+  }
+  // Но та же модель с тем же словом перед номером — совпадает.
+  const fixed = enforceGroundedAvailabilityReply({
+    reply: "Сейчас в наличии нет.",
+    groundedProducts: [{ name: "Яндекс Станция Лайт 2", storage: null, color: null, priceKgs: 4700, available: true }],
+    request: "Станция Лайт 2 в наличии?",
+  });
+  assert.match(fixed, /Есть в наличии/);
+});
+
 test("страховка по search_catalog по-прежнему чинит «нет» на ту модель, которую тул вернул доступной", () => {
   const groundedProducts = [
     { name: "Apple iPhone 17 Pro 256GB eSIM", storage: "256GB", color: "оранжевый", priceKgs: 108000, available: true },
@@ -571,8 +601,8 @@ test("search_catalog прямо говорит модели, что запрош
   assert.equal(results.fold.note, undefined, "точное совпадение — без предупреждения");
   assert.equal(results.fold.products[0].name, "Samsung Galaxy Fold 8 256GB");
   const events = crm.listEvents().filter((event) => event.event === "tool.search_catalog");
-  // Fold 8 256 честно совпадает и с A57 8/256GB (токены 8 и 256) — оба точные.
-  assert.deepEqual(events.map((event) => event.details.exactCount).sort(), [0, 2]);
+  // A57 «8/256GB» не считается: перед «8» стоит «a57», а клиент сказал «fold 8».
+  assert.deepEqual(events.map((event) => event.details.exactCount).sort(), [0, 1]);
 });
 
 test("enforceCatalogPriceReply не подменяет ответ случайными товарами, если уверенного совпадения не нашлось", () => {

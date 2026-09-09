@@ -728,12 +728,29 @@ function customerOnlyText(request, context = request) {
 // клиент назвал модель цифрами — ВСЕ такие токены (из последнего сообщения,
 // а если там их нет — из его реплик в истории) должны быть в названии
 // товара; без цифр достаточно общего слова длиной от 3 символов.
+// Голый номер модели («11», «2», «4») сам по себе слишком общий: «iPhone 11»
+// совпадал с «Apple Watch Series 11», «AirPods 2» — с «AirPods Pro 2»,
+// «PlayStation 4» — с «AirPods 4» (живой тест). Поэтому для чистой цифры
+// сверяем ещё и слово перед ней: у клиента «iphone 11» — в названии тоже
+// должно стоять «iphone 11», а не «series 11». Память «256» против «256gb»
+// в названии считается тем же токеном.
 function productMatchesRequestedModel(product, request, context = request) {
   const haystack = normalizeModelText(`${product?.name || ""} ${product?.storage || ""} ${product?.color || ""}`);
-  const modelTokens = (text) => normalizeModelText(text).split(" ").filter((token) => /\d/.test(token));
+  const haystackTokens = haystack.split(" ");
+  const sameNumber = (candidate, digits) => candidate === digits || (candidate.startsWith(digits) && /^\d+[a-zа-я]+$/u.test(candidate));
+  const modelTokens = (text) => {
+    const words = normalizeModelText(text).split(" ").filter(Boolean);
+    return words.map((token, index) => ({ token, prev: index > 0 ? words[index - 1] : null })).filter(({ token }) => /\d/.test(token));
+  };
   const latest = modelTokens(request);
   const tokens = latest.length ? latest : modelTokens(customerOnlyText(request, context));
-  if (tokens.length) return tokens.every((token) => tokenMatchesHaystack(haystack, token));
+  if (tokens.length) {
+    return tokens.every(({ token, prev }) => {
+      const namedNumber = /^\d+$/.test(token) && prev && !/\d/.test(prev) && !SEARCH_STOP_WORDS.has(prev);
+      if (!namedNumber) return tokenMatchesHaystack(haystack, token);
+      return haystackTokens.some((candidate, index) => index > 0 && sameNumber(candidate, token) && haystackTokens[index - 1] === prev);
+    });
+  }
   const recent = normalizeModelText(customerOnlyText(request, context));
   return haystack.split(" ").some((token) => token.length >= 3 && !SEARCH_STOP_WORDS.has(token) && recent.includes(token));
 }

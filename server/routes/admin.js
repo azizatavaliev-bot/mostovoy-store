@@ -796,6 +796,43 @@ function createAdminRouter({ db, crm }) {
     }
   });
 
+  // Забор товаров из Telegram-канала по команде из CRM (автоматическое чтение
+  // канала выключено настройкой channelAutoSyncEnabled). Тянем всю публичную
+  // ленту, разбираем только новые/изменённые посты, а созданные товары сразу
+  // ставим в каталог: команду дал человек, отдельное «одобрить» не нужно.
+  router.post("/channel/import", async (req, res) => {
+    try {
+      const startedAt = db.prepare("SELECT datetime('now') AS now").get().now;
+      const imported = await syncPublicChannelPosts({ db, maxPages: Infinity });
+      const sync = req.app.locals.services.sync;
+      const rows = db.prepare("SELECT * FROM telegram_messages WHERE is_deleted = 0 AND last_sync_status != 'ok' ORDER BY id").all();
+      const stats = { created: 0, updated: 0, deactivated: 0, failed: 0 };
+      for (const row of rows) {
+        try {
+          const r = await sync.syncMessage({
+            chatId: row.telegram_chat_id,
+            messageId: row.telegram_message_id,
+            text: row.telegram_original_text,
+            messageUpdatedAt: row.telegram_message_updated_at,
+          });
+          stats.created += r.created || 0;
+          stats.updated += r.updated || 0;
+          stats.deactivated += r.deactivated || 0;
+        } catch (e) {
+          stats.failed++;
+          logger.error("admin.channel_import_message_failed", { messageId: row.telegram_message_id, error: e.message });
+        }
+      }
+      const activated = db.prepare(
+        "UPDATE products SET status = 'active', updated_at = datetime('now') WHERE status = 'needs_research' AND created_at >= ?"
+      ).run(startedAt).changes;
+      logger.info("admin.channel_import_done", { imported: imported.found, messages: rows.length, ...stats, activated });
+      res.json({ imported: imported.found, messages: rows.length, ...stats, activated });
+    } catch (e) {
+      handleError(res, e, "admin.channel_import_failed");
+    }
+  });
+
   // ОТКЛЮЧЕНО: публичная лента t.me/s/<channel> отдаёт пагинацию не до конца
   // истории — на этом канале she упирается в свою же ссылку before= уже
   // на ~59-71 сообщении, хотя реальная история значительно длиннее. «Не

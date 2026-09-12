@@ -1936,6 +1936,10 @@ class CrmService {
       // ИИ-роутер готовых шаблонов (templates.js). По умолчанию включён;
       // выключение оставляет только regex-шаблоны.
       templateRouterEnabled: rows.bot_template_router_enabled !== "false",
+      // Автоматическое чтение Telegram-канала (перед каждым ответом, раз в
+      // 6 часов и по вебхуку постов). По умолчанию выключено: товары из
+      // канала забираются по команде из CRM (POST /api/admin/channel/import).
+      channelAutoSyncEnabled: rows.channel_auto_sync_enabled === "true",
       models: typeof this.ai?.listModels === "function"
         ? this.ai.listModels()
         : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),
@@ -1956,6 +1960,7 @@ class CrmService {
       bot_supervisor_enabled: String(payload.supervisorEnabled ?? current.supervisorEnabled),
       bot_supervisor_prompt: String(payload.supervisorPrompt ?? current.supervisorPrompt).trim().slice(0, 8000) || DEFAULT_SUPERVISOR_PROMPT,
       bot_template_router_enabled: String(payload.templateRouterEnabled ?? current.templateRouterEnabled),
+      channel_auto_sync_enabled: String(payload.channelAutoSyncEnabled ?? current.channelAutoSyncEnabled),
     };
     const upsert = this.db.prepare(
       `INSERT INTO crm_settings (key, value) VALUES (?, ?)
@@ -3462,11 +3467,13 @@ prompt_patch — не больше двух коротких предложен�
     }
     // Перед каждым ответом берём свежую витрину Telegram-канала. Это поиск
     // по первоисточнику до вызова модели, а не ответ по памяти DeepSeek.
-    try {
-      const sync = await syncPublicChannelPosts({ db: this.db, maxPages: 1, fetchImpl: this.fetchImpl });
-      this._logEvent(conversationId, "info", "catalog", "catalog.channel_synced", "Перед ответом обновлены публикации канала", sync);
-    } catch (error) {
-      this._logEvent(conversationId, "warn", "catalog", "catalog.channel_sync_failed", error.message);
+    if (settings.channelAutoSyncEnabled) {
+      try {
+        const sync = await syncPublicChannelPosts({ db: this.db, maxPages: 1, fetchImpl: this.fetchImpl });
+        this._logEvent(conversationId, "info", "catalog", "catalog.channel_synced", "Перед ответом обновлены публикации канала", sync);
+      } catch (error) {
+        this._logEvent(conversationId, "warn", "catalog", "catalog.channel_sync_failed", error.message);
+      }
     }
     const catalog = buildTelegramCatalogForAssistant(this.db);
     const history = detail.messages.slice(-14).map((m) => ({

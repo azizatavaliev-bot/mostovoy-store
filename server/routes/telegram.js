@@ -67,6 +67,10 @@ function createTelegramRouter({ db, queue, crm }) {
 
     const text = postText(post);
     if (!text.trim()) return res.json({ ok: true, ignored: "empty_post" });
+    // Автосинк канала выключен — посты забираются только по команде из CRM.
+    if (typeof crm?.getSettings === "function" && !crm.getSettings().channelAutoSyncEnabled) {
+      return res.json({ ok: true, ignored: "channel_auto_sync_disabled" });
+    }
 
     queue.enqueue({
       chatId,

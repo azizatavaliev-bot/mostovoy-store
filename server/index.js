@@ -18,6 +18,10 @@ let orderCareTimer = null;
 let controlCenterHeartbeatTimer = null;
 
 async function syncFullChannelCatalog() {
+  if (!crm.getSettings().channelAutoSyncEnabled) {
+    logger.info("catalog.full_channel_sync_skipped", { reason: "channel_auto_sync_disabled" });
+    return;
+  }
   try {
     const result = await syncPublicChannelPosts({ db, maxPages: Infinity });
     logger.info("catalog.full_channel_synced", result);

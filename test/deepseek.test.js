@@ -75,7 +75,7 @@ test("chatTextWithTools: модель вызывает инструмент, п�
   const toolMessage = calls[1].messages.find((m) => m.role === "tool");
   assert.match(toolMessage.content, /"price":885/);
   // usage суммируется по обоим раундам, а не берётся только с последнего.
-  assert.deepEqual(usageTotal, { prompt_tokens: 30, completion_tokens: 13, total_tokens: 43 });
+  assert.deepEqual(usageTotal, { prompt_tokens: 30, completion_tokens: 13, total_tokens: 43, prompt_cache_hit_tokens: 0 });
 });
 
 test("chatTextWithTools: forceToolOnFirstRound шлёт tool_choice только на первом раунде, не на втором", async () => {

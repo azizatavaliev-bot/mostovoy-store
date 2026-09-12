@@ -167,7 +167,7 @@ class DeepSeekClient {
         .map((m) => ({ role: m.role, content: String(m.content) })),
       ...(user ? [{ role: "user", content: user }] : []),
     ];
-    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    const totalUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, prompt_cache_hit_tokens: 0 };
     let lastModel = model || this.model;
     for (let round = 0; round < maxRounds; round++) {
       await this.limiter.acquire();
@@ -186,6 +186,7 @@ class DeepSeekClient {
         totalUsage.prompt_tokens += Number(usage.prompt_tokens || 0);
         totalUsage.completion_tokens += Number(usage.completion_tokens || 0);
         totalUsage.total_tokens += Number(usage.total_tokens || 0);
+        totalUsage.prompt_cache_hit_tokens += Number(usage.prompt_cache_hit_tokens || 0);
       }
       lastModel = respondedModel || lastModel;
       if (!message.tool_calls?.length) {

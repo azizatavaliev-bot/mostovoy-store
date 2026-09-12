@@ -211,8 +211,9 @@ test("валюта ответа по умолчанию — сомы для лю
 
   const catalog = buildTelegramCatalogForAssistant(db);
   // Курс доллар→сом — фиксированный внутренний курс магазина, 88.
-  assert.match(catalog, /iPhone 15: цена по умолчанию 79\s200 с/);
-  assert.match(catalog, /MacBook Pro 16: цена по умолчанию 140\s800 с/);
+  assert.match(catalog, /^товар \| цена по умолчанию в сомах \(priceKgs\) \| USD \(priceUsd\) \| RUB \(priceRub\) \| KZT \(priceKzt\) \| наличие$/m);
+  assert.match(catalog, /^iPhone 15 \| 79200 \| 900 \| /m);
+  assert.match(catalog, /^MacBook Pro 16 \| 140800 \| 1600 \| \d+ \| \d+ \| в наличии$/m);
 
   const crm = new CrmService({ db, deepseek: { enabled: false }, amocrm: { enabled: false } });
   const prompt = crm._composePrompt(crm.getSettings(), "");

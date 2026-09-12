@@ -453,6 +453,11 @@ function classifyReactiveTemplate(text) {
 const ALLOWED_MODELS = MODELS.map((item) => item.id);
 const DEEPSEEK_INPUT_USD_PER_MILLION = 0.07;
 const DEEPSEEK_OUTPUT_USD_PER_MILLION = 1.10;
+// Повторяющийся префикс промпта (системный промпт с каталогом одинаков для
+// всех диалогов) DeepSeek отдаёт из кэша — по прайсу api-docs.deepseek.com
+// cache hit в ~50 раз дешевле cache miss. Без учёта этого стоимость в
+// админке была завышена в разы.
+const DEEPSEEK_CACHED_INPUT_USD_PER_MILLION = 0.006;
 
 // Для usage-события Control Center (provider отдельно от model) — по
 // префиксу id модели, тем же id, что в MODELS выше.
@@ -520,6 +525,39 @@ function catalogRequestFromHistory(history) {
     .filter((message) => message && message.content)
     .map((message) => `${message.role === "assistant" ? "КОНСУЛЬТАНТ" : "КЛИЕНТ"}: ${String(message.content).trim()}`)
     .join("\n");
+}
+
+// Что видит модель: та же подборка, что в selection, но таблицей с одной
+// строкой-заголовком. Сам selection остаётся JSON — его парсит код
+// (productsFromSelection, selectedCatalogProduct, страховки цены/наличия).
+// В JSON 13 ключей повторялись на каждый из ~200 товаров: почти половина
+// системного промпта уходила на слова "name"/"priceKgs"/"description": null,
+// а не на данные. Набор полей и значения — те же, что и раньше.
+function renderCatalogForPrompt(selection) {
+  const text = String(selection || "");
+  const match = text.match(/\{\s*"products"[\s\S]*\}/);
+  if (!match) return selection;
+  let data;
+  try {
+    data = JSON.parse(match[0]);
+  } catch {
+    return selection;
+  }
+  if (!data || !Array.isArray(data.products)) return selection;
+  const cell = (value) => (value == null || value === "" ? "-" : String(value).replace(/\|/g, "/").replace(/\s+/g, " ").trim());
+  const rows = data.products.map((p) => [
+    p.name, p.brand, p.category, p.storage, p.color,
+    `${p.price} ${p.currency}`, p.priceKgs, p.priceUsd, p.priceRub, p.priceKzt,
+    p.available ? "в наличии" : "нет в наличии", p.description,
+  ].map(cell).join(" | "));
+  const pending = Array.isArray(data.pendingPosts) ? data.pendingPosts : [];
+  return [
+    `АКТУАЛЬНЫЙ КАТАЛОГ ИЗ TELEGRAM-КАНАЛА (products — ${rows.length} позиций, по одной строке на товар, поля разделены «|»):`,
+    "name | brand | category | storage | color | price currency | priceKgs | priceUsd | priceRub | priceKzt | available | description",
+    ...rows,
+    pending.length ? `pendingPosts (свежие ещё не разобранные посты):\n${JSON.stringify(pending)}` : "pendingPosts: нет",
+    "Отвечай только по этому каталогу. Не говори, что обращался к товароведу или каналу.",
+  ].join("\n");
 }
 
 function productsFromSelection(selection) {
@@ -1078,12 +1116,26 @@ function buildTelegramCatalogForAssistant(db) {
        FROM products
       WHERE status != 'hidden' AND price IS NOT NULL
       ORDER BY updated_at DESC, id DESC
-      LIMIT 180`
+      LIMIT 400`
   ).all();
-  return snapshots.map((p) => {
-    const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`;
-    return `- ${title}: цена по умолчанию ${formatAssistantPrice(p.price, p.currency, "KGS")}; USD ${formatAssistantPrice(p.price, p.currency, "USD")}; RUB ${formatAssistantPrice(p.price, p.currency, "RUB")}; KZT ${formatAssistantPrice(p.price, p.currency, "KZT")}${p.available ? "" : " (нет в наличии)"}`;
-  }).join("\n");
+  // Одна строка на товар, подписи валют — один раз в заголовке, а не на
+  // каждой строке (раньше «цена по умолчанию …; USD …; RUB …; KZT …»
+  // повторялось на все ~200 позиций — треть текста каталога уходила на
+  // подписи). LIMIT был 180 — при большем каталоге хвост молча выпадал из
+  // промпта.
+  const rows = snapshots.map((p) => {
+    const title = `${p.official_name}${p.storage ? ` ${p.storage}` : ""}${p.color ? `, ${p.color}` : ""}`.replace(/\|/g, "/");
+    // Голые числа без разделителей тысяч и символов валют: «100 320 с» с
+    // неразрывным пробелом и «₸» режутся токенизатором на 2–3 токена
+    // каждое, а таких чисел четыре в каждой строке. Единицы — в заголовке.
+    const plain = (to) => roundAssistantPrice(convertAssistantPrice(p.price, p.currency, to), to);
+    return [title, plain("KGS"), plain("USD"), plain("RUB"), plain("KZT"), p.available ? "в наличии" : "нет в наличии"].join(" | ");
+  });
+  return [
+    `${rows.length} позиций, по одной строке на товар, поля разделены «|», цены — целые числа:`,
+    "товар | цена по умолчанию в сомах (priceKgs) | USD (priceUsd) | RUB (priceRub) | KZT (priceKzt) | наличие",
+    ...rows,
+  ].join("\n");
 }
 
 // hasStorage: у линейки бывает несколько объёмов памяти одной модели
@@ -1985,14 +2037,17 @@ class CrmService {
     const promptTokens = Math.max(0, Number(usage.prompt_tokens || 0));
     const completionTokens = Math.max(0, Number(usage.completion_tokens || 0));
     const totalTokens = Math.max(0, Number(usage.total_tokens || promptTokens + completionTokens));
+    const cachedTokens = Math.min(promptTokens, Math.max(0, Number(usage.prompt_cache_hit_tokens || 0)));
     const hasKnownPricing = String(model || "").startsWith("deepseek-");
-    const inputCost = hasKnownPricing ? promptTokens / 1_000_000 * DEEPSEEK_INPUT_USD_PER_MILLION : 0;
+    const inputCost = hasKnownPricing
+      ? ((promptTokens - cachedTokens) * DEEPSEEK_INPUT_USD_PER_MILLION + cachedTokens * DEEPSEEK_CACHED_INPUT_USD_PER_MILLION) / 1_000_000
+      : 0;
     const outputCost = hasKnownPricing ? completionTokens / 1_000_000 * DEEPSEEK_OUTPUT_USD_PER_MILLION : 0;
     this.db.prepare(
       `INSERT INTO ai_usage
         (conversation_id, task, model, prompt_tokens, completion_tokens, total_tokens,
-         input_cost_usd, output_cost_usd, total_cost_usd)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         cached_prompt_tokens, input_cost_usd, output_cost_usd, total_cost_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       conversationId == null ? null : Number(conversationId),
       task,
@@ -2000,6 +2055,7 @@ class CrmService {
       promptTokens,
       completionTokens,
       totalTokens,
+      cachedTokens,
       inputCost,
       outputCost,
       inputCost + outputCost
@@ -2036,6 +2092,7 @@ class CrmService {
   getAiUsageAnalytics() {
     const period = (modifier) => this.db.prepare(
       `SELECT COALESCE(SUM(total_tokens), 0) AS tokens,
+              COALESCE(SUM(cached_prompt_tokens), 0) AS cachedTokens,
               COALESCE(SUM(total_cost_usd), 0) AS cost
        FROM ai_usage ${modifier ? "WHERE created_at >= datetime('now', ?)" : ""}`
     ).get(...(modifier ? [modifier] : []));
@@ -2048,13 +2105,14 @@ class CrmService {
     ).get();
     const tasks = this.db.prepare(
       `SELECT task, model, COUNT(*) AS calls, SUM(total_tokens) AS tokens,
-              SUM(total_cost_usd) AS cost
+              SUM(cached_prompt_tokens) AS cachedTokens, SUM(total_cost_usd) AS cost
        FROM ai_usage GROUP BY task, model ORDER BY cost DESC, tokens DESC`
     ).all().map((row) => ({
       task: row.task,
       model: row.model,
       calls: Number(row.calls || 0),
       tokens: Number(row.tokens || 0),
+      cachedTokens: Number(row.cachedTokens || 0),
       costUsd: Number(row.cost || 0),
     }));
     const overview = this.db.prepare(
@@ -2082,7 +2140,7 @@ class CrmService {
         (SELECT COUNT(*) FROM crm_conversations WHERE source = 'whatsapp') AS whatsapp,
         (SELECT COUNT(*) FROM crm_conversations WHERE source = 'instagram') AS instagram`
     ).get();
-    const normalize = (row) => ({ tokens: Number(row.tokens || 0), costUsd: Number(row.cost || 0) });
+    const normalize = (row) => ({ tokens: Number(row.tokens || 0), cachedTokens: Number(row.cachedTokens || 0), costUsd: Number(row.cost || 0) });
     const { returningCustomers, ...customerCounts } = customers;
     return {
       overview: Object.fromEntries(Object.entries(overview).map(([key, value]) => [key, Number(value || 0)])),
@@ -2333,7 +2391,7 @@ prompt_patch — не больше двух коротких предложен�
       .join("\n");
     const finance = financeToolContext(financeRequest, selection);
     const generated = await this._chatWithCatalogTool({
-      system: this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n")),
+      system: this._composePrompt(settings, [renderCatalogForPrompt(selection), finance].filter(Boolean).join("\n\n")),
       messages: Array.isArray(history) ? history.slice(-20) : [],
       user: text,
       model: selectedModel,
@@ -3425,7 +3483,7 @@ prompt_patch — не больше двух коротких предложен�
     const financeRequest = history.filter((message) => message.role === "user").map((message) => message.content).join("\n");
     const finance = financeToolContext(financeRequest, selection);
     if (finance) this._recordFinanceRequest(conversationId, financeRequest, selection);
-    const prompt = this._composePrompt(settings, [selection, finance].filter(Boolean).join("\n\n"));
+    const prompt = this._composePrompt(settings, [renderCatalogForPrompt(selection), finance].filter(Boolean).join("\n\n"));
     this._logEvent(conversationId, "info", "generation", "generation.started", "ИИ формирует черновик", {
       model: settings.model,
       incomingMessageId,
@@ -3836,6 +3894,7 @@ module.exports = {
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   enforceGroundedAvailabilityReply,
+  renderCatalogForPrompt,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,

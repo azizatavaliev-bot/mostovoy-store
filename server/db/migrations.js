@@ -642,4 +642,8 @@ module.exports = [
       CREATE INDEX idx_crm_orders_conversation ON crm_orders(conversation_id);
     `,
   },
+  {
+    name: "024_ai_usage_cache",
+    sql: `ALTER TABLE ai_usage ADD COLUMN cached_prompt_tokens INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];

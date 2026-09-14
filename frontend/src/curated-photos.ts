@@ -29,6 +29,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /airpods 4/i, image: "/images/products/apple/airpods-4.webp" },  // AirPods 4
   { test: /airpods max/i, image: "/images/products/apple/airpods-max.webp" },  // AirPods Max
   { test: /beats/i, image: "/images/products/other/beats-studio-pro.webp" },  // Beats
+  { test: /wh-1000xm6|wh1000xm6/i, image: "/images/products/other/sony-wh-1000xm6.webp" },  // Sony WH-1000XM6
   { test: /s25 ultra/i, image: "/images/products/samsung/galaxy-s25-ultra.webp" },  // Galaxy S25 Ultra
   { test: /s25(?! ultra)/i, image: "/images/products/samsung/galaxy-s25.webp" },  // Galaxy S25
   { test: /s24|s23/i, image: "/images/products/samsung/galaxy-s24-ultra.webp" },  // Galaxy S24
@@ -39,6 +40,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /fenix/i, image: "/images/products/garmin/fenix-8.webp" },  // Garmin Fenix 8
   { test: /forerunner/i, image: "/images/products/garmin/forerunner-970.webp" },  // Garmin Forerunner
   { test: /venu|lily/i, image: "/images/products/garmin/venu-4.webp" },  // Garmin Venu
+  { test: /tactix 8/i, image: "/images/products/garmin/tactix-8.webp" },  // Garmin Tactix 8 (раньше общего правила ниже)
   { test: /marq|tactix|quatix/i, image: "/images/products/garmin/marq-adventurer.webp" },  // Garmin MARQ
   { test: /whoop/i, image: "/images/products/other/whoop-5.webp" },  // Whoop 5.0
   { test: /(станция|station).*(дуо|duo)/i, image: "/images/products/other/yandex-station-max-duo.webp" },
@@ -106,6 +108,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /instinct/i, image: "/images/products/garmin/garmin-instinct-3-amoled.webp" },
 
   // Redmi Note: раньше остальных Xiaomi, иначе «Note 13 Pro» перехватит правило «13 Pro».
+  { test: /note 15 pro/i, image: "/images/products/xiaomi/redmi-note-15-pro.webp" },  // Redmi Note 15 Pro
   { test: /note 14 pro\s*(\+|plus)/i, image: "/images/products/xiaomi/redmi-note-14-pro-plus.webp" },
   { test: /note 14 pro/i, image: "/images/products/xiaomi/redmi-note-14-pro.webp" },
   { test: /note 14/i, image: "/images/products/xiaomi/redmi-note-14.webp" },
@@ -123,6 +126,9 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /poco x6 pro/i, image: "/images/products/xiaomi/poco-x6-pro.webp" },
   { test: /poco x5 pro/i, image: "/images/products/xiaomi/poco-x5-pro.webp" },
   { test: /poco m7 pro/i, image: "/images/products/xiaomi/poco-m7-pro.webp" },
+  { test: /poco m7(?! pro)/i, image: "/images/products/xiaomi/poco-m7.webp" },  // POCO M7 (не пересекается с M7 Pro выше)
+  { test: /poco m8(?! pro)/i, image: "/images/products/xiaomi/poco-m8.webp" },  // POCO M8
+  { test: /poco x8 pro max/i, image: "/images/products/xiaomi/poco-x8-pro-max.webp" },  // POCO X8 Pro Max
   { test: /poco m6 pro/i, image: "/images/products/xiaomi/poco-m6-pro.webp" },
   { test: /poco m6/i, image: "/images/products/xiaomi/poco-m6.webp" },
   { test: /poco m5(?!s)/i, image: "/images/products/xiaomi/poco-m5.webp" },
@@ -130,6 +136,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
 
   // Планшеты Xiaomi.
   { test: /pad se 8\\.7/i, image: "/images/products/xiaomi/xiaomi-pad-se-8-7.webp" },
+  { test: /redmi pad 2 pro/i, image: "/images/products/xiaomi/redmi-pad-2-pro.webp" },  // Redmi Pad 2 Pro (раньше общего Redmi Pad 2 ниже)
   { test: /redmi pad 2/i, image: "/images/products/xiaomi/redmi-pad-2.webp" },
   { test: /pad 7/i, image: "/images/products/xiaomi/xiaomi-mi-pad-7.webp" },
   { test: /pad se/i, image: "/images/products/xiaomi/xiaomi-pad-se.webp" },
@@ -149,6 +156,7 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /redmi 13c/i, image: "/images/products/xiaomi/redmi-13c.webp" },
   { test: /redmi 12/i, image: "/images/products/xiaomi/redmi-12.webp" },
   { test: /redmi a3/i, image: "/images/products/xiaomi/redmi-a3.webp" },
+  { test: /redmi a7 pro/i, image: "/images/products/xiaomi/redmi-a7-pro.webp" },  // Redmi A7 Pro
 
   // Прочее.
   { test: /insta360/i, image: "/images/products/other/insta360-x3.webp" },

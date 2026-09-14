@@ -52,7 +52,9 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /(станция|station) 3/i, image: "/images/products/other/yandex-station-3.webp" },
   { test: /станция|yandex station/i, image: "/images/products/other/yandex-station-max.webp" },  // Яндекс Станция
   { test: /dji mic/i, image: "/images/products/other/dji-mic-3.webp" },  // DJI Mic
-  { test: /playstation|switch|steam deck/i, image: "/images/products/other/ps5-pro.webp" },  // Игровые приставки
+  { test: /steam deck/i, image: "/images/products/other/steam-deck.webp" },  // Valve Steam Deck (раньше общего правила)
+  { test: /switch/i, image: "/images/products/other/switch-2.webp" },  // Nintendo Switch
+  { test: /playstation/i, image: "/images/products/other/ps5-pro.webp" },  // PlayStation
   { test: /canon|instax/i, image: "/images/products/other/canon-g7x.webp" },  // Камеры
   { test: /oneblade|styleshaver/i, image: "/images/products/other/philips-oneblade.webp" },  // Philips-бритвы (раньше перед общим правилом ниже)
   { test: /dyson|philips|airwrap|airstrait/i, image: "/images/products/dyson/airwrap.webp" },  // Красота

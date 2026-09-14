@@ -17,6 +17,11 @@ const { slugForProduct } = require("./products");
 
 const MIN_CONFIDENCE_FOR_ACTIVE = 0.75;
 
+// Модели, которые магазин не продаёт — если модель извлечения всё же
+// упомянет их (например, из-за опечатки в посте), товар не создаётся.
+const BLOCKED_MODEL_PATTERNS = [/iphone\s*18/i, /google\s*pixel/i];
+const isBlockedModel = (name) => BLOCKED_MODEL_PATTERNS.some((re) => re.test(String(name || "")));
+
 const hashText = (text) => crypto.createHash("sha256").update(String(text ?? ""), "utf8").digest("hex");
 
 // Цена обязана буквально встречаться в тексте поста — защита от того,
@@ -136,6 +141,10 @@ class SyncService {
 
     // Каждый товар обрабатывается отдельно: одна ошибка не роняет остальные.
     for (const [index, item] of extraction.products.entries()) {
+      if (isBlockedModel(item.official_name)) {
+        logger.info("sync.product_blocked", { name: item.official_name, chatId, messageId });
+        continue;
+      }
       try {
         const outcome = await this._syncProduct({ item, index, messageRowId, text, chatId, messageId });
         touchedProductIds.push(outcome.productId);

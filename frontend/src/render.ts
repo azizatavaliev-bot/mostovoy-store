@@ -97,7 +97,7 @@ export function mediaHTML(p: Product, cls: string): string {
   // Для известных моделей показываем отобранное фото на белом фоне,
   // фото из базы остаётся запасным вариантом. forceSvg означает, что
   // вызывающий код намеренно просит векторный рендер (выбран другой цвет).
-  const curated = p.forceSvg ? "" : curatedPhoto(p.name || "");
+  const curated = p.forceSvg ? "" : curatedPhoto(p.name || "", p.color);
   const src = curated || feedSrc;
   // tone/lenses есть только у телефонов из data.js — по ним и выбираем рендер.
   const base = p.tone ? phoneSVG(p) : placeholderSVG(p);

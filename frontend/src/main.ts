@@ -125,7 +125,7 @@ function syncFavorites(): void {
 }
 
 function favoriteMedia(product: Product): string {
-  const src = curatedPhoto(product.name || "") || product.image || product.img || "";
+  const src = curatedPhoto(product.name || "", product.color) || product.image || product.img || "";
   return src
     ? `<img src="${optimizedImageUrl(src, 160)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`
     : `<span aria-hidden="true">${String(product.name || "?").trim().charAt(0).toUpperCase()}</span>`;
@@ -253,7 +253,7 @@ function productSearchText(product: Product): string {
 }
 
 function compactSearchMedia(product: Product): string {
-  const src = curatedPhoto(product.name || "") || product.image || product.img || "";
+  const src = curatedPhoto(product.name || "", product.color) || product.image || product.img || "";
   const fallback = String(product.name || "?").trim().charAt(0).toUpperCase();
   return `<span class="home-search__media">
     <span aria-hidden="true">${fallback}</span>
@@ -869,7 +869,7 @@ function applyProductLineQuery(query: string): void {
 function otherFamilyVisual(kind: (typeof OTHER_PRODUCT_FAMILIES)[number]["visual"], product: Product | null): string {
   // Кураторское фото на белом фоне в приоритете: сырые фото из базы бывают
   // со скриншотами прозрачности/коллажами поставщика (см. mediaHTML).
-  const source = (product && curatedPhoto(product.name || "")) || product?.image || product?.img;
+  const source = (product && curatedPhoto(product.name || "", product?.color)) || product?.image || product?.img;
   if (source) {
     return `<img class="product-family__image product-family__image--contain" src="${optimizedImageUrl(source, 640)}" alt="" loading="lazy" decoding="async" onerror="this.remove()" />`;
   }

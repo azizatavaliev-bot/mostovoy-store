@@ -173,8 +173,23 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /pocket ?3/i, image: "/images/products/other/dji-pocket-3.webp" },  // DJI Pocket 3
 ]
 
+// Фото под конкретный цвет модели — раньше все цвета одной модели показывали
+// одно и то же фото (первое подошедшее по CURATED_PHOTOS). Проверяется до
+// общего списка; если для этой пары модель+цвет фото нет, используется
+// обычный curatedPhoto(name) как раньше.
+export const CURATED_PHOTOS_BY_COLOR: Array<{ nameTest: RegExp; colorTest: RegExp; image: string }> = [
+  // iPhone 17 Pro / Pro Max — оба используют одни и те же цвета корпуса.
+  { nameTest: /iphone 17 pro/i, colorTest: /син|blue/i, image: "/images/products/apple/iphone-17-pro-blue.webp" },
+  { nameTest: /iphone 17 pro/i, colorTest: /оранж|orange/i, image: "/images/products/apple/iphone-17-pro-orange.webp" },
+  { nameTest: /iphone 17 pro/i, colorTest: /бел|silver|серебр/i, image: "/images/products/apple/iphone-17-pro-silver.webp" },
+]
+
 /** Путь к отобранному фото для товара — или пустая строка, если его нет. */
-export function curatedPhoto(name: string): string {
+export function curatedPhoto(name: string, color?: string | null): string {
   const value = String(name || "")
+  if (color) {
+    const byColor = CURATED_PHOTOS_BY_COLOR.find((row) => row.nameTest.test(value) && row.colorTest.test(String(color)))
+    if (byColor) return byColor.image
+  }
   return CURATED_PHOTOS.find((row) => row.test.test(value))?.image || ""
 }

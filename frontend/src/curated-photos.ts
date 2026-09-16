@@ -18,10 +18,10 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
   { test: /ipad air (7|8)?\s*m\d 11|ipad air 11/i, image: "/images/products/apple/ipad-air-11.webp" },  // iPad Air 11"
   { test: /^ipad 11/i, image: "/images/products/apple/ipad-11.webp" },  // iPad
   { test: /neo/i, image: "/images/products/apple/macbook-neo.webp" },  // MacBook Neo
-  { test: /air 13/i, image: "/images/products/apple/macbook-air-13.webp" },  // MacBook Air 13"
-  { test: /air 15/i, image: "/images/products/apple/macbook-air-15.webp" },  // MacBook Air 15"
-  { test: /pro 14/i, image: "/images/products/apple/macbook-pro-14.webp" },  // MacBook Pro 14"
-  { test: /pro 16/i, image: "/images/products/apple/macbook-pro-16.webp" },  // MacBook Pro 16"
+  { test: /\bair\b[^0-9]{0,14}13/i, image: "/images/products/apple/macbook-air-13.webp" },  // MacBook Air 13" (учитывает M4/M5 между "Air" и размером)
+  { test: /\bair\b[^0-9]{0,14}15/i, image: "/images/products/apple/macbook-air-15.webp" },  // MacBook Air 15"
+  { test: /\bpro\b[^0-9]{0,14}14/i, image: "/images/products/apple/macbook-pro-14.webp" },  // MacBook Pro 14"
+  { test: /\bpro\b[^0-9]{0,14}16/i, image: "/images/products/apple/macbook-pro-16.webp" },  // MacBook Pro 16"
   { test: /series 11/i, image: "/images/products/apple/watch-series-11.webp" },  // Apple Watch Series 11
   { test: /ultra 3/i, image: "/images/products/apple/watch-ultra-3.webp" },  // Apple Watch Ultra 3
   { test: /se 3/i, image: "/images/products/apple/watch-se-3.webp" },  // Apple Watch SE 3

@@ -135,8 +135,9 @@ const config = {
   deepseek: {
     apiKey: process.env.DEEPSEEK_API_KEY || "",
     baseUrl: (process.env.DEEPSEEK_BASE_URL || "https://api.deepseek.com").replace(/\/+$/, ""),
-    // deepseek-chat / deepseek-reasoner устарели 2026-07-24 → deepseek-v4-flash.
-    model: process.env.DEEPSEEK_MODEL || "deepseek-v4-flash",
+    // deepseek-chat / deepseek-reasoner устарели 2026-07-24; deepseek-v4-flash —
+    // теперь алиас, API отдаёт его как deepseek-flash (GET /models).
+    model: process.env.DEEPSEEK_MODEL || "deepseek-flash",
     timeoutMs: int(process.env.DEEPSEEK_TIMEOUT_MS, 60000),
     maxRetries: int(process.env.DEEPSEEK_MAX_RETRIES, 3),
     // Не больше N запросов в минуту — бережём квоту.

@@ -2,7 +2,8 @@ const config = require("../config");
 const { buildMapping, applyMapping, restoreMapping } = require("./privacy");
 
 const MODELS = [
-  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", provider: "deepseek" },
+  { id: "deepseek-flash", label: "DeepSeek Flash", provider: "deepseek" },
+  { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash (старый id)", provider: "deepseek" },
   { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro", provider: "deepseek" },
   { id: "gpt-5.6-sol", label: "ChatGPT 5.6", provider: "openai" },
   { id: "gemini-3.6-pro", label: "Gemini 3.6 Pro", provider: "gemini" },

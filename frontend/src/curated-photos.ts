@@ -4,6 +4,8 @@
 // Порядок важен: частные правила идут раньше общих ("17 Pro" перед "17").
 
 export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
+  { test: /iphone 18 pro max/i, image: "/images/products/apple/iphone-18-pro-max-black.webp" },  // iPhone 18 Pro Max
+  { test: /iphone 18 pro/i, image: "/images/products/apple/iphone-18-pro-black.webp" },  // iPhone 18 Pro
   { test: /iphone 17 pro/i, image: "/images/products/apple/iphone-17-pro.webp" },  // iPhone 17 Pro
   { test: /iphone 17(?! pro)/i, image: "/images/products/apple/iphone-17.webp" },  // iPhone 17
   { test: /iphone air/i, image: "/images/products/apple/iphone-air.webp" },  // iPhone Air
@@ -178,6 +180,17 @@ export const CURATED_PHOTOS: Array<{ test: RegExp; image: string }> = [
 // общего списка; если для этой пары модель+цвет фото нет, используется
 // обычный curatedPhoto(name) как раньше.
 export const CURATED_PHOTOS_BY_COLOR: Array<{ nameTest: RegExp; colorTest: RegExp; image: string }> = [
+  // iPhone 18 Pro Max — проверяется раньше iPhone 18 Pro (см. ниже), иначе
+  // "18 pro" внутри "18 pro max" перехватит совпадение первым.
+  { nameTest: /iphone 18 pro max/i, colorTest: /black|черн|чёрн/i, image: "/images/products/apple/iphone-18-pro-max-black.webp" },
+  { nameTest: /iphone 18 pro max/i, colorTest: /silver|серебр/i, image: "/images/products/apple/iphone-18-pro-max-silver.webp" },
+  { nameTest: /iphone 18 pro max/i, colorTest: /glacier|sky.?blue|голуб/i, image: "/images/products/apple/iphone-18-pro-max-glacier.webp" },
+  { nameTest: /iphone 18 pro max/i, colorTest: /burgundy|бордов/i, image: "/images/products/apple/iphone-18-pro-max-burgundy.webp" },
+  // iPhone 18 Pro
+  { nameTest: /iphone 18 pro/i, colorTest: /black|черн|чёрн/i, image: "/images/products/apple/iphone-18-pro-black.webp" },
+  { nameTest: /iphone 18 pro/i, colorTest: /silver|серебр/i, image: "/images/products/apple/iphone-18-pro-silver.webp" },
+  { nameTest: /iphone 18 pro/i, colorTest: /glacier|sky.?blue|голуб/i, image: "/images/products/apple/iphone-18-pro-glacier.webp" },
+  { nameTest: /iphone 18 pro/i, colorTest: /burgundy|бордов/i, image: "/images/products/apple/iphone-18-pro-burgundy.webp" },
   // iPhone 17 Pro / Pro Max — оба используют одни и те же цвета корпуса.
   { nameTest: /iphone 17 pro/i, colorTest: /син|blue/i, image: "/images/products/apple/iphone-17-pro-blue.webp" },
   { nameTest: /iphone 17 pro/i, colorTest: /оранж|orange/i, image: "/images/products/apple/iphone-17-pro-orange.webp" },

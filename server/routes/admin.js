@@ -647,8 +647,17 @@ function createAdminRouter({ db, crm }) {
         color: data.color !== undefined ? data.color : existing.color,
         variant: data.variant !== undefined ? data.variant : existing.variant,
       };
-      const existingStorageOptions = existing.specifications
-        ? parseJson(existing.specifications, {})["Память"]?.split(" / ")
+      // existing.specifications хранится как "{}" (непустая строка) у товаров
+      // с одним вариантом памяти — старая проверка `existing.specifications ?`
+      // считала это истиной и никогда не проверяла existing.storage, из-за
+      // чего storageOptions молча схлопывался в [] при любом частичном
+      // обновлении (например, только фото) и normalized_key терял объём
+      // памяти — 256/512 ГБ/1 ТБ одного цвета сталкивались как один и тот
+      // же ключ. Проверяем именно наличие ключа «Память» в распарсенных
+      // specifications, а не истинность самой JSON-строки.
+      const existingSpecifications = parseJson(existing.specifications, {});
+      const existingStorageOptions = existingSpecifications["Память"]
+        ? existingSpecifications["Память"].split(" / ")
         : existing.storage
           ? [existing.storage]
           : [];

@@ -17,8 +17,8 @@ function startApp({ extraction } = {}) {
   const sync = new SyncService({ db, deepseek, research });
   const queue = new SyncQueue({ db, syncService: sync });
   const app = createApp({ db, deepseek, research, queue });
-  // Автосинк канала по умолчанию выключен (товары забираются по команде из CRM);
-  // эти тесты проверяют именно путь «пост канала → очередь → товар».
+  // Эти тесты проверяют путь «пост канала → очередь → товар», поэтому автосинк
+  // включаем явно, независимо от значения по умолчанию.
   app.locals.services.crm.saveSettings({ channelAutoSyncEnabled: true });
   const server = app.listen(0);
   const port = server.address().port;
@@ -165,7 +165,7 @@ test("витрина собирается отдельно (frontend/), без �
 test("при выключенном автосинке пост канала игнорируется, а не ставится в очередь", async (t) => {
   const app = startApp();
   t.after(app.close);
-  app.db.prepare("DELETE FROM crm_settings WHERE key = 'channel_auto_sync_enabled'").run();
+  app.db.prepare("INSERT INTO crm_settings (key, value) VALUES ('channel_auto_sync_enabled', 'false') ON CONFLICT(key) DO UPDATE SET value = excluded.value").run();
 
   const res = await postUpdate(app.base, channelPostUpdate({ text: "Sony 5 slim 650$" }));
   assert.deepEqual(await res.json(), { ok: true, ignored: "channel_auto_sync_disabled" });

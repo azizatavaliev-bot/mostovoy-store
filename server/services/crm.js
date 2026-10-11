@@ -1937,9 +1937,9 @@ class CrmService {
       // выключение оставляет только regex-шаблоны.
       templateRouterEnabled: rows.bot_template_router_enabled !== "false",
       // Автоматическое чтение Telegram-канала (перед каждым ответом, раз в
-      // 6 часов и по вебхуку постов). По умолчанию выключено: товары из
-      // канала забираются по команде из CRM (POST /api/admin/channel/import).
-      channelAutoSyncEnabled: rows.channel_auto_sync_enabled === "true",
+      // 6 часов и по вебхуку постов). По умолчанию включено; выключить можно
+      // настройкой channel_auto_sync_enabled = "false".
+      channelAutoSyncEnabled: rows.channel_auto_sync_enabled !== "false",
       models: typeof this.ai?.listModels === "function"
         ? this.ai.listModels()
         : MODELS.map((item) => ({ ...item, enabled: item.provider === "deepseek" && Boolean(this.ai?.enabled) })),

@@ -14,6 +14,7 @@ const { RESEARCH_SYSTEM, buildResearchUser } = require("../../prompts");
 // Официальные домены брендов — высший приоритет источника.
 const OFFICIAL_DOMAINS = {
   sony: ["sony.com", "playstation.com", "sony.ru"],
+  garmin: ["garmin.com"],
   playstation: ["playstation.com"],
   nintendo: ["nintendo.com", "nintendo.co.uk"],
   valve: ["valvesoftware.com", "steampowered.com"],
@@ -44,6 +45,14 @@ function hostOf(url) {
 
 function registrable(host) {
   return host.split(".").slice(-2).join(".");
+}
+
+// Фото берём только с официальных доменов бренда (авторские права).
+function isOfficialUrl(url, brand) {
+  const host = hostOf(url);
+  const brandKey = String(brand || "").toLowerCase().replace(/[^a-z]/g, "");
+  const official = OFFICIAL_DOMAINS[brandKey] || [];
+  return official.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
 // 100 — офсайт бренда, 90 — домен с именем бренда, 40 — крупный ритейл, 10 — прочее.
@@ -171,13 +180,13 @@ class ProductResearchService {
     for (const q of queries) {
       const r = await this.provider.search(q, { limit: 6 });
       for (const item of r.results || []) {
-        if (item.url && !seenUrl.has(item.url)) {
+        if (item.url && !seenUrl.has(item.url) && isOfficialUrl(item.url, brand)) {
           seenUrl.add(item.url);
           results.push(item);
         }
       }
       for (const img of r.images || []) {
-        if (img.url) providerImages.push(img);
+        if (img.url && isOfficialUrl(img.url, brand)) providerImages.push(img);
       }
     }
     if (!results.length && !providerImages.length) {
@@ -255,4 +264,4 @@ class ProductResearchService {
   }
 }
 
-module.exports = { ProductResearchService, sourceScore, enforceAllowedUrls, OFFICIAL_DOMAINS };
+module.exports = { ProductResearchService, sourceScore, enforceAllowedUrls, isOfficialUrl, OFFICIAL_DOMAINS };

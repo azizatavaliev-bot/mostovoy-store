@@ -14,3 +14,16 @@ test("бренд без списка официальных доменов не 
   assert.equal(isOfficialUrl("https://www.amazon.com/dp/x", "Unknownbrand"), false);
   assert.equal(isOfficialUrl("https://www.amazon.com/dp/x", ""), false);
 });
+
+test("кириллический бренд и новые официальные домены распознаются", () => {
+  assert.equal(isOfficialUrl("https://alice.yandex.ru/station", "Яндекс"), true);
+  assert.equal(isOfficialUrl("https://www.dyson.com/x", "Dyson"), true);
+  assert.equal(isOfficialUrl("https://www.ray-ban.com/x", "Meta"), true);
+  assert.equal(isOfficialUrl("https://www.fitbit.com/x", "Google"), true);
+});
+
+test("у игр без бренда обложки берутся только из PlayStation", () => {
+  assert.equal(isOfficialUrl("https://store.playstation.com/x", null, "Игры"), true);
+  assert.equal(isOfficialUrl("https://www.amazon.com/x", null, "Игры"), false);
+  assert.equal(isOfficialUrl("https://store.playstation.com/x", null, "Наушники"), false);
+});

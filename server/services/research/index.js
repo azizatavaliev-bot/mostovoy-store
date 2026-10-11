@@ -21,11 +21,14 @@ const OFFICIAL_DOMAINS = {
   dji: ["dji.com"],
   philips: ["philips.com", "usa.philips.com"],
   amazon: ["amazon.com", "aboutamazon.com"],
-  meta: ["meta.com"],
+  meta: ["meta.com", "ray-ban.com", "oakley.com"],
+  dyson: ["dyson.com"],
+  whoop: ["whoop.com"],
+  yandex: ["yandex.ru", "yandex.com"],
   fujifilm: ["fujifilm.com", "instax.com"],
   apple: ["apple.com"],
   samsung: ["samsung.com"],
-  google: ["store.google.com"],
+  google: ["store.google.com", "fitbit.com"],
   xiaomi: ["mi.com", "xiaomi.com"],
 };
 
@@ -47,12 +50,23 @@ function registrable(host) {
   return host.split(".").slice(-2).join(".");
 }
 
+// Бренд в канале бывает кириллицей — приводим к ключу из OFFICIAL_DOMAINS.
+const BRAND_ALIASES = { "яндекс": "yandex" };
+// У игр бренда нет — официальные обложки берём из магазина PlayStation.
+const GAME_DOMAINS = ["playstation.com"];
+
+function officialDomainsFor(brand, category) {
+  const raw = String(brand || "").toLowerCase().trim();
+  const brandKey = BRAND_ALIASES[raw] || raw.replace(/[^a-z]/g, "");
+  if (OFFICIAL_DOMAINS[brandKey]) return OFFICIAL_DOMAINS[brandKey];
+  if (!brandKey && /игр|game/i.test(String(category || ""))) return GAME_DOMAINS;
+  return [];
+}
+
 // Фото берём только с официальных доменов бренда (авторские права).
-function isOfficialUrl(url, brand) {
+function isOfficialUrl(url, brand, category) {
   const host = hostOf(url);
-  const brandKey = String(brand || "").toLowerCase().replace(/[^a-z]/g, "");
-  const official = OFFICIAL_DOMAINS[brandKey] || [];
-  return official.some((d) => host === d || host.endsWith(`.${d}`));
+  return officialDomainsFor(brand, category).some((d) => host === d || host.endsWith(`.${d}`));
 }
 
 // 100 — офсайт бренда, 90 — домен с именем бренда, 40 — крупный ритейл, 10 — прочее.
@@ -178,15 +192,15 @@ class ProductResearchService {
     const results = [];
     const providerImages = [];
     for (const q of queries) {
-      const r = await this.provider.search(q, { limit: 6 });
+      const r = await this.provider.search(q, { limit: 6, includeDomains: officialDomainsFor(brand, product.category) });
       for (const item of r.results || []) {
-        if (item.url && !seenUrl.has(item.url) && isOfficialUrl(item.url, brand)) {
+        if (item.url && !seenUrl.has(item.url) && isOfficialUrl(item.url, brand, product.category)) {
           seenUrl.add(item.url);
           results.push(item);
         }
       }
       for (const img of r.images || []) {
-        if (img.url && isOfficialUrl(img.url, brand)) providerImages.push(img);
+        if (img.url && isOfficialUrl(img.url, brand, product.category)) providerImages.push(img);
       }
     }
     if (!results.length && !providerImages.length) {
@@ -202,6 +216,13 @@ class ProductResearchService {
     for (const page of topPages.slice(0, 3)) {
       const imgs = await fetchPageImages(page.url, { fetchImpl: this.fetchImpl });
       pageImages.push(...imgs.slice(0, 8));
+    }
+    // Страница строится скриптами и обычный разбор ничего не дал — просим провайдера.
+    if (!pageImages.length && typeof this.provider.extractImages === "function") {
+      for (const page of topPages.slice(0, 3)) {
+        const imgs = await this.provider.extractImages(page.url);
+        pageImages.push(...imgs.slice(0, 12));
+      }
     }
 
     // 4. Кандидаты, отсортированные по приоритету источника.
@@ -264,4 +285,4 @@ class ProductResearchService {
   }
 }
 
-module.exports = { ProductResearchService, sourceScore, enforceAllowedUrls, isOfficialUrl, OFFICIAL_DOMAINS };
+module.exports = { ProductResearchService, sourceScore, enforceAllowedUrls, isOfficialUrl, officialDomainsFor, OFFICIAL_DOMAINS };

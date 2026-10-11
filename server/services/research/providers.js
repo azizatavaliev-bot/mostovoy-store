@@ -38,7 +38,35 @@ class TavilyResearchProvider {
     this.available = Boolean(this.apiKey);
   }
 
-  async search(query, { limit = 6 } = {}) {
+  // Страницы, которые строятся скриптами, обычным чтением HTML не достать —
+  // Tavily открывает их как браузер и отдаёт найденные картинки.
+  async extractImages(pageUrl) {
+    if (!this.available) return [];
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
+    try {
+      const res = await this.fetchImpl("https://api.tavily.com/extract", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
+        signal: ac.signal,
+        body: JSON.stringify({ urls: [pageUrl], include_images: true, extract_depth: "basic" }),
+      });
+      if (!res.ok) throw new Error(`Tavily extract ${res.status}`);
+      const data = await res.json();
+      const images = data.results?.[0]?.images || [];
+      return images
+        .map((img) => (typeof img === "string" ? img : img?.url))
+        .filter((u) => typeof u === "string" && u.startsWith("https://"))
+        .map((u) => ({ url: u, source: pageUrl, via: "tavily-extract" }));
+    } catch (e) {
+      logger.debug("research.tavily_extract_failed", { pageUrl, error: e.message });
+      return [];
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async search(query, { limit = 6, includeDomains } = {}) {
     if (!this.available) return { results: [], images: [] };
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), this.timeoutMs);
@@ -54,6 +82,8 @@ class TavilyResearchProvider {
           include_images: true,
           include_image_descriptions: true,
           search_depth: "basic",
+          // Ищем только на официальных сайтах бренда, если они известны.
+          ...(includeDomains?.length ? { include_domains: includeDomains } : {}),
         }),
       });
       if (!res.ok) throw new Error(`Tavily ${res.status}`);

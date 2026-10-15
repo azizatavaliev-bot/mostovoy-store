@@ -13,9 +13,9 @@ test("каталог для модели рендерится таблицей: 
     pendingPosts: [],
   })}\n\nОтвечай только по этому каталогу.`;
   const rendered = renderCatalogForPrompt(selection);
-  assert.match(rendered, /^name \| brand \| category \| storage \| color \| price currency \| priceKgs \| priceUsd \| priceRub \| priceKzt \| available \| description$/m);
-  assert.match(rendered, /^iPhone 17 Pro 256GB eSIM \| Apple \| Смартфоны \| 256GB \| - \| 1140 USD \| 100320 \| 1140 \| 90060 \| 581400 \| в наличии \| -$/m);
-  assert.match(rendered, /^Dyson \/ Airwrap \| - \| Dyson \| - \| розовый \| 500 USD \| 44000 \| 500 \| 39500 \| 255000 \| нет в наличии \| стайлер с насадками$/m);
+  assert.match(rendered, /^name \| brand \| category \| storage \| color \| variant \(тип SIM \/ комплектация\) \| price currency \| priceKgs \| priceUsd \| priceRub \| priceKzt \| available \| description$/m);
+  assert.match(rendered, /^iPhone 17 Pro 256GB eSIM \| Apple \| Смартфоны \| 256GB \| - \| - \| 1140 USD \| 100320 \| 1140 \| 90060 \| 581400 \| в наличии \| -$/m);
+  assert.match(rendered, /^Dyson \/ Airwrap \| - \| Dyson \| - \| розовый \| - \| 500 USD \| 44000 \| 500 \| 39500 \| 255000 \| нет в наличии \| стайлер с насадками$/m);
   assert.match(rendered, /pendingPosts: нет/);
   assert.match(rendered, /Отвечай только по этому каталогу/);
   assert.doesNotMatch(rendered, /"priceKgs"/, "JSON-ключи в промпт не попадают");
@@ -23,20 +23,17 @@ test("каталог для модели рендерится таблицей: 
   assert.equal(renderCatalogForPrompt("Свежих публикаций канала не найдено."), "Свежих публикаций канала не найдено.");
 });
 
-test("снимок каталога без привязки к постам: подписи валют один раз, товары не обрезаются на 180", (t) => {
+test("товары из админки целиком попадают в каталог промпта, без обрезки на 180", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insert = db.prepare(
     "INSERT INTO products (slug, normalized_key, official_name, price, currency, available, status, origin) VALUES (?, ?, ?, ?, 'USD', ?, 'active', 'manual')"
   );
   for (let i = 0; i < 230; i++) insert.run(`p${i}`, `p${i}`, `Товар ${i}`, 100 + i, i === 5 ? 0 : 1);
-  const catalog = buildTelegramCatalogForAssistant(db);
-  const lines = catalog.split("\n");
-  assert.equal(lines[0], "230 позиций, по одной строке на товар, поля разделены «|», цены — целые числа:");
-  assert.equal(lines[1], "товар | цена по умолчанию в сомах (priceKgs) | USD (priceUsd) | RUB (priceRub) | KZT (priceKzt) | наличие");
-  assert.equal(lines.length, 232, "все 230 товаров попадают в промпт");
-  assert.ok(lines.some((line) => /^Товар 5 \| 9240 \| 105 \| \d+ \| \d+ \| нет в наличии$/.test(line)), lines.find((l) => l.startsWith("Товар 5 ")));
-  assert.equal((catalog.match(/цена по умолчанию/g) || []).length, 1);
+  const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
+  assert.equal(catalog.products.length, 230, "все 230 товаров попадают в промпт");
+  const fifth = catalog.products.find((product) => product.name === "Товар 5");
+  assert.deepEqual({ price: fifth.price, currency: fifth.currency, available: fifth.available }, { price: 105, currency: "USD", available: false });
 });
 
 test("в системный промпт модели уходит таблица каталога, а страховки по-прежнему читают JSON-подборку", async (t) => {
@@ -62,7 +59,7 @@ test("в системный промпт модели уходит таблиц�
   const crm = new CrmService({ db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0 });
   crm.saveSettings({ supervisorEnabled: false, templateRouterEnabled: false });
   const result = await crm.testBot({ message: "iPhone 17 есть?" });
-  assert.match(system, /^iPhone 17 256GB eSIM \| Apple \| Смартфоны \| - \| - \| 840 USD \| 73920 \| 840 \|/m);
+  assert.match(system, /^iPhone 17 256GB eSIM \| Apple \| Смартфоны \| - \| - \| - \| 840 USD \| 73920 \| 840 \|/m);
   assert.doesNotMatch(system, /\{\s*"products"/);
   assert.match(result.reply, /Есть в наличии/, "страховка по search_catalog всё ещё чинит ложное «нет»");
 });

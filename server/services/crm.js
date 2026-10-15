@@ -509,16 +509,6 @@ function tradeInEstimate(message) {
   return { device: device[0], condition: condition[0], usd: Number(device[1]) * Number(condition[1]) };
 }
 
-function selectedCatalogProduct(selection) {
-  const match = String(selection || "").match(/\{\s*"products"[\s\S]*\}/);
-  if (!match) return null;
-  try {
-    const products = JSON.parse(match[0]).products;
-    const product = Array.isArray(products) ? products.find((item) => item?.available && Number.isFinite(Number(item.price))) : null;
-    return product ? { ...product, price: Number(product.price), currency: String(product.currency).toUpperCase() } : null;
-  } catch { return null; }
-}
-
 function catalogRequestFromHistory(history) {
   return (Array.isArray(history) ? history : [])
     .slice(-8)
@@ -546,14 +536,14 @@ function renderCatalogForPrompt(selection) {
   if (!data || !Array.isArray(data.products)) return selection;
   const cell = (value) => (value == null || value === "" ? "-" : String(value).replace(/\|/g, "/").replace(/\s+/g, " ").trim());
   const rows = data.products.map((p) => [
-    p.name, p.brand, p.category, p.storage, p.color,
+    p.name, p.brand, p.category, p.storage, p.color, p.variant,
     `${p.price} ${p.currency}`, p.priceKgs, p.priceUsd, p.priceRub, p.priceKzt,
     p.available ? "в наличии" : "нет в наличии", p.description,
   ].map(cell).join(" | "));
   const pending = Array.isArray(data.pendingPosts) ? data.pendingPosts : [];
   return [
     `АКТУАЛЬНЫЙ КАТАЛОГ ИЗ TELEGRAM-КАНАЛА (products — ${rows.length} позиций, по одной строке на товар, поля разделены «|»):`,
-    "name | brand | category | storage | color | price currency | priceKgs | priceUsd | priceRub | priceKzt | available | description",
+    "name | brand | category | storage | color | variant (тип SIM / комплектация) | price currency | priceKgs | priceUsd | priceRub | priceKzt | available | description",
     ...rows,
     pending.length ? `pendingPosts (свежие ещё не разобранные посты):\n${JSON.stringify(pending)}` : "pendingPosts: нет",
     "Отвечай только по этому каталогу. Не говори, что обращался к товароведу или каналу.",
@@ -733,11 +723,28 @@ function normalizeModelText(value) {
   return normalizeSearchText(
     String(value || "")
       .toLocaleLowerCase("ru-RU")
+      .replace(/ё/g, "е")
       .replace(/(\d+)\s*(?:гб|gb)/gu, "$1gb")
       .replace(/(\d+)\s*(?:тб|tb)/gu, "$1tb")
       .replace(/(\d+)\s*(?:мм|mm)/gu, "$1mm")
+      // Клиенты пишут модель по-русски («17 про макс», «айфон 18»), в
+      // названиях товаров — латиница. «про» переводим только сразу после
+      // номера модели: «расскажи про айфон» — это предлог, а не Pro.
+      .replace(/(\d)\s*про(?![а-я])/gu, "$1 pro")
+      .replace(/(?<![а-я])(?:айфон|айфоне|айфона)(?![а-я])/gu, "iphone")
+      .replace(/(?<![а-я])макс(?![а-я])/gu, "max")
+      .replace(/(?<![а-я])плюс(?![а-я])/gu, "plus")
+      .replace(/(?<![а-я])ультра(?![а-я])/gu, "ultra")
+      .replace(/(?<![а-я])мини(?![а-я])/gu, "mini")
+      .replace(/(?<![а-я])эйр(?![а-я])/gu, "air")
   );
 }
+
+// Слова, которые делают из одной модели другую: «iPhone 18» и «iPhone 18
+// Pro» — разные телефоны с разной ценой, хотя номер модели один и тот же.
+const MODEL_QUALIFIERS = new Set(["pro", "max", "plus", "ultra", "mini", "air", "fold", "flip", "lite", "fe", "se"]);
+const modelQualifiers = (text) => new Set(normalizeModelText(text).split(" ").filter((token) => MODEL_QUALIFIERS.has(token)));
+const sameQualifiers = (a, b) => a.size === b.size && [...a].every((token) => b.has(token));
 
 // Только строки клиента — если считать и «КОНСУЛЬТАНТ:», собственная более
 // ранняя (и, возможно, ошибочная) фраза бота навсегда «подтверждает» сама
@@ -773,7 +780,7 @@ function customerOnlyText(request, context = request) {
 // должно стоять «iphone 11», а не «series 11». Память «256» против «256gb»
 // в названии считается тем же токеном.
 function productMatchesRequestedModel(product, request, context = request) {
-  const haystack = normalizeModelText(`${product?.name || ""} ${product?.storage || ""} ${product?.color || ""}`);
+  const haystack = normalizeModelText(`${product?.name || ""} ${product?.storage || ""} ${product?.color || ""} ${product?.variant || ""}`);
   const haystackTokens = haystack.split(" ");
   const sameNumber = (candidate, digits) => candidate === digits || (candidate.startsWith(digits) && /^\d+[a-zа-я]+$/u.test(candidate));
   const modelTokens = (text) => {
@@ -781,8 +788,14 @@ function productMatchesRequestedModel(product, request, context = request) {
     return words.map((token, index) => ({ token, prev: index > 0 ? words[index - 1] : null })).filter(({ token }) => /\d/.test(token));
   };
   const latest = modelTokens(request);
-  const tokens = latest.length ? latest : modelTokens(customerOnlyText(request, context));
+  const modelText = latest.length ? request : customerOnlyText(request, context);
+  const tokens = latest.length ? latest : modelTokens(modelText);
   if (tokens.length) {
+    // «А обычный iPhone 18 есть?» при наличии только 18 Pro/Pro Max: номер
+    // совпадает, но это другие модели — страховка подменяла честное «нет»
+    // списком Pro (живой тест 2026-10-15). Набор Pro/Max/Air/… обязан
+    // совпасть у товара и у запроса.
+    if (!sameQualifiers(modelQualifiers(product?.name), modelQualifiers(modelText))) return false;
     return tokens.every(({ token, prev }) => {
       const namedNumber = /^\d+$/.test(token) && prev && !/\d/.test(prev) && !SEARCH_STOP_WORDS.has(prev);
       if (!namedNumber) return tokenMatchesHaystack(haystack, token);
@@ -811,7 +824,7 @@ function enforceGroundedAvailabilityReply({ reply, groundedProducts, request, co
   const available = (groundedProducts || []).filter((product) => product.available && productMatchesRequestedModel(product, request, context));
   if (!available.length) return reply;
   const lines = available.slice(0, 5).map((product) => {
-    const details = [product.storage, product.color].filter(Boolean).join(", ");
+    const details = [product.storage, product.color, product.variant].filter(Boolean).join(", ");
     return `• ${product.name}${details ? `, ${details}` : ""} — ${Math.ceil(Number(product.priceKgs)).toLocaleString("ru-RU")} с`;
   });
   return `Есть в наличии:\n${lines.join("\n")}\n\nКакой вариант вас интересует?`;
@@ -883,12 +896,114 @@ function enforceCatalogAvailabilityReply({ reply, request, context = request, se
   return `Есть в наличии:\n${lines.join("\n")}\n\nКакой вариант вас интересует?`;
 }
 
+// Товар, о котором клиент спрашивает рассрочку: раньше бралась ПЕРВАЯ
+// доступная позиция всего каталога (selectedCatalogProduct), и на «18 Pro
+// Max 256 чёрный в рассрочку» расчёт приходил для случайного товара —
+// модель его справедливо игнорировала и отвечала «посчитать не могу»
+// (найдено живым тестом 2026-10-15). Теперь: та же модель (с Pro/Max), что
+// назвал клиент, затем лучшее совпадение по памяти, цвету и типу SIM; если
+// после этого остаётся несколько позиций с разной ценой — расчёт не делаем,
+// модель попросит уточнить конфигурацию.
+function requestedCatalogProduct(selection, rawRequest) {
+  // «на 12 месяцев», «3 мес» — срок рассрочки, а не номер модели: иначе «12»
+  // требовалось найти в названии товара, и рассрочка не считалась вообще.
+  const request = String(rawRequest || "").replace(/(?:на\s+)?\d+\s*(?:мес\w*|month\w*)/giu, " ");
+  const available = productsFromSelection(selection).filter((product) => Number.isFinite(Number(product.price)));
+  // Подборка из одного товара — он и есть (так бывает, когда подборку уже
+  // сузили до конкретной позиции).
+  const candidates = available.length === 1 ? available : available.filter((product) => productMatchesRequestedModel(product, request));
+  if (!candidates.length) return { product: null, ambiguous: false };
+  const text = normalizeModelText(request);
+  const requestColors = new Set(colorTokens(request).filter((token) => CANONICAL_COLORS.has(token)));
+  const requestSim = /сим|sim|физ/u.test(text) ? catalogSimKey(text) : "";
+  const score = (product) => {
+    const storageNumber = (normalizeModelText(`${product.storage || ""} ${product.name}`).match(/(\d+)(?:gb|tb)/) || [])[1];
+    const colorKey = catalogColorKey(product.color);
+    return (storageNumber && new RegExp(`(?<!\\d)${storageNumber}(?:gb|tb)?(?!\\d)`).test(text) ? 4 : 0)
+      + (colorKey && colorKey.split("+").some((name) => requestColors.has(name)) ? 2 : 0)
+      + (requestSim && catalogSimKey(`${product.name} ${product.variant || ""}`) === requestSim ? 1 : 0);
+  };
+  const scored = candidates.map((product) => ({ product, score: score(product) }));
+  const best = Math.max(...scored.map((item) => item.score));
+  const top = scored.filter((item) => item.score === best).map((item) => item.product);
+  const prices = new Set(top.map((product) => `${product.price} ${product.currency}`));
+  if (prices.size > 1) return { product: null, ambiguous: true };
+  const product = top[0];
+  return { product: { ...product, price: Number(product.price), currency: String(product.currency).toUpperCase() }, ambiguous: false };
+}
+
+// Какой товар клиент заказывает. Раньше бралась ПЕРВАЯ позиция всего
+// каталога (selectedCatalogProduct) — на проде 25 из 27 заказов записались
+// как «Apple iPhone 17 256 GB, 80 960 с», в том числе заказ Dyson HS09 за
+// 44 000 с (найдено 2026-10-15). Источники по убыванию надёжности:
+// 1) товар, который search_catalog в этом диалоге сузил до одной позиции
+//    (crm_conversations.deal_stage_product);
+// 2) позиция каталога, которую бот сам назвал в последних ответах вместе с
+//    её ценой (имя + сумма в тексте — это и есть предложение клиенту);
+// 3) товар по словам клиента (requestedCatalogProduct).
+// Если ни один способ не дал одной позиции — null: заказ сохраняется с
+// пометкой «уточнить по переписке», а не с чужим товаром.
+function isExplicitOrderText(text) {
+  return /(?<![а-яё])(?:оформ(?:ить|ляйте|ляем|ите|лю)|заказываю|закажу|хочу\s+заказать|давайте\s+(?:закаж\w*|оформ\w*)|беру(?![а-яё])|покупаю(?![а-яё])|заброниру\w*|зарезервиру\w*|резервиру\w*)/iu.test(String(text || ""));
+}
+
+const digitsOnly = (text) => String(text || "").replace(/(\d)[\s\u00a0\u202f](?=\d{3}(?!\d))/g, "$1");
+function orderedCatalogProduct({ selection, history = [], dealStageProduct = null }) {
+  const messages = Array.isArray(history) ? history : [];
+  const assistantMessages = messages.filter((m) => m?.role === "assistant").map((m) => String(m.content || ""));
+  const normalize = (product) => ({ ...product, price: Number(product.price), currency: String(product.currency || "USD").toUpperCase() });
+  // Сначала — последний ответ бота (там обычно подтверждение одной
+  // позиции), и только если он ничего не дал — последние четыре: ответ
+  // «есть HS09 за 44 000, версия 2026 за 55 440» перечисляет несколько.
+  for (const window of [1, 4]) {
+    const found = offeredInText(selection, assistantMessages.slice(-window).join("\n"));
+    if (found) return normalize(found);
+  }
+  const assistantNormalized = normalizeModelText(assistantMessages.slice(-4).join("\n"));
+  if (dealStageProduct?.name && Number.isFinite(Number(dealStageProduct.price))) {
+    const tokens = normalizeModelText(String(dealStageProduct.name).replace(/^apple\s+/i, "")).split(" ").filter((token) => token.length >= 2);
+    if (tokens.length && tokens.every((token) => assistantNormalized.includes(token))) return normalize(dealStageProduct);
+  }
+  const all = productsFromSelection(selection).filter((product) => Number.isFinite(Number(product.price)));
+  return all.length === 1 ? normalize(all[0]) : null;
+}
+
+// Позиция каталога, которую бот назвал в тексте вместе с её ценой.
+function offeredInText(selection, assistantText) {
+  if (!assistantText.trim()) return null;
+  const assistantNormalized = normalizeModelText(assistantText);
+  const assistantDigits = digitsOnly(assistantText);
+  const assistantColors = new Set(colorTokens(assistantText).filter((token) => CANONICAL_COLORS.has(token)));
+  const assistantSim = catalogSimKey(assistantText);
+  const nameMentioned = (product) => {
+    const tokens = normalizeModelText(String(product.name).replace(/^apple\s+/i, "")).split(" ").filter((token) => token.length >= 2);
+    return tokens.length > 0 && tokens.every((token) => assistantNormalized.includes(token));
+  };
+  const priceMentioned = (product) => {
+    const kgs = Math.ceil(Number(product.priceKgs ?? convertAssistantPrice(product.price, product.currency, "KGS")));
+    return new RegExp(`(?<!\\d)(?:${kgs}|${Math.round(Number(product.price))})(?!\\d)`).test(assistantDigits);
+  };
+  let offered = productsFromSelection(selection).filter((product) => Number.isFinite(Number(product.price)) && nameMentioned(product) && priceMentioned(product));
+  // Одинаковые имя и цена у разных цветов/SIM (18 Pro Max 256 Black и Silver
+  // по 1870$) — уточняем по цвету и типу SIM, названным в том же ответе.
+  const byColor = offered.filter((product) => colorTokens(product.color).some((token) => assistantColors.has(token)));
+  if (byColor.length) offered = byColor;
+  const bySim = offered.filter((product) => catalogSimKey(`${product.name} ${product.variant || ""}`) === assistantSim);
+  if (assistantSim && bySim.length) offered = bySim;
+  if (offered.length === 1) return offered[0];
+  if (offered.length > 1 && new Set(offered.map((product) => `${product.price} ${product.currency}`)).size === 1) {
+    // Сумма известна точно, а какой из одинаковых по цене цветов — нет.
+    return { ...offered[0], color: null };
+  }
+  return null;
+}
+
 function financeToolContext(request, selection) {
   const text = String(request || "").toLowerCase();
   const wantsInstallment = /рассроч|в кредит|платеж.*месяц|ежемесяч/.test(text);
   const wantsTradeIn = /trade.?in|трейд.?ин|обменять|сдать.*(?:айфон|iphone|телефон|macbook|макбук)/.test(text);
   if (!wantsInstallment && !wantsTradeIn) return "";
-  const product = selectedCatalogProduct(selection);
+  const { product, ambiguous } = requestedCatalogProduct(selection, request);
   const trade = wantsTradeIn ? tradeInEstimate(request) : null;
   const lines = ["ИНСТРУМЕНТЫ РАСЧЁТА САЙТА (данные уже рассчитаны, не меняй формулу):"];
   if (trade) lines.push(`Trade-in: ${trade.device}, состояние «${trade.condition}» — предварительная оценка ${formatAssistantPrice(trade.usd, "USD", "KGS")} (точную подтвердит диагностика).`);
@@ -901,7 +1016,8 @@ function financeToolContext(request, selection) {
     const total = principal / coefficient;
     const monthly = total / months;
     lines.push(`Рассрочка: ${product.name}; ${months} мес.; стоимость ${formatAssistantPrice(productKgs, "KGS", "KGS")}; после Trade-in ${formatAssistantPrice(principal, "KGS", "KGS")}; платёж ${formatAssistantPrice(monthly, "KGS", "KGS")} в месяц; всего ${formatAssistantPrice(total, "KGS", "KGS")}; переплата ${formatAssistantPrice(total - principal, "KGS", "KGS")}.`);
-  } else if (wantsInstallment) lines.push("Для точного расчёта рассрочки сначала назови товар и срок: 3, 6 или 12 месяцев.");
+  } else if (wantsInstallment && ambiguous) lines.push("Рассрочка: под запрос клиента подходит несколько конфигураций с разной ценой — уточни у клиента память, цвет и тип SIM, тогда расчёт будет точным.");
+  else if (wantsInstallment) lines.push("Для точного расчёта рассрочки сначала назови товар и срок: 3, 6 или 12 месяцев.");
   lines.push("Используй расчёт в ответе. Если клиент подтвердил расчёт, попроси имя и телефон для оформления.");
   return lines.join("\n");
 }
@@ -932,10 +1048,76 @@ function specFallback(specifications, key) {
 // наличия из админки товара, который параллельно ещё связан с постом
 // канала, тихо игнорируется: search_catalog продолжает отвечать по
 // availability из того поста, admin.js её никогда не трогает.
-function getDedupedCatalogProducts(db, { includeManual = false } = {}) {
+// Ключ «это один и тот же товар»: модель + память + цвет + тип SIM (+ прочие
+// отличия варианта вроде «2 ремешка»). Один и тот же iPhone приходит в базу
+// под разными написаниями из разных источников: «iPhone 17 Pro 256GB eSIM»
+// (ручной прайс), «Apple iPhone 17 Pro 256 GB» + вариант «eSIM» (пост
+// канала), «1 физическая SIM + eSIM» и «Одна физ сим + eSIM» (два поста).
+// Один цвет пишут по-разному: «Black» (админка), «чёрный» (пост канала),
+// «белый (Silver)» (ручной прайс). Переводим только само название цвета,
+// уточнения («matte», «shiny») сохраняем: «Matte Black» и «Shiny Black» у
+// очков — разные товары.
+const COLOR_PHRASES = [
+  [/sky\s*blue|mist\s*blue/gu, " голубой "], [/deep\s*blue/gu, " синий "], [/space\s*black|jet\s*black/gu, " черный "],
+  [/cloud\s*white/gu, " белый "], [/light\s*gold/gu, " золотой "], [/cosmic\s*orange/gu, " оранжевый "],
+];
+const COLOR_WORDS = [
+  [/^(?:black|черн\w*)$/u, "черный"], [/^(?:white|silver|бел\w*|серебр\w*)$/u, "белый"], [/^(?:blue|син\w*)$/u, "синий"],
+  [/^(?:голуб\w*|небесн\w*)$/u, "голубой"], [/^(?:orange|оранж\w*)$/u, "оранжевый"], [/^(?:burgundy|бордо\w*)$/u, "бордовый"],
+  [/^(?:gr[ae]y|сер(?:ый|ая|ое|ого|ом))$/u, "серый"], [/^(?:gold|золот\w*)$/u, "золотой"], [/^(?:green|зелен\w*)$/u, "зеленый"],
+  [/^(?:pink|розов\w*)$/u, "розовый"],
+];
+const CANONICAL_COLORS = new Set(COLOR_WORDS.map(([, name]) => name));
+function colorTokens(text) {
+  let value = ` ${String(text || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\([^)]*\)/g, " ")} `;
+  for (const [re, name] of COLOR_PHRASES) value = value.replace(re, name);
+  return normalizeSearchText(value).split(" ").filter(Boolean).map((token) => {
+    const alias = COLOR_WORDS.find(([re]) => re.test(token));
+    return alias ? alias[1] : token;
+  });
+}
+function catalogColorKey(color) {
+  const text = String(color || "");
+  if (!text.trim() || /все\s*цвет|любой/iu.test(text)) return "";
+  return [...new Set(colorTokens(text))].sort().join("+");
+}
+function catalogSimKey(text) {
+  const t = ` ${String(text || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/e[\s-]?sim/gu, "esim")} `;
+  const active = /(?<![a-zа-я])(?:актив\w*|active)(?![a-zа-я])/u.test(t);
+  const phys = /физ|physical|nano|(?<![a-zа-я])(?:sim|сим|симк\w*)(?![a-zа-я])/u.test(t.replace(/(?:2|две|dual)\s*(?:sim|сим)/gu, " "));
+  const esim = /esim/u.test(t);
+  return `${phys ? "sim" : esim ? "esim" : ""}${active ? "+active" : ""}`;
+}
+const IDENTITY_FILLER = new Set(["apple", "gb", "tb", "гб", "тб", "все", "цвета", "цвет", "sim", "esim", "сим", "физ", "физическая", "физическую", "одна", "один", "dual", "active", "актив", "активированный", "версия", "nano"]);
+function catalogIdentityKey(p) {
+  const name = p.official_name ?? p.name;
+  const storage = (normalizeModelText(`${p.storage || ""} ${name} ${p.variant || ""}`).match(/\d+(?:gb|tb)/) || [""])[0];
+  const colorKey = catalogColorKey(p.color);
+  const colorTokens = new Set(normalizeSearchText(p.color).split(" "));
+  // «(2 SIM)», «1 физическая SIM», «одна физ сим» — описание типа SIM, а не
+  // часть модели: без этого лишняя цифра «1»/«2» давала разный ключ одному
+  // и тому же товару из админки и из поста канала.
+  const identityText = `${name} ${p.variant || ""}`
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/(?:2|две|dual)\s*(?:sim|сим)/giu, " ")
+    .replace(/(?:^|\s)(?:1|одна|один)\s+(?=физ|sim|сим)/giu, " ");
+  const words = normalizeModelText(identityText).split(" ")
+    .filter((token) => token && token !== storage && !IDENTITY_FILLER.has(token) && !colorTokens.has(token));
+  const model = [...new Set(words)].sort().join(" ");
+  return `${model}|${storage}|${colorKey}|${catalogSimKey(`${name} ${p.variant || ""}`)}`;
+}
+// Свежесть — когда цену товара последний раз записали (синк поста или
+// админка), а не дата поста: прайс-посты канала годами редактируются на
+// месте, и у поста с ценой от октября дата публикации — июль 2025.
+const freshness = (p) => [p.updated_at, p.telegram_message_updated_at]
+  .map((value) => String(value || "").replace("T", " ").slice(0, 19))
+  .sort()
+  .at(-1);
+
+function getDedupedCatalogProducts(db) {
   const products = db.prepare(
-    `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
-            mp.price, mp.currency, p.available,
+    `SELECT p.id, p.official_name, p.brand, p.category, p.color, p.storage, p.variant, p.specifications, p.description,
+            mp.price, mp.currency, p.available, p.updated_at,
             tm.telegram_message_id, tm.telegram_message_updated_at
        FROM products p
        JOIN message_products mp ON mp.product_id = p.id
@@ -951,25 +1133,20 @@ function getDedupedCatalogProducts(db, { includeManual = false } = {}) {
         )
       ORDER BY tm.telegram_message_updated_at DESC, tm.id DESC`
   ).all();
-  // Товары без единой связи message_products (добавленные вручную через
-  // админку, не из Telegram-канала) INNER JOIN выше просто не увидит —
-  // search_catalog возвращал 0 результатов на весь такой товар вообще,
-  // хотя цена у него есть прямо в products (найдено на проде сразу после
-  // полной замены каталога на товары, добавленные через админку). Только
-  // для search_catalog (includeManual) — buildTelegramCatalogForAssistant
-  // осознанно показывает лишь товары из постов канала, origin='manual'
-  // туда никогда не подмешивался.
-  if (includeManual) {
-    const manualProducts = db.prepare(
-      `SELECT p.official_name, p.brand, p.category, p.color, p.storage, p.specifications, p.description,
-              p.price, p.currency, p.available,
-              NULL AS telegram_message_id, p.updated_at AS telegram_message_updated_at
-         FROM products p
-        WHERE p.status != 'hidden' AND p.price IS NOT NULL AND p.origin = 'manual'
-          AND NOT EXISTS (SELECT 1 FROM message_products mp WHERE mp.product_id = p.id)`
-    ).all();
-    products.push(...manualProducts);
-  }
+  // Товары, добавленные вручную через админку (origin='manual', без поста
+  // канала), INNER JOIN выше не видит. Раньше они шли только в
+  // search_catalog, а в каталог промпта — нет: все iPhone 18 из админки бот
+  // в каталоге не видел вообще. Легаси-товары старого сайта (origin='legacy')
+  // по-прежнему не показываем.
+  const manualProducts = db.prepare(
+    `SELECT p.id, p.official_name, p.brand, p.category, p.color, p.storage, p.variant, p.specifications, p.description,
+            p.price, p.currency, p.available, p.updated_at,
+            NULL AS telegram_message_id, p.updated_at AS telegram_message_updated_at
+       FROM products p
+      WHERE p.status != 'hidden' AND p.price IS NOT NULL AND p.origin = 'manual'
+        AND NOT EXISTS (SELECT 1 FROM message_products mp WHERE mp.product_id = p.id)`
+  ).all();
+  products.push(...manualProducts);
   // Дедуп нужен, чтобы у одного и того же товара не было двух записей с
   // РАЗНЫМИ ценами из-за сбоя синка (та самая причина завести этот дедуп —
   // 65 из 651 названий имели конфликт цены между карточками). Но ключ
@@ -980,9 +1157,16 @@ function getDedupedCatalogProducts(db, { includeManual = false } = {}) {
   // никогда не видел бело-синий 256ГБ с физ. SIM, хотя он есть в базе).
   // Ключ — имя+цвет+память: разные цвета/объёмы остаются разными
   // позициями, а конфликт цены одного и того же цвета всё ещё гасится.
+  // Ключ — catalogIdentityKey (модель+память+цвет+тип SIM), и из записей
+  // одного товара остаётся САМАЯ СВЕЖАЯ: прайс 14.09 из админки и пост
+  // канала от 12.10 про тот же iPhone жили рядом, и бот называл то одну,
+  // то другую цену (найдено 2026-10-15). Раньше ключ не учитывал тип SIM —
+  // eSIM и физ. SIM одного цвета схлопывались в одну позицию, и бот уверял,
+  // что версии с физ. SIM нет.
+  products.sort((a, b) => freshness(b).localeCompare(freshness(a)) || Number(b.id) - Number(a.id));
   const seenProductKeys = new Set();
   return products.filter((p) => {
-    const key = `${p.official_name} ${p.color || ""} ${p.storage || ""}`;
+    const key = catalogIdentityKey(p);
     if (seenProductKeys.has(key)) return false;
     seenProductKeys.add(key);
     return true;
@@ -1022,15 +1206,18 @@ function tokenMatchesHaystack(haystack, token) {
 // конкретного товара, вместо того чтобы придумывать цифры самой — цена и
 // наличие приходят из БД, а не генерируются текстом.
 function searchCatalogProducts(db, query) {
-  const products = getDedupedCatalogProducts(db, { includeManual: true });
-  const tokens = normalizeSearchText(query).split(" ").filter((t) => (t.length >= 2 || /^\d$/.test(t)) && !SEARCH_STOP_WORDS.has(t));
+  const products = getDedupedCatalogProducts(db);
+  const tokens = normalizeModelText(query).replace(/(\d+)(gb|tb|mm)/g, "$1").split(" ").filter((t) => (t.length >= 2 || /^\d$/.test(t)) && !SEARCH_STOP_WORDS.has(t));
   if (!tokens.length) return [];
   const scored = products.map((p) => {
-    const haystack = normalizeSearchText(`${p.official_name} ${p.brand || ""} ${p.category || ""} ${p.color || ""} ${p.storage || ""}`);
+    const haystack = normalizeModelText(`${p.official_name} ${p.brand || ""} ${p.category || ""} ${p.color || ""} ${p.storage || ""} ${p.variant || ""}`).replace(/(\d+)(gb|tb|mm)/g, "$1");
     const score = tokens.reduce((sum, token) => sum + (tokenMatchesHaystack(haystack, token) ? 1 : 0), 0);
     return { p, score };
   }).filter((item) => item.score > 0);
-  scored.sort((a, b) => b.score - a.score || String(a.p.official_name).localeCompare(String(b.p.official_name), "ru"));
+  // При равном совпадении — сначала свежие позиции: по алфавиту «Apple
+  // iPhone 17 …» шли раньше «iPhone 18 …», и на «iPhone 19?» в топ-12 не
+  // попадал ни один 18-й — бот называл актуальной линейкой 17-ю.
+  scored.sort((a, b) => b.score - a.score || freshness(b.p).localeCompare(freshness(a.p)) || String(a.p.official_name).localeCompare(String(b.p.official_name), "ru"));
   // Те же готовые поля priceKgs/priceUsd/priceRub/priceKzt, что и в тексте
   // каталога (см. ASSISTANT_PRICE_POLICY) — модель не должна сама переводить
   // валюту, а сумма без округления такая же, как в остальном каталоге.
@@ -1040,6 +1227,7 @@ function searchCatalogProducts(db, query) {
     category: p.category || null,
     storage: p.storage || specFallback(p.specifications, "Память") || null,
     color: p.color || specFallback(p.specifications, "Цвета") || null,
+    variant: p.variant || null,
     price: Number(p.price),
     currency: p.currency,
     priceKgs: Math.ceil(convertAssistantPrice(p.price, p.currency, "KGS")),
@@ -1100,6 +1288,7 @@ function buildTelegramCatalogForAssistant(db) {
       category: p.category || null,
       storage: p.storage || specFallback(p.specifications, "Память"),
       color: p.color || specFallback(p.specifications, "Цвета"),
+      variant: p.variant || null,
       description: p.description || null,
       price: Number(p.price),
       currency: p.currency,
@@ -1637,12 +1826,21 @@ class CrmService {
       : "";
     // Заказ появляется после явного подтверждения клиента. Сообщения вроде
     // «сколько стоит» или обычная подборка заказом не считаются.
-    const explicitOrder = /(?:оформ(?:ить|ляйте|ляем)|заказ(?:ать|ываю)?|беру(?![а-яё])|покупаю(?![а-яё])|заброниру|резервиру)/iu.test(latestCustomerText);
+    // «Есть предзаказ?», «когда будет заказ?» — вопросы, а не заказ: голое
+    // слово «заказ» (в том числе внутри «предзаказ») раньше считалось
+    // подтверждением, и на проде появлялись заказы из переписки про iPhone 19
+    // и Apple Watch Series 12 (найдено 2026-10-15).
+    const explicitOrder = isExplicitOrderText(latestCustomerText);
     const confirmedOffer = /^(?:да|давайте|конечно|хорошо|согласен|согласна|беру|оформляйте)[.!\s]*$/iu.test(latestCustomerText.trim())
       && /(?:оформ|заказ|резерв|покуп)/iu.test(previousAssistantText);
     if (!explicitOrder && !confirmedOffer) return false;
-    const product = selectedCatalogProduct(selection);
-    if (!product) return false;
+    let dealStageProduct = null;
+    try {
+      dealStageProduct = JSON.parse(this.db.prepare("SELECT deal_stage_product FROM crm_conversations WHERE id = ?").get(conversation.id)?.deal_stage_product || "null");
+    } catch {
+      dealStageProduct = null;
+    }
+    const product = orderedCatalogProduct({ selection, history: messages, dealStageProduct });
 
     const externalKey = conversation.external_key || conversation.externalKey;
     if (!externalKey) return false;
@@ -1672,9 +1870,14 @@ class CrmService {
       : /trade.?in|трейд.?ин|обмен(?:ять|а)|сдать.*(?:телефон|iphone|айфон|macbook|макбук)/iu.test(customerText)
         ? "trade_in"
         : "standard";
-    const amount = Number.isFinite(Number(product.priceKgs))
-      ? Math.ceil(Number(product.priceKgs))
-      : Math.ceil(convertAssistantPrice(product.price, product.currency, "KGS"));
+    const amount = !product
+      ? null
+      : Number.isFinite(Number(product.priceKgs))
+        ? Math.ceil(Number(product.priceKgs))
+        : Math.ceil(convertAssistantPrice(product.price, product.currency, "KGS"));
+    const productName = product
+      ? [product.name, product.storage, product.color, product.variant].filter(Boolean).join(", ")
+      : "Уточнить по переписке";
 
     if (!wasAlreadyHandedOff) {
       // Адрес — тем же способом, что и маскировка PII перед отправкой в ИИ
@@ -1688,14 +1891,14 @@ class CrmService {
       ).run(
         conversation.id,
         conversation.source,
-        [product.name, product.storage, product.color].filter(Boolean).join(", "),
+        productName,
         amount,
         orderType,
         conversation.customer_name || conversation.customerName || null,
         phone,
         addressEntry ? addressEntry[0] : null
       );
-      this._logEvent(conversation.id, "info", "commerce", "order.saved", "Заказ сохранён в CRM", { product: product.name });
+      this._logEvent(conversation.id, "info", "commerce", "order.saved", "Заказ сохранён в CRM", { product: productName });
       // Только числа/идентификаторы — ни имени, ни телефона, ни адреса клиента.
       controlCenter.reportEvent({
         type: "order",
@@ -1708,7 +1911,7 @@ class CrmService {
     if (!this.crmDeals?.enabled || typeof this.crmDeals.createOrder !== "function") return true;
     void this.crmDeals.createOrder({
       externalKey,
-      productName: [product.name, product.storage, product.color].filter(Boolean).join(", "),
+      productName,
       amount,
       currency: "KGS",
       orderType,
@@ -1718,7 +1921,7 @@ class CrmService {
     }).then((result) => {
       this._logEvent(conversation.id, "info", "commerce", "order.published", "Заказ передан в CRM", {
         orderId: result?.id || null,
-        product: product.name,
+        product: productName,
         orderType,
       });
     }).catch((error) => logger.error("crm_deals.order_failed", {
@@ -2410,6 +2613,7 @@ prompt_patch — не больше двух коротких предложен�
       customerRequest: text,
       draft: reply,
       groundedProductNames: generated.groundedProductNames,
+      groundedProducts: generated.groundedProducts,
     });
     // Если search_catalog реально подтвердил товар в этом ответе — доверяем
     // ему, а не старой эвристике relevantProductsForContext ниже. Та
@@ -2477,7 +2681,10 @@ prompt_patch — не больше двух коротких предложен�
           const products = searchCatalogProducts(this.db, args?.query);
           products.forEach((p) => {
             groundedProductNames.add(p.name);
-            groundedProductsByName.set(p.name, p);
+            // Ключ — вся конфигурация, а не имя: у iPhone 18 Pro Max из админки
+          // одно имя на 14 конфигураций, и из найденного оставалась одна
+          // (супервизор и страховки видели только её).
+          groundedProductsByName.set([p.name, p.storage, p.color, p.variant].join("|"), p);
           });
           // Поиск нестрогий: на «Samsung Galaxy S20» приходят Fold 8 и A57 по
           // словам samsung/galaxy. Если ни один результат не совпал с самой
@@ -2579,15 +2786,27 @@ prompt_patch — не больше двух коротких предложен�
   // ревью, как финальная страховка на случай, если сам супервизор ошибся.
   // Сбой или таймаут ревью не блокирует ответ клиенту — уходит исходный
   // черновик (fail-open, тот же принцип, что и у остальных вызовов ИИ здесь).
-  async _reviewReply({ conversationId, settings, history, customerRequest, draft, groundedProductNames }) {
+  async _reviewReply({ conversationId, settings, history, customerRequest, draft, groundedProductNames, groundedProducts = [] }) {
     if (!settings.supervisorEnabled || !this.ai?.enabled || typeof this.ai.chatJson !== "function") return draft;
     try {
+      // Супервизор не видел результатов search_catalog и принимал верную
+      // цену из базы за выдуманную: черновик «iPhone 18 Pro 256 Sky Blue —
+      // 132 000 сом» переписывался в «уточните, цена или наличие?» (живой
+      // тест 2026-10-15). Передаём ему те же данные, по которым писали черновик.
+      const verifiedCatalog = groundedProducts.slice(0, 12).map((product) => ({
+        name: product.name, storage: product.storage, color: product.color, variant: product.variant,
+        priceKgs: product.priceKgs, priceUsd: product.priceUsd, priceRub: product.priceRub, priceKzt: product.priceKzt,
+        available: product.available,
+      }));
       const result = await this.ai.chatJson({
-        system: settings.supervisorPrompt,
+        system: verifiedCatalog.length
+          ? `${settings.supervisorPrompt}\n\nverified_catalog — товары, цены и наличие, полученные из базы магазина для этого черновика. Цены и наличие, совпадающие с verified_catalog, проверены — не считай их выдуманными и не убирай из ответа.`
+          : settings.supervisorPrompt,
         user: JSON.stringify({
           customer_message: customerRequest,
           history: history.slice(-6),
           draft_reply: draft,
+          ...(verifiedCatalog.length ? { verified_catalog: verifiedCatalog } : {}),
         }),
         temperature: 0,
         maxTokens: 1800,
@@ -3281,6 +3500,9 @@ prompt_patch — не больше двух коротких предложен�
     // бот не услышал вопрос (найдено на проде). Такие сообщения должны идти
     // в обычную генерацию, где промпт учит сначала спросить бюджет.
     if (/посовет|что.{0,15}(?:посовету|выбрать|лучше\s+взять)|какой.{0,15}(?:лучше|посовет)|подскаж[иу]/iu.test(value)) return false;
+    // «Какой самый дешёвый айфон?», «сколько стоят айфоны» — клиент спрашивает
+    // цену, список названий без цен на это не отвечает (живой тест 2026-10-15).
+    if (/дешев|дешёв|дорог|бюджет|цен[аыу]|сколько|стоит|стоят|почем|почём|новинк|нов(?:ый|ые|ая)|последн/iu.test(value)) return false;
     const wordCount = value.split(/\s+/u).filter(Boolean).length;
     return wordCount <= 6;
   }
@@ -3299,13 +3521,12 @@ prompt_patch — не больше двух коротких предложен�
     // когда-либо постились в канал, включая давно распроданные — клиент
     // видел «в наличии несколько моделей» с половиной моделей, которых
     // реально нет (найдено на проде на примере iPad).
-    const rows = this.db.prepare(
-      `SELECT DISTINCT p.official_name AS name, p.brand AS brand, p.category AS category, p.color AS color, p.specifications AS specifications
-         FROM products p
-         JOIN message_products mp ON mp.product_id = p.id
-         JOIN telegram_messages tm ON tm.id = mp.message_id
-        WHERE p.status != 'hidden' AND p.available = 1 AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL`
-    ).all();
+    // Тот же каталог, что видит бот: раньше здесь были только товары из
+    // постов канала, и весь iPhone 18 (добавлен через админку) в списке
+    // линейки не появлялся вообще.
+    const rows = getDedupedCatalogProducts(this.db)
+      .filter((p) => p.available)
+      .map((p) => ({ name: p.official_name, brand: p.brand, category: p.category, color: p.color, specifications: p.specifications }));
     const matches = (row) => family.terms.some((term) =>
       termMatchesWholeWord(`${row.name} ${row.brand || ""} ${row.category || ""}`.toLocaleLowerCase("ru-RU"), term)
     );
@@ -3403,6 +3624,12 @@ prompt_patch — не больше двух коротких предложен�
     if (salesTemplate?.kind === "order" && !dealStageAtLeast(detail.conversation.dealStage, "configured")) {
       salesTemplate = null;
     }
+    // «Беру, оформляйте, самовывоз» — подтверждение заказа, а не вопрос про
+    // шоу-рум: шаблон «приходите в шоу-рум» отвечал на него «какую модель
+    // подготовить?», и заказ не фиксировался (живой тест 2026-10-15).
+    if (salesTemplate && salesTemplate.kind !== "order" && isExplicitOrderText(latestCustomerMessage)) {
+      salesTemplate = null;
+    }
     if (salesTemplate) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
       await this._send(conversationId, this._withPendingCatalog(conversationId, salesTemplate.text), "assistant");
@@ -3428,7 +3655,8 @@ prompt_patch — не больше двух коротких предложен�
     // который выбирает id шаблона или ничего. Оба — до сборки каталога и
     // полной генерации: экономим токены и отвечаем одинаково на одинаковое.
     const hasHistory = detail.messages.filter((m) => m.direction === "incoming").length > 1;
-    const localTemplate = classifyTemplate(latestCustomerMessage, { hasHistory });
+    const explicitOrderMessage = isExplicitOrderText(latestCustomerMessage);
+    const localTemplate = explicitOrderMessage ? null : classifyTemplate(latestCustomerMessage, { hasHistory });
     if (localTemplate) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
       await this._send(conversationId, this._withPendingCatalog(conversationId, localTemplate.text), "assistant");
@@ -3441,7 +3669,7 @@ prompt_patch — не больше двух коротких предложен�
       return;
     }
     const settings = this.getSettings();
-    const routedTemplateId = await this._routeTemplate(conversationId, settings, detail.messages, latestCustomerMessage);
+    const routedTemplateId = explicitOrderMessage ? null : await this._routeTemplate(conversationId, settings, detail.messages, latestCustomerMessage);
     const routedText = routedTemplateId ? templateById(routedTemplateId) : null;
     if (routedText) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
@@ -3504,7 +3732,7 @@ prompt_patch — не больше двух коротких предложен�
         conversationId,
       });
       let reply = generated.reply;
-      reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply, groundedProductNames: generated.groundedProductNames });
+      reply = await this._reviewReply({ conversationId, settings, history, customerRequest, draft: reply, groundedProductNames: generated.groundedProductNames, groundedProducts: generated.groundedProducts });
       // См. комментарий в testBot: если search_catalog подтвердил товар,
       // старой эвристике relevantProductsForContext ниже доверять не нужно —
       // она может подменить проверенный товар на случайный при слабом
@@ -3536,7 +3764,9 @@ prompt_patch — не больше двух коротких предложен�
         });
       } else {
         await this._deliverReply(conversationId, reply, "assistant");
-        const orderCareStarted = this._publishOrderIfConfirmed(detail.conversation, history, selection);
+        // Только что отправленный ответ — это и есть подтверждение заказа
+        // («Dyson HS09 Co-anda2x Long — 44 000 сом ✅, напишите имя…»).
+        const orderCareStarted = this._publishOrderIfConfirmed(detail.conversation, [...history, { role: "assistant", content: reply }], selection);
         this._logEvent(conversationId, "info", "delivery", "reply.sent", "Автоответ отправлен без подтверждения");
         if (!orderCareStarted) {
           // Раньше был запасной вариант — selectedCatalogProduct(selection),
@@ -3598,6 +3828,7 @@ prompt_patch — не больше двух коротких предложен�
           category: item?.category || null,
           storage: item?.storage || null,
           color: item?.color || null,
+          variant: item?.variant || null,
           description: item?.description || null,
           price,
           currency,
@@ -3620,7 +3851,7 @@ prompt_patch — не больше двух коротких предложен�
   _recordFinanceRequest(conversationId, request, selection) {
     if (!conversationId) return;
     const trade = tradeInEstimate(request);
-    const product = selectedCatalogProduct(selection);
+    const { product } = requestedCatalogProduct(selection, request);
     const kind = /рассроч|в кредит|платеж.*месяц|ежемесяч/i.test(request) ? "Рассрочка" : "Trade-in";
     const details = [kind, product?.name, trade && `${trade.device} (${trade.condition})`].filter(Boolean).join(": ");
     const row = this.db.prepare("SELECT notes FROM crm_conversations WHERE id = ?").get(conversationId);
@@ -3902,6 +4133,9 @@ module.exports = {
   enforceCatalogAvailabilityReply,
   enforceGroundedAvailabilityReply,
   renderCatalogForPrompt,
+  orderedCatalogProduct,
+  requestedCatalogProduct,
+  financeToolContext,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,

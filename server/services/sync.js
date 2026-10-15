@@ -19,7 +19,8 @@ const MIN_CONFIDENCE_FOR_ACTIVE = 0.75;
 
 // Модели, которые магазин не продаёт — если модель извлечения всё же
 // упомянет их (например, из-за опечатки в посте), товар не создаётся.
-const BLOCKED_MODEL_PATTERNS = [/iphone\s*18/i, /google\s*pixel/i];
+// iPhone 18 отсюда убран: линейка вышла и продаётся (2026-10).
+const BLOCKED_MODEL_PATTERNS = [/google\s*pixel/i];
 const isBlockedModel = (name) => BLOCKED_MODEL_PATTERNS.some((re) => re.test(String(name || "")));
 
 const hashText = (text) => crypto.createHash("sha256").update(String(text ?? ""), "utf8").digest("hex");

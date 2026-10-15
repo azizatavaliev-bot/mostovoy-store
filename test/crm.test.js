@@ -11,6 +11,8 @@ const {
   enforceCatalogPriceReply,
   enforceCatalogAvailabilityReply,
   enforceGroundedAvailabilityReply,
+  orderedCatalogProduct,
+  financeToolContext,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,
@@ -71,7 +73,7 @@ test("шаблон «оформить» уступает обычной гене
   assert.equal(classifySalesTemplate("Можно заказать iPhone 17?").kind, "order");
 });
 
-test("каталог для ИИ отдаёт структурированные цены только из Telegram", (t) => {
+test("каталог для ИИ: посты канала и товары из админки, без легаси старого сайта", (t) => {
   const db = createConnection(":memory:");
   t.after(() => db.close());
   const insertProduct = db.prepare(
@@ -96,13 +98,63 @@ test("каталог для ИИ отдаёт структурированные
 
   const catalog = JSON.parse(buildTelegramCatalogForAssistant(db));
   assert.equal(catalog.source, "telegram_channel");
-  assert.deepEqual(catalog.products.map(({ name, price, currency, available }) => ({ name, price, currency, available })), [
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  assert.deepEqual(catalog.products.map(({ name, price, currency, available }) => ({ name, price, currency, available })).sort(byName), [
     { name: "iPhone 15", price: 900, currency: "USD", available: true },
     { name: "MacBook Pro 14", price: 1590, currency: "USD", available: true },
+    { name: "Whoop 5.0 Peak", price: 255, currency: "USD", available: true },
   ]);
   assert.deepEqual(catalog.pendingPosts, []);
   assert.equal(catalog.products.some((product) => product.name === "Старый товар сайта"), false);
-  assert.equal(catalog.products.some((product) => product.name === "Whoop 5.0 Peak"), false);
+});
+
+test("один товар из старого прайса админки и из свежего поста канала — боту видна только свежая цена", (t) => {
+  // Найдено 2026-10-15: прайс 14.09 из админки («iPhone 17 Pro 256GB eSIM»,
+  // синий, 1165$) и пост канала от 12.10 («Apple iPhone 17 Pro 256 GB»,
+  // вариант «eSIM», 1200$) жили рядом, бот называл то одну, то другую цену.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, color, storage, variant, price, currency, status, origin, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'USD', 'active', ?, ?)`
+  );
+  insert.run("old-esim", "old-esim", "iPhone 17 Pro 256GB eSIM", "синий", null, null, 1165, "manual", "2026-09-14 11:11:07");
+  insert.run("old-phys", "old-phys", "iPhone 17 Pro 256GB физическая SIM + eSIM", "синий", null, null, 1230, "manual", "2026-09-14 11:10:53");
+  const fresh = insert.run("new-esim", "new-esim", "Apple iPhone 17 Pro 256 GB", "синий", "256 GB", "eSIM", 1, "telegram", "2026-10-12 03:24:40").lastInsertRowid;
+  const freshPhys = insert.run("new-phys", "new-phys", "Apple iPhone 17 Pro 256 GB", "синий", "256 GB", "1 физическая SIM + eSIM", 1, "telegram", "2026-10-12 03:24:40").lastInsertRowid;
+  // Прайс-пост канала опубликован давно и редактируется на месте — дата
+  // поста старше ручного прайса, свежесть берётся по моменту записи цены.
+  const message = db.prepare(
+    `INSERT INTO telegram_messages (telegram_chat_id, telegram_message_id, telegram_message_updated_at, telegram_original_text, telegram_text_hash, last_sync_status)
+     VALUES ('-1001', 444, '2025-07-29T10:00:00.000Z', 'Прайс', 'hash', 'ok')`
+  ).run().lastInsertRowid;
+  const link = db.prepare("INSERT INTO message_products (message_id, product_id, price, currency, available, active) VALUES (?, ?, ?, 'USD', 1, 1)");
+  link.run(message, fresh, 1200);
+  link.run(message, freshPhys, 1210);
+
+  const products = JSON.parse(buildTelegramCatalogForAssistant(db)).products;
+  assert.deepEqual(products.map(({ variant, price }) => ({ variant, price })).sort((a, b) => a.price - b.price), [
+    { variant: "eSIM", price: 1200 },
+    { variant: "1 физическая SIM + eSIM", price: 1210 },
+  ]);
+  const search = searchCatalogProducts(db, "iPhone 17 Pro 256 синий");
+  assert.deepEqual(search.map((p) => p.price).sort(), [1200, 1210]);
+});
+
+test("eSIM и физ. SIM одного цвета и памяти — две разные позиции, а не одна", (t) => {
+  // Найдено 2026-10-15: бот уверял «18 Pro Max 256 чёрный есть только eSIM,
+  // с физической симкой нет», хотя в базе была версия физ. SIM за 1870$ —
+  // дедуп склеивал позиции по имени+цвету+памяти, вариант SIM не учитывал.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, color, storage, variant, price, currency, status, origin)
+     VALUES (?, ?, 'iPhone 18 Pro Max', 'Black', '1 TB', ?, ?, 'USD', 'active', 'manual')`
+  );
+  insert.run("a", "a", "eSIM", 2580);
+  insert.run("b", "b", "Физическая SIM + eSIM", 2750);
+  const results = searchCatalogProducts(db, "iPhone 18 Pro Max 1 ТБ черный");
+  assert.deepEqual(results.map((p) => [p.variant, p.price]).sort(), [["eSIM", 2580], ["Физическая SIM + eSIM", 2750]]);
 });
 
 test("search_catalog находит товар, добавленный вручную через админку без единого поста в Telegram", (t) => {
@@ -496,6 +548,22 @@ test("честное «Samsung Galaxy S20 нет» не подменяется �
     selection,
   });
   assert.equal(untouchedLegacy, reply);
+});
+
+test("«обычный iPhone 18» при наличии только 18 Pro/Pro Max — честное «нет» не подменяется списком Pro", () => {
+  const groundedProducts = [
+    { name: "iPhone 18 Pro", storage: "512 GB", color: "Burgundy", variant: "Физическая SIM + eSIM", priceKgs: 154000, available: true },
+    { name: "iPhone 18 Pro Max", storage: "512 GB", color: "Burgundy", variant: "Физическая SIM + eSIM", priceKgs: 193600, available: true },
+  ];
+  const reply = "Обычного iPhone 18 у нас нет в наличии — есть только 18 Pro и 18 Pro Max.";
+  for (const request of ["А обычный iPhone 18 есть?", "айфон 18 есть?"]) {
+    assert.equal(enforceGroundedAvailabilityReply({ reply, groundedProducts, request }), reply, request);
+  }
+  // Но «18 про макс» (по-русски) — та самая модель, страховка срабатывает.
+  const fixed = enforceGroundedAvailabilityReply({ reply: "Сейчас в наличии нет.", groundedProducts, request: "айфон 18 про макс 512 есть?" });
+  assert.match(fixed, /Есть в наличии/);
+  assert.match(fixed, /iPhone 18 Pro Max, 512 GB, Burgundy, Физическая SIM \+ eSIM/);
+  assert.doesNotMatch(fixed, /iPhone 18 Pro,/);
 });
 
 test("голый номер модели не совпадает с чужим товаром с той же цифрой (iPhone 11 ≠ Series 11, PlayStation 4 ≠ AirPods 4)", () => {
@@ -1764,6 +1832,104 @@ test("подтверждённый заказ сохраняется в crm_orde
   // «ул./улица/мкр/просп...», без такого слова адрес не распознаётся вообще
   // (в этом случае поле просто останется пустым, а не «исправленным»).
   assert.match(orders[0].customerAddress, /вавилоа 18/, "адрес сохранён дословно, без исправления на похожее известное название");
+});
+
+test("в заказ попадает товар, который бот предложил клиенту, а не первая позиция каталога", async (t) => {
+  // Найдено 2026-10-15: 25 из 27 заказов на проде записались как «Apple
+  // iPhone 17 256 GB, 80 960 с» — первая позиция каталога, — включая заказ
+  // Dyson HS09 за 44 000 с.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const selection = 'ТОВАРЫ: ' + JSON.stringify({ products: [
+    { name: "Apple iPhone 17 256 GB", storage: "256 GB", variant: "eSIM", price: 920, currency: "USD", priceKgs: 80960, available: true },
+    { name: "Dyson HS09 Co-anda2x Long", price: 500, currency: "USD", priceKgs: 44000, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Black", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Silver", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "eSIM", price: 2580, currency: "USD", priceKgs: 227040, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "Физическая SIM + eSIM", price: 2750, currency: "USD", priceKgs: 242000, available: true },
+  ] });
+  const conversation = crm._upsertConversation({ externalKey: "whatsapp:996555", source: "whatsapp", chatId: "996555", name: "Нурик", inbound: true });
+  crm._publishOrderIfConfirmed(conversation, [
+    { role: "user", content: "Фен Dyson HS09 есть?" },
+    { role: "assistant", content: "Да, **Dyson HS09 Co-anda2x Long** — **44 000 сом**, в наличии ✅ Оформляем?" },
+    { role: "user", content: "Да, оформляйте" },
+  ], selection);
+  const [order] = crm.listOrders();
+  assert.equal(order.productName, "Dyson HS09 Co-anda2x Long");
+  assert.equal(order.amount, 44000);
+});
+
+test("товар заказа уточняется по цвету и типу SIM из ответа бота; не назван — «уточнить по переписке», а не чужой товар", () => {
+  const selection = 'ТОВАРЫ: ' + JSON.stringify({ products: [
+    { name: "Apple iPhone 17 256 GB", storage: "256 GB", variant: "eSIM", price: 920, currency: "USD", priceKgs: 80960, available: true },
+    { name: "Dyson HS09 Co-anda2x Long", price: 500, currency: "USD", priceKgs: 44000, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Black", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Silver", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "eSIM", price: 2580, currency: "USD", priceKgs: 227040, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "Физическая SIM + eSIM", price: 2750, currency: "USD", priceKgs: 242000, available: true },
+  ] });
+  const history = (bot) => [{ role: "assistant", content: bot }, { role: "user", content: "беру" }];
+  const black = orderedCatalogProduct({ selection, history: history("iPhone 18 Pro Max 1 ТБ, чёрный, физическая SIM + eSIM — 242 000 сом. Оформляем?") });
+  assert.deepEqual([black.storage, black.color, black.variant, black.priceKgs], ["1 TB", "Black", "Физическая SIM + eSIM", 242000]);
+  const noColor = orderedCatalogProduct({ selection, history: history("iPhone 18 Pro Max 256 ГБ — 164 560 сом. Оформляем?") });
+  assert.equal(noColor.priceKgs, 164560, "сумма известна точно");
+  assert.equal(noColor.color, null, "а цвет — нет: не выдумываем Black");
+  assert.equal(orderedCatalogProduct({ selection, history: history("Здравствуйте! Какой товар вас интересует?") }), null);
+});
+
+test("рассрочка считается для товара, о котором спросил клиент, а при нескольких конфигурациях — просьба уточнить", () => {
+  const selection = 'ТОВАРЫ: ' + JSON.stringify({ products: [
+    { name: "Apple iPhone 17 256 GB", storage: "256 GB", variant: "eSIM", price: 920, currency: "USD", priceKgs: 80960, available: true },
+    { name: "Dyson HS09 Co-anda2x Long", price: 500, currency: "USD", priceKgs: 44000, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Black", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Silver", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "eSIM", price: 2580, currency: "USD", priceKgs: 227040, available: true },
+    { name: "iPhone 18 Pro Max", storage: "1 TB", color: "Black", variant: "Физическая SIM + eSIM", price: 2750, currency: "USD", priceKgs: 242000, available: true },
+  ] });
+  const exact = financeToolContext("Хочу 18 Pro Max 1 тб черный физ сим в рассрочку на 12 месяцев", selection);
+  assert.match(exact, /Рассрочка: iPhone 18 Pro Max; 12 мес\.; стоимость 242\s000 с/);
+  const ambiguous = financeToolContext("18 Pro Max 1 тб в рассрочку на 12 месяцев", selection);
+  assert.match(ambiguous, /несколько конфигураций с разной ценой/);
+  assert.doesNotMatch(ambiguous, /iPhone 17 256/, "не подставляем первую позицию каталога");
+});
+
+test("«самый дешёвый айфон» — не голый запрос линейки: список без цен на это не отвечает", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  assert.equal(crm._isBareCategoryRequest("Какой самый дешевый айфон у вас?"), false);
+  assert.equal(crm._isBareCategoryRequest("Сколько стоят айфоны?"), false);
+  assert.equal(crm._isBareCategoryRequest("айфоны есть?"), true);
+});
+
+test("список линейки берёт товары из админки тоже — iPhone 18 в нём есть", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, brand, category, color, storage, variant, price, currency, status, origin) VALUES (?, ?, ?, 'Apple', 'iPhone', ?, ?, ?, ?, 'USD', 'active', 'manual')"
+  );
+  insert.run("a", "a", "iPhone 18 Pro Max", "Black", "256 GB", "Физическая SIM + eSIM", 1870);
+  insert.run("b", "b", "iPhone 18 Pro", "Sky Blue", "256 GB", "Физическая SIM + eSIM", 1500);
+  insert.run("c", "c", "iPhone 17 256GB eSIM", null, null, null, 920);
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const reply = crm._categoryBrowseReply("айфоны есть?");
+  assert.match(reply, /iPhone 18 Pro Max/);
+  assert.match(reply, /iPhone 18 Pro(?! Max)/);
+});
+
+test("search_catalog при равном совпадении показывает сначала свежие товары", (t) => {
+  // «iPhone 19?» — по алфавиту «Apple iPhone 17…» шли раньше «iPhone 18…», и
+  // в топ-12 не попадал ни один 18-й: бот называл актуальной линейкой 17-ю.
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare(
+    "INSERT INTO products (slug, normalized_key, official_name, storage, price, currency, status, origin, updated_at) VALUES (?, ?, ?, ?, ?, 'USD', 'active', 'manual', ?)"
+  );
+  for (let i = 0; i < 14; i++) insert.run(`old-${i}`, `old-${i}`, `Apple iPhone 17 Variant ${i}`, `${i}GB`, 900 + i, "2026-09-14 10:00:00");
+  insert.run("new", "new", "iPhone 18 Pro Max", "256 GB", 1870, "2026-10-13 12:10:54");
+  const results = searchCatalogProducts(db, "iPhone 19");
+  assert.equal(results[0].name, "iPhone 18 Pro Max");
 });
 
 test("повторное подтверждение того же заказа не плодит новые строки в crm_orders", async (t) => {

@@ -1,5 +1,6 @@
 // Публичный API витрины. Витрина читает /api/catalog вместо статического data.js.
 const express = require("express");
+const { catalogIdentityKey, catalogFreshness } = require("../services/crm");
 const config = require("../config");
 const { buildContactLink, buildWhatsappLink, GENERIC_MESSAGE } = require("../lib/contact");
 const { recordBuyClick, recordProductView } = require("../services/buy-analytics");
@@ -83,8 +84,23 @@ function createCatalogRouter({ db, azisCrm }) {
       )
       .all(...VISIBLE_STATUSES);
 
+    // Один и тот же товар приходит в базу несколько раз (ручной прайс из
+    // админки и пост канала, два поста с разным написанием) — на сайте
+    // висели рядом цены 14.09 и 12.10 на один iPhone. Показываем только
+    // самую свежую запись каждого товара — то же правило, что у бота
+    // (catalogIdentityKey в services/crm.js).
+    const freshestByKey = new Map();
+    for (const row of rows) {
+      const key = catalogIdentityKey(row);
+      const current = freshestByKey.get(key);
+      if (!current || catalogFreshness(row) > catalogFreshness(current) || (catalogFreshness(row) === catalogFreshness(current) && row.id > current.id)) {
+        freshestByKey.set(key, row);
+      }
+    }
+    const visibleRows = rows.filter((row) => freshestByKey.get(catalogIdentityKey(row)) === row);
+
     res.json({
-      products: rows.map(toPublic),
+      products: visibleRows.map(toPublic),
       contact: {
         // Заказы — в WhatsApp, вопросы — в Telegram.
         whatsapp: config.contact.whatsapp,

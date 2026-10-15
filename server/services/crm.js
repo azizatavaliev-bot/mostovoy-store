@@ -914,7 +914,7 @@ function requestedCatalogProduct(selection, rawRequest) {
   const candidates = available.length === 1 ? available : available.filter((product) => productMatchesRequestedModel(product, request));
   if (!candidates.length) return { product: null, ambiguous: false };
   const text = normalizeModelText(request);
-  const requestColors = new Set(colorTokens(request).filter((token) => CANONICAL_COLORS.has(token)));
+  const requestColors = new Set(colorTokens(request, { keepParens: true }).filter((token) => CANONICAL_COLORS.has(token)));
   const requestSim = /сим|sim|физ/u.test(text) ? catalogSimKey(text) : "";
   const score = (product) => {
     const storageNumber = (normalizeModelText(`${product.storage || ""} ${product.name}`).match(/(\d+)(?:gb|tb)/) || [])[1];
@@ -973,7 +973,7 @@ function offeredInText(selection, assistantText) {
   if (!assistantText.trim()) return null;
   const assistantNormalized = normalizeModelText(assistantText);
   const assistantDigits = digitsOnly(assistantText);
-  const assistantColors = new Set(colorTokens(assistantText).filter((token) => CANONICAL_COLORS.has(token)));
+  const assistantColors = new Set(colorTokens(assistantText, { keepParens: true }).filter((token) => CANONICAL_COLORS.has(token)));
   const assistantSim = catalogSimKey(assistantText);
   const nameMentioned = (product) => {
     const tokens = normalizeModelText(String(product.name).replace(/^apple\s+/i, "")).split(" ").filter((token) => token.length >= 2);
@@ -996,6 +996,47 @@ function offeredInText(selection, assistantText) {
     return { ...offered[0], color: null };
   }
   return null;
+}
+
+// Строки ответа вида «… 256 GB — 134 640 сом (Black, Sky Blue)» сверяются с
+// найденными товарами: у каждого названного цвета этой модели и памяти
+// должна быть хотя бы одна позиция с одной из цен строки. Модель и память
+// берутся из самой строки или из ближайшего заголовка выше.
+function colorPriceIssues(reply, groundedProducts = []) {
+  const products = (groundedProducts || []).filter((product) => product?.name && product.color && Number.isFinite(Number(product.priceKgs)));
+  if (!products.length) return [];
+  const names = [...new Set(products.map((product) => product.name))].map((name) => ({
+    name, tokens: normalizeModelText(String(name).replace(/^apple\s+/i, "")).split(" ").filter(Boolean),
+  }));
+  const storageOf = (text) => (normalizeModelText(text).match(/(\d+)(?:gb|tb)/) || [])[1] || null;
+  const issues = [];
+  let model = null;
+  let storage = null;
+  for (const line of String(reply || "").split("\n")) {
+    const normalized = normalizeModelText(line);
+    const words = new Set(normalized.split(" "));
+    const mentioned = names.filter((item) => item.tokens.every((token) => words.has(token)))
+      .sort((a, b) => b.tokens.length - a.tokens.length)[0];
+    if (mentioned && mentioned.name !== model) { model = mentioned.name; storage = null; }
+    storage = storageOf(line) || storage;
+    if (!model) continue;
+    const digits = digitsOnly(line);
+    const prices = [...digits.matchAll(/(\d{3,7})\s*(?:сом|с(?![а-яa-z])|\$|usd)|\$\s?(\d{3,6})/giu)].map((m) => Number(m[1] || m[2]));
+    if (!prices.length) continue;
+    const colors = [...new Set(colorTokens(line, { keepParens: true }).filter((token) => CANONICAL_COLORS.has(token)))];
+    for (const color of colors) {
+      const candidates = products.filter((product) => product.name === model
+        && (!storage || storageOf(`${product.storage || ""} ${product.name}`) === storage)
+        && colorTokens(product.color).includes(color));
+      if (!candidates.length) continue;
+      const ok = candidates.some((product) => prices.includes(Math.ceil(Number(product.priceKgs))) || prices.includes(Math.ceil(Number(product.priceUsd))) || prices.includes(Number(product.price)));
+      if (!ok) {
+        const actual = [...new Set(candidates.map((product) => `${Math.ceil(Number(product.priceKgs)).toLocaleString("ru-RU")} сом${product.variant ? ` (${product.variant})` : ""}`))].join(", ");
+        issues.push(`${model}${storage ? ` ${storage}` : ""}, ${candidates[0].color}: ${actual}`);
+      }
+    }
+  }
+  return [...new Set(issues)];
 }
 
 function financeToolContext(request, selection) {
@@ -1068,8 +1109,11 @@ const COLOR_WORDS = [
   [/^(?:pink|розов\w*)$/u, "розовый"],
 ];
 const CANONICAL_COLORS = new Set(COLOR_WORDS.map(([, name]) => name));
-function colorTokens(text) {
-  let value = ` ${String(text || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\([^)]*\)/g, " ")} `;
+// keepParens: в тексте ответа цвета часто перечислены в скобках («(Black,
+// Sky Blue)»), а в карточке товара скобки — пояснение («белый (Silver)»).
+function colorTokens(text, { keepParens = false } = {}) {
+  const raw = String(text || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  let value = ` ${keepParens ? raw : raw.replace(/\([^)]*\)/g, " ")} `;
   for (const [re, name] of COLOR_PHRASES) value = value.replace(re, name);
   return normalizeSearchText(value).split(" ").filter(Boolean).map((token) => {
     const alias = COLOR_WORDS.find(([re]) => re.test(token));
@@ -2212,14 +2256,23 @@ class CrmService {
     if (!row) return null;
     const status = ["new", "contacted", "confirmed", "cancelled"].includes(patch?.status) ? patch.status : undefined;
     const note = patch?.note === undefined ? undefined : String(patch.note || "").slice(0, 2000);
-    if (status === undefined && note === undefined) return this.listOrders().find((o) => o.id === Number(id)) || null;
+    // Товар и сумму можно исправить: до 2026-10-15 бот записывал в заказ
+    // первую позицию каталога вместо выбранного клиентом товара.
+    const productName = typeof patch?.productName === "string" && patch.productName.trim() ? patch.productName.trim().slice(0, 300) : undefined;
+    const hasAmount = patch && Object.prototype.hasOwnProperty.call(patch, "amount");
+    const amount = hasAmount && patch.amount !== null && Number.isFinite(Number(patch.amount)) ? Number(patch.amount) : null;
+    if (status === undefined && note === undefined && productName === undefined && !hasAmount) {
+      return this.listOrders().find((o) => o.id === Number(id)) || null;
+    }
     this.db.prepare(
       `UPDATE crm_orders SET
          status = COALESCE(?, status),
          note = COALESCE(?, note),
+         product_name = COALESCE(?, product_name),
+         amount = CASE WHEN ? THEN ? ELSE amount END,
          updated_at = datetime('now')
        WHERE id = ?`
-    ).run(status ?? null, note ?? null, Number(id));
+    ).run(status ?? null, note ?? null, productName ?? null, hasAmount ? 1 : 0, amount, Number(id));
     return this.listOrders().find((o) => o.id === Number(id)) || null;
   }
 
@@ -2652,7 +2705,29 @@ prompt_patch — не больше двух коротких предложен�
   // (см. _reviewReply) не мог подменить проверенный товар на выдуманный —
   // такое найдено на проде: супервизор переписал верный черновик про Garmin
   // Fenix 8 (после успешного tool call) на случайный Canon.
-  async _chatWithCatalogTool({ system, messages, user, model, onUsage, conversationId = null }) {
+  // Ответ бота сверяется с найденными в базе товарами построчно: если
+  // цвету в строке приписана цена, которой у этого цвета нет («iPhone 18 Pro
+  // 256 GB — 134 640 (Black, Sky Blue или Burgundy)», а Sky Blue стоит
+  // 132 000 — живой тест 2026-10-15), черновик переписывается один раз с
+  // точным указанием, что не так.
+  async _chatWithCatalogTool(args) {
+    const first = await this._chatWithCatalogToolOnce(args);
+    const issues = colorPriceIssues(first.reply, first.groundedProducts);
+    if (!issues.length) return first;
+    this._logEvent(args.conversationId ?? null, "warn", "generation", "price_color.mismatch", "Цвету в ответе приписана чужая цена — ответ переписан", { issues: issues.slice(0, 5) });
+    try {
+      const second = await this._chatWithCatalogToolOnce({
+        ...args,
+        system: `${args.system}\n\nИСПРАВЛЕНИЕ: в предыдущем варианте ответа цены были приписаны не тем цветам. По данным базы:\n${issues.map((issue) => `- ${issue}`).join("\n")}\nНазывай цену отдельно для каждого цвета (или группируй вместе только цвета с ОДИНАКОВОЙ ценой).`,
+      });
+      return second;
+    } catch (error) {
+      this._logEvent(args.conversationId ?? null, "warn", "generation", "price_color.retry_failed", error.message);
+      return first;
+    }
+  }
+
+  async _chatWithCatalogToolOnce({ system, messages, user, model, onUsage, conversationId = null }) {
     if (typeof this.ai.chatTextWithTools !== "function") {
       const reply = await this.ai.chatText({ system, messages, user, model, onUsage });
       return { reply, groundedProductNames: new Set(), groundedProducts: [] };
@@ -4133,8 +4208,11 @@ module.exports = {
   enforceCatalogAvailabilityReply,
   enforceGroundedAvailabilityReply,
   renderCatalogForPrompt,
+  catalogIdentityKey,
+  catalogFreshness: freshness,
   orderedCatalogProduct,
   requestedCatalogProduct,
+  colorPriceIssues,
   financeToolContext,
   stageActionForInbound,
   classifyImportantEscalation,

@@ -13,6 +13,7 @@ const {
   enforceGroundedAvailabilityReply,
   orderedCatalogProduct,
   financeToolContext,
+  colorPriceIssues,
   stageActionForInbound,
   classifyImportantEscalation,
   telegramHtml,
@@ -3415,4 +3416,55 @@ test("baseModelLine сводит полный SKU канала к коротко
   assert.equal(baseModelLine("iPhone 15 Pro Max"), "iPhone 15 Pro Max", "уже короткое название не трогаем");
   assert.equal(baseModelLine("Apple iPhone 16e 128 GB"), "iPhone 16e");
   assert.equal(baseModelLine("iPhone Air"), "iPhone Air", "без цифры и памяти — как есть");
+});
+
+test("цвету в ответе приписана чужая цена — проверка это ловит, правильные ответы не трогает", () => {
+  // Живой тест 2026-10-15: «iPhone 18 Pro 256 GB — 134 640 сомов (Black, Sky
+  // Blue или Burgundy)», а Sky Blue стоит 132 000.
+  const grounded = [
+    { name: "iPhone 18 Pro", storage: "256 GB", color: "Sky Blue", variant: "Физическая SIM + eSIM", price: 1500, priceKgs: 132000, priceUsd: 1500 },
+    { name: "iPhone 18 Pro", storage: "256 GB", color: "Black", variant: "Физическая SIM + eSIM", price: 1530, priceKgs: 134640, priceUsd: 1530 },
+    { name: "iPhone 18 Pro", storage: "256 GB", color: "Burgundy", variant: "Физическая SIM + eSIM", price: 1530, priceKgs: 134640, priceUsd: 1530 },
+  ];
+  const issues = colorPriceIssues("Чаще всего берут iPhone 18 Pro 256 GB — 134 640 сомов (Black, Sky Blue или Burgundy).", grounded);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0], /^iPhone 18 Pro 256, Sky Blue: 132\s000 сом \(Физическая SIM \+ eSIM\)$/);
+  assert.deepEqual(colorPriceIssues("<b>iPhone 18 Pro</b>\n- 256 GB, Sky Blue — 132 000 сом\n- 256 GB, Black / Burgundy — 134 640 сом", grounded), []);
+  assert.deepEqual(colorPriceIssues("iPhone 18 Pro 256 голубой — $1500", grounded), []);
+});
+
+test("ответ с чужой ценой у цвета переписывается один раз с указанием ошибки", async (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const insert = db.prepare("INSERT INTO products (slug, normalized_key, official_name, color, storage, variant, price, currency, status, origin) VALUES (?, ?, 'iPhone 18 Pro', ?, '256 GB', 'Физическая SIM + eSIM', ?, 'USD', 'active', 'manual')");
+  insert.run("a", "a", "Sky Blue", 1500);
+  insert.run("b", "b", "Black", 1530);
+  const systems = [];
+  const ai = {
+    enabled: true,
+    chatTextWithTools: async (args) => {
+      systems.push(args.system);
+      await args.executeTool("search_catalog", { query: "iPhone 18 Pro 256" });
+      return systems.length === 1
+        ? "iPhone 18 Pro 256 GB — 134 640 сом (Black или Sky Blue)."
+        : "iPhone 18 Pro 256 GB: Sky Blue — 132 000 сом, Black — 134 640 сом.";
+    },
+  };
+  const crm = new CrmService({ db, ai, amocrm: { enabled: false }, autoReplyDebounceMs: 0 });
+  crm.saveSettings({ supervisorEnabled: false, templateRouterEnabled: false });
+  const result = await crm.testBot({ message: "18 Pro 256 сколько?" });
+  assert.equal(systems.length, 2);
+  assert.match(systems[1], /Sky Blue: 132\s000 сом/);
+  assert.match(result.reply, /Sky Blue — 132 000 сом/);
+});
+
+test("менеджер может исправить товар и сумму в заказе", (t) => {
+  const db = createConnection(":memory:");
+  t.after(() => db.close());
+  const crm = new CrmService({ db, ai: { enabled: false }, amocrm: { enabled: false } });
+  const id = db.prepare("INSERT INTO crm_orders (source, product_name, amount, currency) VALUES ('whatsapp', 'Apple iPhone 17 256 GB', 80960, 'KGS')").run().lastInsertRowid;
+  const fixed = crm.updateOrder(id, { productName: "Dyson HS09 Co-anda2x Long", amount: 44000 });
+  assert.deepEqual([fixed.productName, fixed.amount, fixed.status], ["Dyson HS09 Co-anda2x Long", 44000, "new"]);
+  const unknown = crm.updateOrder(id, { productName: "Уточнить по переписке", amount: null, status: "cancelled" });
+  assert.deepEqual([unknown.productName, unknown.amount, unknown.status], ["Уточнить по переписке", null, "cancelled"]);
 });

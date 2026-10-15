@@ -171,3 +171,18 @@ test("при выключенном автосинке пост канала и�
   assert.deepEqual(await res.json(), { ok: true, ignored: "channel_auto_sync_disabled" });
   assert.equal(app.db.prepare("SELECT COUNT(*) n FROM sync_jobs").get().n, 0);
 });
+
+test("сайт показывает одну, самую свежую запись товара, а не старый прайс рядом с новым", async (t) => {
+  const app = startApp();
+  t.after(app.close);
+  const insert = app.db.prepare(
+    `INSERT INTO products (slug, normalized_key, official_name, color, storage, variant, price, currency, status, origin, updated_at)
+     VALUES (?, ?, ?, 'синий', ?, ?, ?, 'USD', 'active', ?, ?)`
+  );
+  insert.run("old", "old", "iPhone 17 Pro 256GB eSIM", null, null, 1165, "manual", "2026-09-14 11:11:07");
+  insert.run("new", "new", "Apple iPhone 17 Pro 256 GB", "256 GB", "eSIM", 1200, "telegram", "2026-10-12 03:24:40");
+  insert.run("phys", "phys", "Apple iPhone 17 Pro 256 GB", "256 GB", "1 физическая SIM + eSIM", 1210, "telegram", "2026-10-12 03:24:40");
+  const catalog = await (await fetch(`${app.base}/api/catalog`)).json();
+  const iphones = catalog.products.filter((p) => /iPhone 17 Pro 256/.test(p.name)).map((p) => p.price).sort();
+  assert.deepEqual(iphones, [1200, 1210]);
+});

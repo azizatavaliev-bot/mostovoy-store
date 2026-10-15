@@ -13,6 +13,8 @@ const {
   enforceGroundedAvailabilityReply,
   orderedCatalogProduct,
   financeToolContext,
+  classifyReactiveTemplate,
+  stripUnverifiedInstallmentClaims,
   colorPriceIssues,
   stageActionForInbound,
   classifyImportantEscalation,
@@ -1209,7 +1211,8 @@ test("ответ бота ждёт подтверждения и отправл�
   const [draft] = crm.listApprovals("pending");
   assert.equal(sent, 0);
   assert.equal(draft.customerMessage, "Есть iPhone 17?");
-  assert.equal(draft.aiReply, `Да, iPhone 17 есть в наличии.\n\n${FIRST_CONTACT_CATALOG_TEXT}`);
+  // Клиент сразу спросил про товар — меню категорий к ответу не добавляется.
+  assert.equal(draft.aiReply, "Да, iPhone 17 есть в наличии.");
 
   await crm.approveReply(draft.id, "Да, есть. Какой цвет вас интересует?");
 
@@ -1332,7 +1335,8 @@ test("гипервизор получает только историю диал
   assert.equal(calls[1].system, "Только факты из истории. Не оценивай ответ.");
   assert.deepEqual(calls[1].messages, [{ role: "user", content: "Есть iPhone 17?" }]);
   assert.equal("user" in calls[1], false);
-  assert.equal(draft.aiReply, `Да, iPhone 17 есть в наличии.\n\n${FIRST_CONTACT_CATALOG_TEXT}`);
+  // Клиент сразу спросил про товар — меню категорий к ответу не добавляется.
+  assert.equal(draft.aiReply, "Да, iPhone 17 есть в наличии.");
   assert.equal(draft.summary, "Клиент ищет iPhone 17 и уточняет наличие. Цвет пока не выбран.");
 });
 
@@ -1890,8 +1894,11 @@ test("рассрочка считается для товара, о которо
   ] });
   const exact = financeToolContext("Хочу 18 Pro Max 1 тб черный физ сим в рассрочку на 12 месяцев", selection);
   assert.match(exact, /Рассрочка: iPhone 18 Pro Max; 12 мес\.; стоимость 242\s000 с/);
+  // Несколько конфигураций — расчёт по формуле магазина для каждой, чтобы
+  // модель не делила цену на срок сама, без наценки.
   const ambiguous = financeToolContext("18 Pro Max 1 тб в рассрочку на 12 месяцев", selection);
-  assert.match(ambiguous, /несколько конфигураций с разной ценой/);
+  assert.match(ambiguous, /Black, eSIM: стоимость 227\s040 с; платёж/);
+  assert.match(ambiguous, /Black, Физическая SIM \+ eSIM: стоимость 242\s000 с; платёж/);
   assert.doesNotMatch(ambiguous, /iPhone 17 256/, "не подставляем первую позицию каталога");
 });
 
@@ -1927,10 +1934,14 @@ test("search_catalog при равном совпадении показывае
   const insert = db.prepare(
     "INSERT INTO products (slug, normalized_key, official_name, storage, price, currency, status, origin, updated_at) VALUES (?, ?, ?, ?, ?, 'USD', 'active', 'manual', ?)"
   );
-  for (let i = 0; i < 14; i++) insert.run(`old-${i}`, `old-${i}`, `Apple iPhone 17 Variant ${i}`, `${i}GB`, 900 + i, "2026-09-14 10:00:00");
+  // 14 вариантов одной линейки (разные объёмы), как в реальном прайсе.
+  for (let i = 0; i < 14; i++) insert.run(`old-${i}`, `old-${i}`, "Apple iPhone 17 Pro", `${(i + 1) * 64}GB`, 900 + i, "2026-09-14 10:00:00");
   insert.run("new", "new", "iPhone 18 Pro Max", "256 GB", 1870, "2026-10-13 12:10:54");
+  // Широкий запрос — по одной позиции каждой линейки от дешёвой к дорогой:
+  // 18-я линейка обязана быть в выдаче, а не потеряться за 14 вариантами 17-й.
   const results = searchCatalogProducts(db, "iPhone 19");
-  assert.equal(results[0].name, "iPhone 18 Pro Max");
+  assert.ok(results.some((p) => p.name === "iPhone 18 Pro Max"), results.map((p) => p.name).join(", "));
+  assert.equal(results[0].price, 900, "первой идёт самая дешёвая позиция");
 });
 
 test("повторное подтверждение того же заказа не плодит новые строки в crm_orders", async (t) => {
@@ -2378,7 +2389,7 @@ test("возражение «я подумаю» отвечает готовым
   );
 });
 
-test("возражение «дорого» отвечает готовым текстом без вызова ИИ", async (t) => {
+test("возражение «дорого» уходит в генерацию (правило «без дожима» называет доступный вариант), а не в пассивный шаблон", async (t) => {
   const db = createConnection(":memory:");
   const previousToken = config.telegram.botToken;
   config.telegram.botToken = "test-token";
@@ -2389,7 +2400,7 @@ test("возражение «дорого» отвечает готовым те
   let aiCalled = false;
   const crm = new CrmService({
     db,
-    deepseek: { enabled: true, chatText: async () => { aiCalled = true; return "не должно вызываться"; } },
+    deepseek: { enabled: true, chatText: async () => { aiCalled = true; return "Есть вариант доступнее: iPhone 17e — 63 360 сом."; } },
     amocrm: { enabled: false },
     fetchImpl: async (url) => {
       if (!String(url).includes("api.telegram.org")) return { ok: true, status: 200, text: async () => "" };
@@ -2397,19 +2408,22 @@ test("возражение «дорого» отвечает готовым те
     },
     autoReplyDebounceMs: 0,
   });
+  crm.saveSettings({ supervisorEnabled: false, templateRouterEnabled: false });
 
   const message602 = { date: 1_700_000_000, chat: { id: 1602, type: "private" }, from: { id: 1602, first_name: "Клиент" } };
   await crm.receiveTelegram({ ...message602, message_id: 599, text: "Привет" });
   await crm.receiveTelegram({ ...message602, message_id: 602, text: "Ой, дороговато для меня" });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 20));
 
-  assert.equal(aiCalled, false);
-  const conversation = crm.listConversations()[0];
-  const detail = crm.getConversation(conversation.id);
-  assert.equal(
-    detail.messages.at(-1).text,
-    "Понимаю вас 😊 Если что-то понадобится — пишите, помогу."
-  );
+  assert.equal(aiCalled, true);
+  const detail = crm.getConversation(crm.listConversations()[0].id);
+  assert.notEqual(detail.messages.at(-1).text, "Понимаю вас 😊 Если что-то понадобится — пишите, помогу.");
+});
+
+test("«недорогой» в просьбе о совете и «дорого» — не шаблоны; «подумаю» — шаблон", () => {
+  assert.equal(classifyReactiveTemplate("Посоветуйте телефон маме, недорогой"), null);
+  assert.equal(classifyReactiveTemplate("Дорого, в другом магазине дешевле"), null);
+  assert.match(classifyReactiveTemplate("Ну я подумаю"), /Хорошо, понимаю/);
 });
 
 test("реальный адрес магазина есть в промпте ИИ, а не только в тексте готового шаблона", async (t) => {
@@ -2923,20 +2937,19 @@ test("выключенный роутер шаблонов не вызывает
   assert.equal(sent.at(-1), "Обычный ответ модели.");
 });
 
-test("каталог категорий добавляется к первому ответу нового клиента, даже если ответ ушёл шаблоном, и не утекает в следующий диалог", async (t) => {
+test("каталог категорий добавляется к первому ответу нового клиента при расплывчатом начале и не утекает в следующий диалог", async (t) => {
   const { crm, sent } = makeTemplateCrm(t, {
     chatText: async () => "не должно вызываться",
     chatJson: async () => ({ template_id: null }),
   });
 
-  // Первое сообщение нового клиента — сразу возражение, не приветствие:
-  // classifyReactiveTemplate отвечает без ИИ, но клиент всё равно должен
-  // увидеть список категорий, как будто бы это было первое сообщение вообще.
-  await crm.receiveTelegram(templateMessage(801, "Дорого для меня, если честно"));
+  // Первое сообщение нового клиента — расплывчатое «подумаю», не приветствие:
+  // ответ уходит шаблоном без ИИ, и клиент видит список категорий.
+  await crm.receiveTelegram(templateMessage(801, "Я подумаю пока"));
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(
     sent.at(-1),
-    `Понимаю вас 😊 Если что-то понадобится — пишите, помогу.\n\n${FIRST_CONTACT_CATALOG_TEXT}`
+    `Хорошо, понимаю 😊 Если появятся вопросы — пишите в любое время.\n\n${FIRST_CONTACT_CATALOG_TEXT}`
   );
 
   // Второе сообщение того же клиента — снова шаблонный ответ (жалоба).
@@ -3467,4 +3480,29 @@ test("менеджер может исправить товар и сумму в
   assert.deepEqual([fixed.productName, fixed.amount, fixed.status], ["Dyson HS09 Co-anda2x Long", 44000, "new"]);
   const unknown = crm.updateOrder(id, { productName: "Уточнить по переписке", amount: null, status: "cancelled" });
   assert.deepEqual([unknown.productName, unknown.amount, unknown.status], ["Уточнить по переписке", null, "cancelled"]);
+});
+
+test("обещание «рассрочка без первоначального взноса» заменяется честной фразой", () => {
+  assert.equal(
+    stripUnverifiedInstallmentClaims("Да, рассрочка доступна без первоначального взноса. Сроки 3, 6 или 12 месяцев."),
+    "Условия по первоначальному взносу и банку подтверждает менеджер при оформлении. Сроки 3, 6 или 12 месяцев."
+  );
+  assert.equal(stripUnverifiedInstallmentClaims("Рассрочка на 6 месяцев — 22 248 с/мес."), "Рассрочка на 6 месяцев — 22 248 с/мес.");
+});
+
+test("цвет в косвенной форме («в чёрном») понимается так же, как «Black»", () => {
+  const selection = 'X: ' + JSON.stringify({ products: [
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Black", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+    { name: "iPhone 18 Pro Max", storage: "256 GB", color: "Silver", variant: "Физическая SIM + eSIM", price: 1870, currency: "USD", priceKgs: 164560, available: true },
+  ] });
+  const product = orderedCatalogProduct({ selection, history: [{ role: "assistant", content: "iPhone 18 Pro Max 256 ГБ в чёрном — 164 560 сомов. Оформляем?" }, { role: "user", content: "да" }] });
+  assert.equal(product.color, "Black");
+});
+
+test("скрытие адреса не задевает обычные слова на «пер», «ул», «мкр»", () => {
+  const { buildMapping } = require("../server/services/privacy");
+  for (const text of ["Без первоначального взноса можно?", "какая переплата?", "перезагрузите наушники", "улучшенная камера"]) {
+    assert.deepEqual([...buildMapping([text]).keys()], [], text);
+  }
+  assert.deepEqual([...buildMapping(["доставка на ул Ахунбаева 10, мкр Джал 12"]).keys()], ["ул Ахунбаева 10", "мкр Джал 12"]);
 });

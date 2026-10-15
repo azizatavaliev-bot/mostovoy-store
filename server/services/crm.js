@@ -231,6 +231,18 @@ function isFirstContactGreeting(text) {
   return /^[/!]?(привет|здравствуй(?:те)?|добрый\s+(?:день|вечер|утро)|хай|start|hi|hello|здрасте|йо)[\s!.,]*$/u.test(value);
 }
 
+// Меню категорий в конце первого ответа нужно, только если клиент начал
+// расплывчато («здравствуйте, доставляете?»). Если он сразу спросил про
+// товар или цену, огромное меню после ответа прячет сам ответ и выглядит
+// как спам (живой тест 2026-10-15: меню прилипало почти к каждому диалогу).
+function isVagueFirstMessage(text) {
+  const value = String(text || "").trim();
+  if (!value) return true;
+  if (/\d/.test(value) || value.length > 40) return false;
+  if (CATALOG_FAMILIES.some((family) => family.request.test(value))) return false;
+  return !/айфон|iphone|самсунг|samsung|телефон|смартфон|ноутбук|наушник|часы|планшет|airpods|macbook|ipad|garmin|dyson|сколько|цен[аы]|стоит|почем|почём|купил|сломал|не\s+работает/iu.test(value);
+}
+
 function isStartCommand(text) {
   return /^\/start(?:\s.*)?$/iu.test(String(text || "").trim());
 }
@@ -368,11 +380,12 @@ const REACTIVE_TEMPLATES = [
     pattern: /(?:я\s+)?подума(?:ю|ем)|над(?:о|а)\s+подумать|дай(?:те)?\s+подумать|мне\s+нужно\s+время|рассмотрю\s+ещ[её]/iu,
     text: "Хорошо, понимаю 😊 Если появятся вопросы — пишите в любое время.",
   },
-  {
-    kind: "expensive",
-    pattern: /дорог(?:о|овато|ая|ой)|не\s+потяну|не\s+укладываюсь\s+в\s+бюджет|дешевле\s+есть|скидк[уи]\s+можно/iu,
-    text: "Понимаю вас 😊 Если что-то понадобится — пишите, помогу.",
-  },
+  // «Дорого» больше не отвечается шаблоном: «Понимаю вас, пишите, если что»
+  // не называл даже более доступный вариант, которого требует правило
+  // владельца «без дожима» (ASSISTANT_NO_PUSH_POLICY), а «недорогой» в
+  // «посоветуйте телефон маме, недорогой» ловился как возражение и клиент
+  // вместо подборки получал «пишите, если что» (живой тест 2026-10-15).
+  // Теперь это обычная генерация по ASSISTANT_NO_PUSH_POLICY.
 ];
 
 // Системный промпт ИИ-роутера шаблонов (см. _routeTemplate и templates.js).
@@ -441,7 +454,11 @@ function classifySalesTemplate(text) {
   else if (/мошенник|не\s+обман|можно\s+(?:вам\s+)?доверять|ишенсе\s+болобу|алдамч/iu.test(normalized)) kind = "trust";
   else if (/^(?:(?:у\s+вас|сиздерде)\s+)?(?:есть|барбы)?\s*(?:рассроч|бөлүп\s+төл)/iu.test(normalized)) kind = "installment";
   else if (/^(?:(?:у\s+вас|сиздерде)\s+)?(?:есть|барбы)?\s*(?:trade.?in|трейд.?ин|алмаштыр)/iu.test(normalized)) kind = "trade_in";
-  else if (/доставк|жеткир/iu.test(normalized) && !/(?:росси|казахстан|узбекистан|москв|алмат|астан|ташкент)/iu.test(normalized)) kind = "delivery";
+  // «Сколько стоит доставка AirPods Pro 3?» — вопрос про конкретный товар и
+  // стоимость: шаблон «какую технику и в какой город?» переспрашивал то, что
+  // клиент уже сказал (живой тест 2026-10-15). Такие — в обычную генерацию.
+  else if (/доставк|жеткир/iu.test(normalized) && !/(?:росси|казахстан|узбекистан|москв|алмат|астан|ташкент)/iu.test(normalized)
+    && !/сколько|стоимост|цен[аы]|почем|почём|\d|айфон|iphone|airpods|аирпод|эйрпод|samsung|самсунг|macbook|макбук|ipad|айпад|garmin|dyson|дайсон|playstation|ps5|ош(?![а-я])|оше|джалал|каракол|нарын|талас|баткен|токмок/iu.test(normalized)) kind = "delivery";
   return kind ? { kind, text: MOSTOVOY_SALES_TEMPLATES[kind][language] } : null;
 }
 
@@ -618,11 +635,11 @@ function requestedReplyCurrency(request, context = request) {
 function pricesMentionedInReply(reply, currency) {
   const text = String(reply || "");
   const pattern = currency === "KGS"
-    ? /(\d[\d \u00a0\u202f.,]*)\s*(?:сом\w*|с)(?=\s|$|[.,;!?])/giu
+    ? /(\d[\d \u00a0\u202f.,]*)\s*(?:сом[а-яё]*|с)(?=\s|$|[.,;!?])/giu
     : currency === "USD"
-      ? /\$\s*(\d[\d \u00a0\u202f.,]*)|(\d[\d \u00a0\u202f.,]*)\s*(?:\$|usd\b|доллар\w*)/giu
+      ? /\$\s*(\d[\d \u00a0\u202f.,]*)|(\d[\d \u00a0\u202f.,]*)\s*(?:\$|usd\b|доллар[а-яё]*)/giu
       : currency === "RUB"
-        ? /(\d[\d \u00a0\u202f.,]*)\s*(?:₽|rub\b|рубл\w*)/giu
+        ? /(\d[\d \u00a0\u202f.,]*)\s*(?:₽|rub\b|рубл[а-яё]*)/giu
         : /(\d[\d \u00a0\u202f.,]*)\s*(?:₸|kzt\b|тенге)/giu;
   return [...text.matchAll(pattern)]
     .map((match) => Number(String(match[1] || match[2] || "").replace(/\D/g, "")))
@@ -689,7 +706,7 @@ function enforceCatalogPriceReply({ reply, request, context = request, selection
   const expectedPrices = products.map((product) => roundAssistantPrice(Number(product[valueField]), currency));
   const mentionedPrices = pricesMentionedInReply(output, currency);
   const hasCatalogPrice = mentionedPrices.some((price) => expectedPrices.includes(price));
-  const refusesPrice = /(?:не\s+могу|не\s+смогу|не\s+назову|нет|отсутствует)[^.!?\n]{0,90}(?:точн\w*\s+)?(?:цен\w*|сумм\w*)|(?:точн\w*\s+)?(?:цен\w*|сумм\w*)[^.!?\n]{0,90}(?:нет|не\s+могу|не\s+смогу)|пересч[её]т[^.!?\n]{0,60}не\s+буду/iu.test(output);
+  const refusesPrice = /(?:не\s+могу|не\s+смогу|не\s+назову|нет|отсутствует)[^.!?\n]{0,90}(?:точн[а-яё]*\s+)?(?:цен[а-яё]*|сумм[а-яё]*)|(?:точн[а-яё]*\s+)?(?:цен[а-яё]*|сумм[а-яё]*)[^.!?\n]{0,90}(?:нет|не\s+могу|не\s+смогу)|пересч[её]т[^.!?\n]{0,60}не\s+буду/iu.test(output);
   const wrongDefaultRub = currency !== "RUB" && /(?:₽|\brub\b|рубл)/iu.test(output);
   if (!refusesPrice && hasCatalogPrice && !wrongDefaultRub) return reply;
 
@@ -907,12 +924,12 @@ function enforceCatalogAvailabilityReply({ reply, request, context = request, se
 function requestedCatalogProduct(selection, rawRequest) {
   // «на 12 месяцев», «3 мес» — срок рассрочки, а не номер модели: иначе «12»
   // требовалось найти в названии товара, и рассрочка не считалась вообще.
-  const request = String(rawRequest || "").replace(/(?:на\s+)?\d+\s*(?:мес\w*|month\w*)/giu, " ");
+  const request = String(rawRequest || "").replace(/(?:на\s+)?\d+\s*(?:мес[а-яё]*|month\w*)/giu, " ");
   const available = productsFromSelection(selection).filter((product) => Number.isFinite(Number(product.price)));
   // Подборка из одного товара — он и есть (так бывает, когда подборку уже
   // сузили до конкретной позиции).
   const candidates = available.length === 1 ? available : available.filter((product) => productMatchesRequestedModel(product, request));
-  if (!candidates.length) return { product: null, ambiguous: false };
+  if (!candidates.length) return { product: null, ambiguous: null };
   const text = normalizeModelText(request);
   const requestColors = new Set(colorTokens(request, { keepParens: true }).filter((token) => CANONICAL_COLORS.has(token)));
   const requestSim = /сим|sim|физ/u.test(text) ? catalogSimKey(text) : "";
@@ -927,9 +944,9 @@ function requestedCatalogProduct(selection, rawRequest) {
   const best = Math.max(...scored.map((item) => item.score));
   const top = scored.filter((item) => item.score === best).map((item) => item.product);
   const prices = new Set(top.map((product) => `${product.price} ${product.currency}`));
-  if (prices.size > 1) return { product: null, ambiguous: true };
+  if (prices.size > 1) return { product: null, ambiguous: top };
   const product = top[0];
-  return { product: { ...product, price: Number(product.price), currency: String(product.currency).toUpperCase() }, ambiguous: false };
+  return { product: { ...product, price: Number(product.price), currency: String(product.currency).toUpperCase() }, ambiguous: null };
 }
 
 // Какой товар клиент заказывает. Раньше бралась ПЕРВАЯ позиция всего
@@ -944,7 +961,7 @@ function requestedCatalogProduct(selection, rawRequest) {
 // Если ни один способ не дал одной позиции — null: заказ сохраняется с
 // пометкой «уточнить по переписке», а не с чужим товаром.
 function isExplicitOrderText(text) {
-  return /(?<![а-яё])(?:оформ(?:ить|ляйте|ляем|ите|лю)|заказываю|закажу|хочу\s+заказать|давайте\s+(?:закаж\w*|оформ\w*)|беру(?![а-яё])|покупаю(?![а-яё])|заброниру\w*|зарезервиру\w*|резервиру\w*)/iu.test(String(text || ""));
+  return /(?<![а-яё])(?:оформ(?:ить|ляйте|ляем|ите|лю)|заказываю|закажу|хочу\s+заказать|давайте\s+(?:закаж[а-яё]*|оформ[а-яё]*)|беру(?![а-яё])|покупаю(?![а-яё])|заброниру[а-яё]*|зарезервиру[а-яё]*|резервиру[а-яё]*)/iu.test(String(text || ""));
 }
 
 const digitsOnly = (text) => String(text || "").replace(/(\d)[\s\u00a0\u202f](?=\d{3}(?!\d))/g, "$1");
@@ -1002,6 +1019,25 @@ function offeredInText(selection, assistantText) {
 // найденными товарами: у каждого названного цвета этой модели и памяти
 // должна быть хотя бы одна позиция с одной из цен строки. Модель и память
 // берутся из самой строки или из ближайшего заголовка выше.
+// Условия рассрочки (взнос, банк, одобрение) в данных магазина не указаны,
+// но модель на «без первоначального взноса можно?» отвечала «да» даже при
+// прямом запрете в промпте (живой тест 2026-10-15). Предложения с таким
+// обещанием заменяются честной фразой.
+const INSTALLMENT_CLAIM_RE = /[^.!?\n]*(?:без\s+(?:перв[а-яё]*\s+)?(?:взнос[а-яё]*|предоплат[а-яё]*)|взнос[а-яё]*\s+(?:не\s+нужен|не\s+требуется)|0\s*%\s*(?:переплат|первоначальн))[^.!?\n]*[.!?]?/giu;
+function stripUnverifiedInstallmentClaims(reply) {
+  const text = String(reply || "");
+  if (!INSTALLMENT_CLAIM_RE.test(text)) return reply;
+  INSTALLMENT_CLAIM_RE.lastIndex = 0;
+  let replaced = false;
+  const result = text.replace(INSTALLMENT_CLAIM_RE, (sentence) => {
+    const lead = sentence.match(/^\s*/)[0];
+    if (replaced) return "";
+    replaced = true;
+    return `${lead}Условия по первоначальному взносу и банку подтверждает менеджер при оформлении.`;
+  });
+  return result.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n");
+}
+
 function colorPriceIssues(reply, groundedProducts = []) {
   const products = (groundedProducts || []).filter((product) => product?.name && product.color && Number.isFinite(Number(product.priceKgs)));
   if (!products.length) return [];
@@ -1057,7 +1093,20 @@ function financeToolContext(request, selection) {
     const total = principal / coefficient;
     const monthly = total / months;
     lines.push(`Рассрочка: ${product.name}; ${months} мес.; стоимость ${formatAssistantPrice(productKgs, "KGS", "KGS")}; после Trade-in ${formatAssistantPrice(principal, "KGS", "KGS")}; платёж ${formatAssistantPrice(monthly, "KGS", "KGS")} в месяц; всего ${formatAssistantPrice(total, "KGS", "KGS")}; переплата ${formatAssistantPrice(total - principal, "KGS", "KGS")}.`);
-  } else if (wantsInstallment && ambiguous) lines.push("Рассрочка: под запрос клиента подходит несколько конфигураций с разной ценой — уточни у клиента память, цвет и тип SIM, тогда расчёт будет точным.");
+  } else if (wantsInstallment && ambiguous) {
+    // Модель на «а на 6 месяцев сколько?» без выбранной конфигурации делила
+    // цену на 6 сама — без наценки рассрочки (живой тест 2026-10-15).
+    // Считаем по формуле магазина для каждой подходящей позиции.
+    const months = Number((text.match(/\b(3|6|12)\s*(?:мес|месяц)/) || [])[1]) || 12;
+    const coefficient = INSTALLMENT_COEFFICIENTS[months];
+    const tradeKgs = trade ? convertAssistantPrice(trade.usd, "USD", "KGS") : 0;
+    lines.push(`Рассрочка на ${months} мес. по формуле магазина (бери платёж только отсюда, не считай сам):`);
+    for (const option of ambiguous.slice(0, 8)) {
+      const principal = Math.max(convertAssistantPrice(option.price, option.currency, "KGS") - tradeKgs, 0);
+      const total = principal / coefficient;
+      lines.push(`- ${[option.name, option.storage, option.color, option.variant].filter(Boolean).join(", ")}: стоимость ${formatAssistantPrice(principal, "KGS", "KGS")}; платёж ${formatAssistantPrice(total / months, "KGS", "KGS")} в месяц; всего ${formatAssistantPrice(total, "KGS", "KGS")}`);
+    }
+  }
   else if (wantsInstallment) lines.push("Для точного расчёта рассрочки сначала назови товар и срок: 3, 6 или 12 месяцев.");
   lines.push("Используй расчёт в ответе. Если клиент подтвердил расчёт, попроси имя и телефон для оформления.");
   return lines.join("\n");
@@ -1103,10 +1152,10 @@ const COLOR_PHRASES = [
   [/cloud\s*white/gu, " белый "], [/light\s*gold/gu, " золотой "], [/cosmic\s*orange/gu, " оранжевый "],
 ];
 const COLOR_WORDS = [
-  [/^(?:black|черн\w*)$/u, "черный"], [/^(?:white|silver|бел\w*|серебр\w*)$/u, "белый"], [/^(?:blue|син\w*)$/u, "синий"],
-  [/^(?:голуб\w*|небесн\w*)$/u, "голубой"], [/^(?:orange|оранж\w*)$/u, "оранжевый"], [/^(?:burgundy|бордо\w*)$/u, "бордовый"],
-  [/^(?:gr[ae]y|сер(?:ый|ая|ое|ого|ом))$/u, "серый"], [/^(?:gold|золот\w*)$/u, "золотой"], [/^(?:green|зелен\w*)$/u, "зеленый"],
-  [/^(?:pink|розов\w*)$/u, "розовый"],
+  [/^(?:black|черн[а-яё]*)$/u, "черный"], [/^(?:white|silver|бел[а-яё]*|серебр[а-яё]*)$/u, "белый"], [/^(?:blue|син[а-яё]*)$/u, "синий"],
+  [/^(?:голуб[а-яё]*|небесн[а-яё]*)$/u, "голубой"], [/^(?:orange|оранж[а-яё]*)$/u, "оранжевый"], [/^(?:burgundy|бордо[а-яё]*)$/u, "бордовый"],
+  [/^(?:gr[ae]y|сер(?:ый|ая|ое|ого|ом))$/u, "серый"], [/^(?:gold|золот[а-яё]*)$/u, "золотой"], [/^(?:green|зелен[а-яё]*)$/u, "зеленый"],
+  [/^(?:pink|розов[а-яё]*)$/u, "розовый"],
 ];
 const CANONICAL_COLORS = new Set(COLOR_WORDS.map(([, name]) => name));
 // keepParens: в тексте ответа цвета часто перечислены в скобках («(Black,
@@ -1127,8 +1176,8 @@ function catalogColorKey(color) {
 }
 function catalogSimKey(text) {
   const t = ` ${String(text || "").toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/e[\s-]?sim/gu, "esim")} `;
-  const active = /(?<![a-zа-я])(?:актив\w*|active)(?![a-zа-я])/u.test(t);
-  const phys = /физ|physical|nano|(?<![a-zа-я])(?:sim|сим|симк\w*)(?![a-zа-я])/u.test(t.replace(/(?:2|две|dual)\s*(?:sim|сим)/gu, " "));
+  const active = /(?<![a-zа-я])(?:актив[а-яё]*|active)(?![a-zа-я])/u.test(t);
+  const phys = /физ|physical|nano|(?<![a-zа-я])(?:sim|сим|симк[а-яё]*)(?![a-zа-я])/u.test(t.replace(/(?:2|две|dual)\s*(?:sim|сим)/gu, " "));
   const esim = /esim/u.test(t);
   return `${phys ? "sim" : esim ? "esim" : ""}${active ? "+active" : ""}`;
 }
@@ -1191,6 +1240,22 @@ function getDedupedCatalogProducts(db) {
         AND NOT EXISTS (SELECT 1 FROM message_products mp WHERE mp.product_id = p.id)`
   ).all();
   products.push(...manualProducts);
+  // Товары, которые пост канала больше не перечисляет (все связи неактивны,
+  // синк пометил «нет в наличии»). Сами в каталог не идут, но участвуют в
+  // дедупе: иначе старая ручная запись того же товара (прайс 14.09)
+  // «воскрешала» распроданную позицию как будто в наличии.
+  const soldOut = db.prepare(
+    `SELECT p.id, p.official_name, p.brand, p.category, p.color, p.storage, p.variant, p.updated_at,
+            NULL AS telegram_message_updated_at
+       FROM products p
+      WHERE p.status != 'hidden' AND p.price IS NOT NULL
+        AND EXISTS (SELECT 1 FROM message_products mp WHERE mp.product_id = p.id)
+        AND NOT EXISTS (
+          SELECT 1 FROM message_products mp JOIN telegram_messages tm ON tm.id = mp.message_id
+           WHERE mp.product_id = p.id AND mp.active = 1 AND tm.is_deleted = 0 AND mp.price IS NOT NULL
+        )`
+  ).all().map((p) => ({ ...p, soldOut: true }));
+  products.push(...soldOut);
   // Дедуп нужен, чтобы у одного и того же товара не было двух записей с
   // РАЗНЫМИ ценами из-за сбоя синка (та самая причина завести этот дедуп —
   // 65 из 651 названий имели конфликт цены между карточками). Но ключ
@@ -1213,7 +1278,7 @@ function getDedupedCatalogProducts(db) {
     const key = catalogIdentityKey(p);
     if (seenProductKeys.has(key)) return false;
     seenProductKeys.add(key);
-    return true;
+    return !p.soldOut;
   });
 }
 
@@ -1265,7 +1330,50 @@ function searchCatalogProducts(db, query) {
   // Те же готовые поля priceKgs/priceUsd/priceRub/priceKzt, что и в тексте
   // каталога (см. ASSISTANT_PRICE_POLICY) — модель не должна сама переводить
   // валюту, а сумма без округления такая же, как в остальном каталоге.
-  return scored.slice(0, 12).map(({ p }) => ({
+  // Широкий запрос («iPhone», «айфоны», «Samsung») подходит к десяткам позиций
+  // одинаково. Раньше в топ-12 попадали 12 вариантов одной свежей линейки
+  // (сплошь 18 Pro), и на «айфон за 40 тысяч есть?» модель отвечала «от
+  // 132 000», хотя iPhone 17e стоит 63 360 (живой тест 2026-10-15). Теперь —
+  // по самой дешёвой доступной позиции каждой линейки, от дешёвых к дорогим,
+  // остаток — свежие позиции.
+  const best = scored.length ? scored[0].score : 0;
+  const top = scored.filter((item) => item.score === best);
+  if (top.length > 12) {
+    const kgs = (p) => convertAssistantPrice(p.price, p.currency, "KGS");
+    const byLine = new Map();
+    for (const { p } of top) {
+      if (!p.available) continue;
+      const line = baseModelLine(p.official_name) || p.official_name;
+      if (!byLine.has(line) || kgs(p) < kgs(byLine.get(line))) byLine.set(line, p);
+    }
+    const lines = [...byLine.values()].sort((a, b) => kgs(a) - kgs(b)).slice(0, 12);
+    const rest = top.map(({ p }) => p).filter((p) => !lines.includes(p));
+    return [...lines, ...rest].slice(0, 12).map(toSearchResult);
+  }
+  return scored.slice(0, 12).map(({ p }) => toSearchResult(p));
+}
+
+// Самая дешёвая доступная позиция среди лучших совпадений: топ-12 отдаёт
+// сначала свежие товары, и на «айфон за 40 тысяч есть?» модель видела
+// только 18 Pro и отвечала «айфоны от 132 000», хотя iPhone 17e стоит
+// 63 360 (живой тест 2026-10-15).
+function cheapestCatalogMatch(db, query) {
+  const products = getDedupedCatalogProducts(db).filter((p) => p.available);
+  const tokens = normalizeModelText(query).replace(/(\d+)(gb|tb|mm)/g, "$1").split(" ").filter((t) => (t.length >= 2 || /^\d$/.test(t)) && !SEARCH_STOP_WORDS.has(t));
+  if (!tokens.length) return null;
+  const scored = products.map((p) => {
+    const haystack = normalizeModelText(`${p.official_name} ${p.brand || ""} ${p.category || ""} ${p.color || ""} ${p.storage || ""} ${p.variant || ""}`).replace(/(\d+)(gb|tb|mm)/g, "$1");
+    return { p, score: tokens.reduce((sum, token) => sum + (tokenMatchesHaystack(haystack, token) ? 1 : 0), 0) };
+  }).filter((item) => item.score > 0);
+  if (!scored.length) return null;
+  const best = Math.max(...scored.map((item) => item.score));
+  const kgs = (p) => convertAssistantPrice(p.price, p.currency, "KGS");
+  const cheapest = scored.filter((item) => item.score === best).sort((a, b) => kgs(a.p) - kgs(b.p))[0].p;
+  return toSearchResult(cheapest);
+}
+
+function toSearchResult(p) {
+  return ({
     name: p.official_name,
     brand: p.brand || null,
     category: p.category || null,
@@ -1279,7 +1387,7 @@ function searchCatalogProducts(db, query) {
     priceRub: Math.ceil(convertAssistantPrice(p.price, p.currency, "RUB")),
     priceKzt: Math.ceil(convertAssistantPrice(p.price, p.currency, "KZT")),
     available: Boolean(p.available),
-  }));
+  });
 }
 
 const CATALOG_SEARCH_TOOL = {
@@ -1505,7 +1613,10 @@ function narrowCatalogForRequest(catalog, request) {
 // факт в самом промпте, доступный в любой генерации независимо от того,
 // сработал ли шаблон.
 const ASSISTANT_STORE_FACTS = `АДРЕС МАГАЗИНА:
-Шоу-рум находится по адресу: Бишкек, ТЦ ЦУМ «Айчурек», проспект Чуй, 155, 1 этаж, отделы A9 и D14. Если клиент на любом языке спрашивает адрес, как найти магазин или где забрать заказ — называй именно этот адрес. Никогда не придумывай другой адрес или номер дома.`;
+Шоу-рум находится по адресу: Бишкек, ТЦ ЦУМ «Айчурек», проспект Чуй, 155, 1 этаж, отделы A9 и D14. Если клиент на любом языке спрашивает адрес, как найти магазин или где забрать заказ — называй именно этот адрес. Никогда не придумывай другой адрес или номер дома.
+
+РАССРОЧКА:
+Срок — 3, 6 или 12 месяцев, ежемесячный платёж бери только из «ИНСТРУМЕНТЫ РАСЧЁТА САЙТА», сам не считай. Первоначальный взнос, банк-партнёр, документы и одобрение в данных магазина не указаны — не обещай «без взноса», «без банка» и т.п.: скажи, что эти условия подтверждает менеджер при оформлении.`;
 
 const ASSISTANT_PRICE_POLICY = `ЦЕНЫ И ИСТОЧНИК:
 Каталог ниже синхронизирован только с публикациями Telegram-канала магазина. Не используй старые цены сайта, память модели или цены без строки из этого каталога.
@@ -1563,6 +1674,7 @@ const ASSISTANT_MULTI_MESSAGE_POLICY = `РАЗБИВКА НА НЕСКОЛЬКО
 const ASSISTANT_NO_PUSH_POLICY = `БЕЗ ДОЖИМА:
 Отвечай только на то, что реально спросил клиент. Не предлагай сам оформить заказ, резерв, рассрочку или Trade-in, не спрашивай «определились с выбором?» и не подталкивай к следующему шагу — только если клиент сам об этом попросил или прямо спросил, что делать дальше.
 Если клиент пишет «дорого», «подумаю» или «позже» — просто ответь по существу (например, назови более доступный вариант, если он есть) и оставь решение клиенту, без давления и без повторных предложений.
+Если клиент говорит, что у других дешевле: спокойно, одной-двумя фразами — у нас только оригинал с официальной гарантией 1 год и можно проверить технику в шоу-руме; назови самый доступный подходящий вариант из каталога (другой цвет, eSIM-версия, другой объём) и, если уместно, что есть рассрочка и trade-in. Не спорь с ценами конкурентов и не обещай скидку.
 Запрещено: создавать срочность; повторять предложение оформить заказ; писать, что товар скоро закончится, если этого нет в данных.`;
 
 // По просьбе владельца магазина: без дожима — не значит без личного мнения.
@@ -1973,6 +2085,31 @@ class CrmService {
       error: error.message,
     }));
     return true;
+  }
+
+  // Клиент часто пишет «беру» раньше, чем присылает телефон и адрес: заказ
+  // уже создан, а «Азамат, 0700123456, мкр Джал 12» следующим сообщением
+  // никуда не попадало (живой тест 2026-10-15). Дописываем недостающее в
+  // последний заказ этого диалога (за последние сутки).
+  _fillOrderContacts(conversationId, customerText) {
+    if (!conversationId) return;
+    const order = this.db.prepare(
+      `SELECT id, customer_phone, customer_address, note FROM crm_orders
+        WHERE conversation_id = ? AND status != 'cancelled' AND created_at >= datetime('now', '-1 day')
+        ORDER BY id DESC LIMIT 1`
+    ).get(conversationId);
+    if (!order) return;
+    const mapping = buildMapping([String(customerText || "")]);
+    const found = (kind) => [...mapping.entries()].find(([, placeholder]) => placeholder.startsWith(`{{${kind}`))?.[0] || null;
+    const phone = order.customer_phone ? null : found("PHONE");
+    const address = order.customer_address ? null : found("ADDRESS");
+    if (!phone && !address) return;
+    const note = [String(order.note || "").trim(), `Данные клиента: ${String(customerText).trim().slice(0, 300)}`].filter(Boolean).join("\n").slice(0, 2000);
+    this.db.prepare(
+      `UPDATE crm_orders SET customer_phone = COALESCE(?, customer_phone), customer_address = COALESCE(?, customer_address),
+              note = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(phone, address, note, order.id);
+    this._logEvent(conversationId, "info", "commerce", "order.contacts_filled", "В заказ дописаны контакты клиента", { orderId: Number(order.id) });
   }
 
   _publishAzis(type, payload) {
@@ -2711,6 +2848,15 @@ prompt_patch — не больше двух коротких предложен�
   // 132 000 — живой тест 2026-10-15), черновик переписывается один раз с
   // точным указанием, что не так.
   async _chatWithCatalogTool(args) {
+    const result = await this._chatWithCatalogToolChecked(args);
+    const reply = stripUnverifiedInstallmentClaims(result.reply);
+    if (reply !== result.reply) {
+      this._logEvent(args.conversationId ?? null, "warn", "generation", "installment.claim_removed", "Убрано обещание условий рассрочки, которых нет в данных магазина");
+    }
+    return { ...result, reply };
+  }
+
+  async _chatWithCatalogToolChecked(args) {
     const first = await this._chatWithCatalogToolOnce(args);
     const issues = colorPriceIssues(first.reply, first.groundedProducts);
     if (!issues.length) return first;
@@ -2780,7 +2926,17 @@ prompt_patch — не больше двух коротких предложен�
           // список кандидатов. Это и есть событие «сделка сконфигурирована»,
           // а не мнение модели о том, что она уже всё выбрала.
           if (products.length === 1 && exactCount) lastExactProduct = products[0];
-          return note ? { note, products } : { products };
+          const cheapest = products.length >= 12 ? cheapestCatalogMatch(this.db, args?.query) : null;
+          // Супервизор сверяет ответ с найденным — без этого верный ответ
+          // «iPhone 17e за 63 360» он отклонял как «выдуманный».
+          if (cheapest) groundedProductsByName.set([cheapest.name, cheapest.storage, cheapest.color, cheapest.variant].join("|"), cheapest);
+          const cheapestNote = cheapest && !products.some((p) => p.name === cheapest.name && p.price === cheapest.price)
+            ? { cheapest_match: cheapest, cheapest_note: "Результатов больше, чем показано; cheapest_match — самая дешёвая подходящая позиция в наличии (для вопросов «самый дешёвый», «за такие деньги есть?»)." }
+            : {};
+          // Отдельное поле cheapest_match модель пропускала и отвечала «айфоны от
+          // 132 000» — самая дешёвая позиция ставится первой в сам список.
+          const listed = cheapestNote.cheapest_match ? [cheapest, ...products.slice(0, 11)] : products;
+          return note ? { note, products: listed, ...cheapestNote } : { products: listed, ...cheapestNote };
         },
         onUsage,
       });
@@ -3088,7 +3244,7 @@ prompt_patch — не больше двух коротких предложен�
           this._logEvent(conversation.id, "error", "delivery", "reply.welcome_failed", error.message);
         }
       } else {
-        if (isNewConversation) this._pendingFirstContactCatalog.add(conversation.id);
+        if (isNewConversation && isVagueFirstMessage(text)) this._pendingFirstContactCatalog.add(conversation.id);
         this._debouncedAutoReply(conversation.id, inserted);
       }
     }
@@ -3203,7 +3359,7 @@ prompt_patch — не больше двух коротких предложен�
         this._logEvent(conversation.id, "error", "delivery", "reply.welcome_failed", error.message);
       }
     } else {
-      if (isNewConversation) this._pendingFirstContactCatalog.add(conversation.id);
+      if (isNewConversation && isVagueFirstMessage(text)) this._pendingFirstContactCatalog.add(conversation.id);
       if (immediate) await this._autoReply(conversation.id, inserted, { bypassApproval });
       else this._debouncedAutoReply(conversation.id, inserted);
     }
@@ -3577,7 +3733,7 @@ prompt_patch — не больше двух коротких предложен�
     if (/посовет|что.{0,15}(?:посовету|выбрать|лучше\s+взять)|какой.{0,15}(?:лучше|посовет)|подскаж[иу]/iu.test(value)) return false;
     // «Какой самый дешёвый айфон?», «сколько стоят айфоны» — клиент спрашивает
     // цену, список названий без цен на это не отвечает (живой тест 2026-10-15).
-    if (/дешев|дешёв|дорог|бюджет|цен[аыу]|сколько|стоит|стоят|почем|почём|новинк|нов(?:ый|ые|ая)|последн/iu.test(value)) return false;
+    if (/дешев|дешёв|дорог|бюджет|цен[аыу]|сколько|стоит|стоят|почем|почём|новинк|нов(?:ый|ые|ая)|последн|деньг|тысяч|(?:^|\s)до\s|важн|нужн[аоы]?\s/iu.test(value)) return false;
     const wordCount = value.split(/\s+/u).filter(Boolean).length;
     return wordCount <= 6;
   }
@@ -3730,7 +3886,12 @@ prompt_patch — не больше двух коротких предложен�
     // который выбирает id шаблона или ничего. Оба — до сборки каталога и
     // полной генерации: экономим токены и отвечаем одинаково на одинаковое.
     const hasHistory = detail.messages.filter((m) => m.direction === "incoming").length > 1;
-    const explicitOrderMessage = isExplicitOrderText(latestCustomerMessage);
+    // После шаблона жалобы следующий вопрос клиента («что мне делать?») —
+    // продолжение жалобы: роутер шаблонов отвечал на него общим текстом про
+    // гарантию «если что-то пойдёт не так» (живой тест 2026-10-15).
+    const lastOutgoing = [...detail.messages].reverse().find((m) => m.direction !== "incoming");
+    const afterComplaint = Boolean(lastOutgoing?.text?.startsWith(templateById("complaint").slice(0, 30)));
+    const explicitOrderMessage = isExplicitOrderText(latestCustomerMessage) || afterComplaint;
     const localTemplate = explicitOrderMessage ? null : classifyTemplate(latestCustomerMessage, { hasHistory });
     if (localTemplate) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
@@ -3760,7 +3921,13 @@ prompt_patch — не больше двух коротких предложен�
     // Когда клиент называет конкретную модель следующим сообщением, обычная
     // генерация ниже почти всегда сужается до одного реального кандидата —
     // цену перепутать почти не с чем.
-    const categoryBrowseText = this._categoryBrowseReply(latestCustomerMessage);
+    // Посреди разговора короткая реплика с названием категории — продолжение
+    // темы, а не просьба показать линейку: «мне важна камера» в споре «17
+    // Pro или Air» превращалось в список фотоаппаратов DJI/Canon (живой тест
+    // 2026-10-15). Список линейки — только если бот до этого отправлял лишь
+    // приветствие с меню.
+    const inTopic = detail.messages.some((m) => m.direction !== "incoming" && m.text && !m.text.startsWith(FIRST_CONTACT_WELCOME_TEXT.slice(0, 40)) && !m.text.includes(FIRST_CONTACT_CATALOG_TEXT.slice(0, 30)));
+    const categoryBrowseText = inTopic ? null : this._categoryBrowseReply(latestCustomerMessage);
     if (categoryBrowseText) {
       if (!this._canSendAutoReply(conversationId, incomingMessageId)) return;
       await this._send(conversationId, this._withPendingCatalog(conversationId, categoryBrowseText), "assistant");
@@ -3793,7 +3960,10 @@ prompt_patch — не больше двух коротких предложен�
     const financeRequest = history.filter((message) => message.role === "user").map((message) => message.content).join("\n");
     const finance = financeToolContext(financeRequest, selection);
     if (finance) this._recordFinanceRequest(conversationId, financeRequest, selection);
-    const prompt = this._composePrompt(settings, [renderCatalogForPrompt(selection), finance].filter(Boolean).join("\n\n"));
+    const languageHint = KYRGYZ_SALES_MARKERS.test(customerRequest) || /[өүң]/iu.test(customerRequest)
+      ? "ЯЗЫК: клиент пишет по-кыргызски — отвечай по-кыргызски (названия моделей и цены можно латиницей/цифрами)."
+      : "";
+    const prompt = this._composePrompt(settings, [renderCatalogForPrompt(selection), finance, languageHint].filter(Boolean).join("\n\n"));
     this._logEvent(conversationId, "info", "generation", "generation.started", "ИИ формирует черновик", {
       model: settings.model,
       incomingMessageId,
@@ -3842,6 +4012,7 @@ prompt_patch — не больше двух коротких предложен�
         // Только что отправленный ответ — это и есть подтверждение заказа
         // («Dyson HS09 Co-anda2x Long — 44 000 сом ✅, напишите имя…»).
         const orderCareStarted = this._publishOrderIfConfirmed(detail.conversation, [...history, { role: "assistant", content: reply }], selection);
+        this._fillOrderContacts(conversationId, customerRequest);
         this._logEvent(conversationId, "info", "delivery", "reply.sent", "Автоответ отправлен без подтверждения");
         if (!orderCareStarted) {
           // Раньше был запасной вариант — selectedCatalogProduct(selection),
@@ -4213,6 +4384,8 @@ module.exports = {
   orderedCatalogProduct,
   requestedCatalogProduct,
   colorPriceIssues,
+  classifyReactiveTemplate,
+  stripUnverifiedInstallmentClaims,
   financeToolContext,
   stageActionForInbound,
   classifyImportantEscalation,
